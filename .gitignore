@@ -1,0 +1,11 @@
+/target/
+/.idea/
+*.iml
+/.flattened-pom.xml
+/logs/
+/data/
+*.log
+/.env
+/.env.*
+!/.env.example
+/src/main/resources/application-local.yml

@@ -1,0 +1,40 @@
+# 生产环境仅覆盖环境差异；MySQL、Redis、SMTP、七牛云配置继承 application.yml。
+# 启动时设置 SPRING_PROFILES_ACTIVE=prod，凭据由部署环境注入。
+debug: false
+trace: false
+
+spring:
+  web:
+    resources:
+      add-mappings: false
+
+server:
+  error:
+    include-message: never
+    include-binding-errors: never
+    include-stacktrace: never
+    include-exception: false
+
+platform:
+  security:
+    enabled: true
+    is-log: false
+
+knife4j:
+  enable: false
+  basic:
+    # knife4j 开启后才生效；账号密码通过环境变量注入
+    enable: false
+    username: admin
+    password: CHANGE_ME
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+logging:
+  level:
+    root: INFO
+    # 平台邮件实现会记录验证码，生产环境保持关闭。
+    "com.aurora.starter.verification.mail": "OFF"

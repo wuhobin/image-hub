@@ -1,0 +1,23 @@
+spring:
+  web:
+    resources:
+      add-mappings: true
+
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+  group-configs:
+    - group: image-hub
+      packages-to-scan: com.aurora.imagehub.controller
+      paths-to-match: /api/**
+
+knife4j:
+  enable: true
+  production: false
+  setting:
+    language: zh_cn
+    enable-footer: false
+    enable-footer-custom: true
+    footer-custom-content: WuHongBin - Copyright 2026 [wuhobin.TOP](https://wuhobin.top) | 鸣谢 [knife4j](https://gitee.com/xiaoym/knife4j)
