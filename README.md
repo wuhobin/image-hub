@@ -102,6 +102,8 @@ java -jar target/image-hub-0.0.1-SNAPSHOT.jar
 
 ## 生产环境
 
+上传 JAR 到 Linux 服务器并使用 Docker Compose 部署，见 [完整部署教程](docs/deploy-docker-compose.md)。可直接使用 `deploy/` 下的 Compose 文件及参数模板，复用已有 MySQL、Redis。
+
 `application.yml` 存放公共配置，`application-prod.yml` 覆盖生产环境差异：关闭接口文档和静态资源映射、关闭调试及 Sa-Token 操作日志、隐藏 Spring Boot 错误响应细节，保留鉴权和 INFO 级别日志。
 
 部署环境注入 MySQL、Redis、七牛云及 SMTP 环境变量后启动：

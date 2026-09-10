@@ -1,0 +1,51 @@
+name: image-hub
+
+services:
+  image-hub:
+    image: ${JAVA_IMAGE:-eclipse-temurin:21-jre-jammy}
+    user: "10001:10001"
+    working_dir: /app
+    restart: unless-stopped
+    stop_grace_period: 40s
+    mem_limit: ${APP_MEMORY:-1g}
+    env_file:
+      - path: ./app.env
+        format: raw
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SERVER_PORT: "8080"
+      TZ: Asia/Shanghai
+      # 容器直接接收环境变量，不读取开发机 .env。
+      ENV_FILE: /app/no-local.env
+    command:
+      - java
+      - -Xms128m
+      - -XX:MaxRAMPercentage=70.0
+      - -XX:+ExitOnOutOfMemoryError
+      - -Duser.timezone=Asia/Shanghai
+      - -Dlogging.file.path=/app/logs
+      - -jar
+      - /app/app.jar
+      - --spring.profiles.active=prod
+      - --server.port=8080
+    ports:
+      - "${PUBLISH_HOST:-0.0.0.0}:${HTTP_PORT:-9000}:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - type: bind
+        source: ./releases/${APP_VERSION:?Set APP_VERSION in .env}/app.jar
+        target: /app/app.jar
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./logs
+        target: /app/logs
+        bind:
+          create_host_path: false
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
