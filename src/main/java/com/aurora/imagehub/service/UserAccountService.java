@@ -1,0 +1,24 @@
+package com.aurora.imagehub.service;
+
+import com.baomidou.mybatisplus.extension.service.IService;
+import com.aurora.imagehub.model.entity.UserAccount;
+import com.aurora.imagehub.model.vo.LoginVO;
+import com.aurora.imagehub.model.vo.UserVO;
+
+/** UserAccount 实体相关的账户注册、认证及会话服务。调用方依赖此接口。 */
+public interface UserAccountService extends IService<UserAccount> {
+    /** 向尚未注册的邮箱发送注册验证码。 */
+    void sendCode(String email);
+
+    /** 消费邮箱验证码并创建账户；注册成功不建立登录态。 */
+    void register(String username, String email, String password, String code);
+
+    /** 校验密码，为本次登录创建独立 Token。 */
+    LoginVO login(String username, String password);
+
+    /** 获取当前登录账户；账户已不存在时注销当前会话。 */
+    UserVO currentUser();
+
+    /** 仅注销当前 Token。 */
+    void logout();
+}

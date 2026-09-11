@@ -1,0 +1,221 @@
+import { useEffect, useRef, useState } from 'react'
+import { api, getToken, SESSION_EXPIRED, TOKEN_KEY, uploadImage } from './api'
+import { fileError, MAX_FILES } from './rules'
+import type { ImageRecord, LoginResult, PendingImage, User } from './types'
+
+type Preview = Pick<ImageRecord, 'name' | 'preview' | 'size' | 'width' | 'height'>
+type Notice = { text: string; error: boolean }
+
+export function useImageHub() {
+  const [user, setUser] = useState<string | null>(null)
+  const [initializing, setInitializing] = useState(!!getToken())
+  const [pending, setPending] = useState<PendingImage[]>([])
+  const [preview, setPreview] = useState<Preview | null>(null)
+  const [notice, setNotice] = useState<Notice | null>(null)
+  const [selecting, setSelecting] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [paused, setPaused] = useState(false)
+  const [revision, setRevision] = useState(0)
+  const ownedUrls = useRef(new Set<string>())
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const selectionLock = useRef(false)
+  const uploadLock = useRef(false)
+  const activeUpload = useRef<AbortController | null>(null)
+  const generation = useRef(0)
+
+  useEffect(() => {
+    let controller = new AbortController()
+    async function restore() {
+      controller.abort()
+      controller = new AbortController()
+      const signal = controller.signal
+      if (!getToken()) { setInitializing(false); return }
+      setInitializing(true)
+      try {
+        const result = await api<User>('/auth/me', { signal })
+        if (!signal.aborted) setUser(result.username)
+      } catch (error) {
+        if (!signal.aborted) notify(error instanceof Error ? error.message : '登录状态读取失败', true)
+      } finally {
+        if (!signal.aborted) setInitializing(false)
+      }
+    }
+    const expired = () => {
+      clearSession(false)
+      notify('登录已过期，请重新登录', true)
+    }
+    const sync = (event: StorageEvent) => {
+      if (event.key !== TOKEN_KEY) return
+      clearSession(true)
+      void restore()
+    }
+    window.addEventListener(SESSION_EXPIRED, expired)
+    window.addEventListener('storage', sync)
+    void restore()
+    return () => {
+      controller.abort()
+      generation.current++
+      activeUpload.current?.abort()
+      window.removeEventListener(SESSION_EXPIRED, expired)
+      window.removeEventListener('storage', sync)
+      clearTimeout(noticeTimer.current)
+      ownedUrls.current.forEach(url => URL.revokeObjectURL(url))
+      ownedUrls.current.clear()
+    }
+  }, [])
+
+  function notify(text: string, error = false) {
+    clearTimeout(noticeTimer.current)
+    setNotice({ text, error })
+    noticeTimer.current = setTimeout(() => setNotice(null), 4200)
+  }
+
+  function release(url: string) {
+    if (ownedUrls.current.delete(url)) URL.revokeObjectURL(url)
+  }
+
+  function clearSession(clearSelection: boolean) {
+    generation.current++
+    activeUpload.current?.abort()
+    uploadLock.current = false
+    setBusy(false)
+    setUser(null)
+    setPreview(null)
+    setRevision(value => value + 1)
+    if (clearSelection) {
+      ownedUrls.current.forEach(url => URL.revokeObjectURL(url))
+      ownedUrls.current.clear()
+      setPending([])
+    } else {
+      setPending(current => current.filter(item => {
+        if (item.status === 'done') { release(item.preview); return false }
+        return true
+      }).map(item => ({ ...item, status: 'ready', progress: 0, record: undefined })))
+    }
+  }
+
+  async function selectFiles(files: FileList | File[]) {
+    if (selectionLock.current || uploadLock.current) return
+    selectionLock.current = true
+    setSelecting(true)
+    const selected: PendingImage[] = []
+    const errors: string[] = []
+    const version = generation.current
+    const available = MAX_FILES - pending.length
+    if (files.length > available) errors.push(`最多选择 ${MAX_FILES} 张图片`)
+    try {
+      for (const file of Array.from(files).slice(0, available)) {
+        const error = fileError(file)
+        if (error) { errors.push(`${file.name}：${error}`); continue }
+        const url = URL.createObjectURL(file)
+        ownedUrls.current.add(url)
+        try {
+          const img = new Image()
+          img.src = url
+          await img.decode()
+          if (version !== generation.current) { release(url); continue }
+          selected.push({ id: crypto.randomUUID(), file, preview: url,
+            width: img.naturalWidth, height: img.naturalHeight, progress: 0, status: 'ready' })
+        } catch {
+          release(url)
+          errors.push(`${file.name} 无法读取，请换一张图片`)
+        }
+      }
+      if (version !== generation.current) { selected.forEach(item => release(item.preview)); return }
+      setPending(current => [...current, ...selected])
+      if (errors.length) notify(errors[0], true)
+    } finally {
+      selectionLock.current = false
+      setSelecting(false)
+    }
+  }
+
+  function removePending(id: string) {
+    if (uploadLock.current) return
+    const item = pending.find(image => image.id === id)
+    if (item) release(item.preview)
+    setPending(current => current.filter(image => image.id !== id))
+  }
+
+  function clearPending() {
+    if (uploadLock.current) return
+    pending.forEach(item => release(item.preview))
+    setPending([])
+  }
+
+  async function upload() {
+    if (!user || uploadLock.current || selectionLock.current) return
+    const items = pending.filter(item => item.status === 'ready' || item.status === 'error')
+    if (!items.length) return
+    uploadLock.current = true
+    setBusy(true)
+    const controller = new AbortController()
+    activeUpload.current = controller
+    const version = generation.current
+    let succeeded = 0
+    try {
+      for (const item of items) {
+        if (controller.signal.aborted || version !== generation.current) break
+        setPending(current => current.map(image => image.id === item.id ? { ...image, status: 'uploading', progress: 0, error: undefined } : image))
+        try {
+          const record = await uploadImage(item.file, progress => {
+            if (version === generation.current) setPending(current => current.map(image => image.id === item.id ? { ...image, progress } : image))
+          }, controller.signal)
+          if (version !== generation.current) break
+          setPending(current => current.map(image => image.id === item.id ? { ...image, status: 'done', progress: 100, record } : image))
+          succeeded++
+          setRevision(value => value + 1)
+        } catch (error) {
+          if (controller.signal.aborted || version !== generation.current) break
+          setPending(current => current.map(image => image.id === item.id
+            ? { ...image, status: 'error', progress: 0, error: error instanceof Error ? error.message : '上传失败，请重试' } : image))
+        }
+      }
+      if (version === generation.current) notify(succeeded === items.length
+        ? `${succeeded} 张图片上传完成` : `${succeeded} 张成功，${items.length - succeeded} 张失败，可重试失败图片`, succeeded !== items.length)
+    } finally {
+      if (version === generation.current) {
+        uploadLock.current = false
+        setBusy(false)
+        activeUpload.current = null
+      }
+    }
+  }
+
+  async function authenticate(username: string, password: string) {
+    const result = await api<LoginResult>('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) })
+    localStorage.setItem(TOKEN_KEY, result.token)
+    setUser(result.user.username)
+    setInitializing(false)
+    setRevision(value => value + 1)
+  }
+
+  async function logout() {
+    try {
+      await api<void>('/auth/logout', { method: 'POST' })
+      localStorage.removeItem(TOKEN_KEY)
+      clearSession(true)
+      notify('已退出登录')
+    } catch (error) {
+      notify(error instanceof Error ? error.message : '退出失败，请重试', true)
+    }
+  }
+
+  async function deleteRecord(id: string) {
+    await api<void>('/images/' + encodeURIComponent(id), { method: 'DELETE' })
+    const selected = pending.find(item => item.record?.id === id)
+    if (selected) release(selected.preview)
+    setPending(current => current.filter(item => item.record?.id !== id))
+    setPreview(null)
+    setRevision(value => value + 1)
+    notify('图片和上传记录已删除')
+  }
+
+  async function copyUrl(url: string) {
+    try { await navigator.clipboard.writeText(url); notify('原始链接已复制') }
+    catch { notify('复制失败，请选中链接后手动复制', true) }
+  }
+
+  return { user, initializing, pending, preview, setPreview, notice, setNotice, selecting, paused, setPaused,
+    busy, revision, selectFiles, removePending, clearPending, upload, authenticate, logout, deleteRecord, copyUrl, notify }
+}

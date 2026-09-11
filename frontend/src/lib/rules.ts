@@ -1,7 +1,6 @@
 export const MAX_FILES = 9
 export const MAX_BYTES = 10 * 1024 * 1024
 export const ACCEPTED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
-export const DEMO_CODE = '123456'
 
 export function fileError(file: { type: string; size: number }) {
   if (!ACCEPTED_TYPES.includes(file.type)) return '支持 JPG、PNG、WebP 和 GIF 格式'
@@ -11,10 +10,9 @@ export function fileError(file: { type: string; size: number }) {
 }
 
 export function passwordError(password: string) {
-  return password.length < 6 ? '密码至少需要 6 位' : ''
+  return password.length < 6 ? '密码至少需要 6 位' : new TextEncoder().encode(password).length > 72 ? '密码的 UTF-8 长度不能超过 72 字节' : ''
 }
 
 export function formatSize(bytes: number) {
   return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
-

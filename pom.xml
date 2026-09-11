@@ -22,6 +22,17 @@
     </properties>
 
     <dependencies>
+        <!-- JDK ImageIO does not include a WebP reader. -->
+        <dependency>
+            <groupId>com.twelvemonkeys.imageio</groupId>
+            <artifactId>imageio-webp</artifactId>
+            <version>3.13.1</version>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
         <!-- 提供 Web、统一响应、异常处理、TraceId、Log4j2 和 Knife4j。 -->
         <dependency>
             <groupId>io.github.wuhobin</groupId>

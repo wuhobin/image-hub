@@ -18,7 +18,7 @@ export default function Home({ app }: { app: AppState }) {
   const dragDepth = useRef(0)
   const [dragging, setDragging] = useState(false)
   const [focused, setFocused] = useState(false)
-  const ready = app.pending.filter(item => item.status === 'ready')
+  const ready = app.pending.filter(item => item.status === 'ready' || item.status === 'error')
   const completed = app.pending.filter(item => item.status === 'done')
   const progress = app.pending.length ? Math.round(app.pending.reduce((total, item) => total + item.progress, 0) / app.pending.length) : 0
 
@@ -77,7 +77,7 @@ export default function Home({ app }: { app: AppState }) {
             <span className="upload-limit"><ImageSquare size={16} />{app.pending.length ? `已选择 ${app.pending.length} / ${MAX_FILES} 张` : `支持批量上传，最多 ${MAX_FILES} 张`}</span>
             {app.user
               ? <button className="button button-primary button-upload" disabled={!ready.length || app.busy || app.selecting} onClick={app.upload}>
-                  {app.busy ? `上传中 ${progress}%` : '开始上传'}<ArrowUp size={17} weight="bold" />
+                  {app.busy ? `上传中 ${progress}%` : app.pending.some(item => item.status === 'error') ? '重试失败图片' : '开始上传'}<ArrowUp size={17} weight="bold" />
                 </button>
               : <Link to="/login" state={{ from: '/' }} className="button button-primary button-upload">登录后开始上传 <ArrowUpRight size={17} /></Link>}
           </div>
@@ -98,6 +98,7 @@ export default function Home({ app }: { app: AppState }) {
               {item.status === 'uploading' && <span className="image-progress">{item.progress}%</span>}
               <span className="selected-name" title={item.file.name}>{item.file.name}</span>
               <span className="selected-size">{formatSize(item.file.size)}</span>
+              {item.error && <span className="field-error" role="alert">{item.error}</span>}
             </article>)}
             {app.pending.length < MAX_FILES && <button className="add-image" aria-label="继续添加图片" disabled={app.busy || app.selecting} onClick={() => input.current?.click()}><Plus size={22} /><span>继续添加</span></button>}
           </div>
@@ -106,9 +107,9 @@ export default function Home({ app }: { app: AppState }) {
         {completed.length > 0 && <section className="upload-results">
           <div className="selection-heading"><span className="success-title"><CheckCircle weight="fill" size={18} />上传完成</span><Link className="quiet-link" to="/history">查看全部记录 <ArrowRight size={14} /></Link></div>
           {completed.map(item => {
-            const record = app.records.find(record => record.id === item.id)
+            const record = item.record
             return record && <div className="result-row" key={item.id}>
-              <img src={item.preview} alt="" /><div className="result-info"><strong>{record.name}</strong><input aria-label={`${record.name} 的演示链接`} value={record.url} readOnly onFocus={event => event.target.select()} /></div>
+              <img src={item.preview} alt="" /><div className="result-info"><strong>{record.name}</strong><input aria-label={`${record.name} 的原始链接`} value={record.url} readOnly onFocus={event => event.target.select()} /></div>
               <button className="icon-button" title="复制原始 URL" aria-label={`复制 ${record.name} 的原始 URL`} onClick={() => app.copyUrl(record.url)}><Copy size={18} /></button>
             </div>
           })}

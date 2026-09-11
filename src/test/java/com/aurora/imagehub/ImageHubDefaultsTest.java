@@ -17,12 +17,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ImageHubDefaultsTest extends InfrastructureTestSupport {
 
     @Autowired
-    private TestRestTemplate restTemplate;
+    private TestRestTemplate testRestTemplate;
 
     @ParameterizedTest
     @ValueSource(strings = {"/v3/api-docs", "/doc.html", "/swagger-ui/index.html"})
     void shouldNotExposeDocumentationByDefault(String path) {
-        ResponseEntity<JsonNode> response = restTemplate.getForEntity(path, JsonNode.class);
+        ResponseEntity<JsonNode> response = testRestTemplate.getForEntity(path, JsonNode.class);
 
         // 平台异常处理约定 HTTP 200 + 业务码 404，不能仅判断 HTTP 状态。
         assertThat(response.getHeaders().getContentType()).isNotNull();

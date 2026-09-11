@@ -8,9 +8,16 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 @TestPropertySource(locations = "classpath:infrastructure-test.properties")
 abstract class InfrastructureTestSupport {
 
+    // Infrastructure-only contexts deliberately exclude database auto-configuration.
+    @MockitoBean
+    protected com.aurora.imagehub.mapper.UserMapper userMapper;
+
+    @MockitoBean
+    protected com.aurora.imagehub.mapper.ImageMapper imageMapper;
+
     @MockitoBean
     protected RedissonClient redissonClient;
 
     @MockitoBean
-    protected LettuceConnectionFactory redisConnectionFactory;
+    protected LettuceConnectionFactory lettuceConnectionFactory;
 }

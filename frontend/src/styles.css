@@ -383,3 +383,5 @@ input::placeholder { color: #8c97aa; opacity: 1; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+.library-pagination { display: flex; justify-content: center; align-items: center; gap: 20px; margin: 32px 0; color: var(--muted); font-size: 13px; }
+.selected-image .field-error { padding: 0 8px 8px; font-size: 11px; }

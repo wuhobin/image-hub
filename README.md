@@ -2,6 +2,10 @@
 
 基于 JDK 21、Spring Boot 3.5.0 的单模块 Maven 单体应用，以可执行 JAR 部署。
 
+## 项目规范
+
+后端包分类、Service 接口与实现、模型命名和注释要求见 [项目规范](AGENTS.md)。
+
 ## 平台模块
 
 继承 `io.github.wuhobin:platform-parent:1.0.0-SNAPSHOT`，统一复用平台 BOM、Java 版本、Lombok 和 Maven 插件配置。
@@ -47,7 +51,7 @@ mvn -s C:/personal-program/Maven/conf/settings.xml "-Dmaven.repo.local=C:/person
 
 ## MySQL 与 Redis
 
-正常运行需要可用的 MySQL 和 Redis。先创建 `image_hub` 数据库（字符集 `utf8mb4`），为应用账号授予该库所需权限。本工程尚未包含业务表，不会自动创建数据库或执行业务建表 SQL。
+正常运行需要可用的 MySQL 和 Redis。先创建 `image_hub` 数据库（字符集 `utf8mb4`），为应用账号授予该库所需权限。业务表脚本为 `src/main/resources/db/schema.sql`，包含用户表和图片表。应用不会自动建库或建表，首次运行需在配置的数据库执行该脚本。本机 `.env` 使用 `image-hub` 数据库（已初始化），与默认名 `image_hub` 不同。
 
 连接参数在 `src/main/resources/application.yml` 中通过占位符注入，配置参考见 `.env.example`。本项目已使用 `spring.config.import` 显式导入进程工作目录下的 `.env`，无需另装 dotenv 依赖或 IDEA EnvFile 插件。
 
@@ -118,7 +122,7 @@ java -jar target/image-hub-0.0.1-SNAPSHOT.jar --spring.profiles.active=prod
 
 Sa-Token 默认开启，单账号模式保护业务接口，请求头格式为 `Authorization: Bearer <token>`。`/api/health` 已放行，文档和 `/error` 等路径由平台白名单处理。
 
-当前仅接入认证基础设施，尚未实现用户表、登录注册接口或权限查询。后续实现登录接口时，将其具体路径加入 `platform.security.exclude-paths`；角色和权限通过平台 `PermissionProvider` 实现。不要用 `/**` 放行全部业务接口。
+已实现邮箱验证码注册、用户名密码登录、当前用户查询和退出登录；注册后不自动登录。登录时独立生成 Token，3 天有效、无额外空闲超时，退出仅注销当前 Token。登录、注册和发送验证码路径精确放行，其余业务接口鉴权；图片记录按当前用户隔离。密码使用 BCrypt 存储。
 
 平台异常处理使用 HTTP 200 搭配业务码，例如未登录 `code=401`、路由不存在 `code=404`。
 
@@ -135,9 +139,9 @@ Sa-Token 默认开启，单账号模式保护业务接口，请求头格式为 `
 
 当前 YAML 使用 QQ 邮箱的 `smtp.qq.com:465`、SSL 开启、STARTTLS 关闭，发件邮箱取 `MAIL_USERNAME`。`MAIL_HOST`、`MAIL_PORT`、`MAIL_FROM` 和 TLS 环境变量目前没有映射，单独修改这些变量不会覆盖 YAML 中的固定值。
 
-验证码为 6 位数字，有效期 5 分钟、发送冷却 60 秒；按邮箱和业务场景存储在 Redis，校验成功后消费。邮件内容由调用方传入，须包含 `{code}`，可使用 `{expireMinutes}`。SMTP 参数以邮箱服务商要求为准；邮件与七牛云使用独立凭据。平台邮件实现会记录验证码，本应用关闭该业务包日志。当前工程尚未实现数据库 `email.enabled` 开关，启停由上述环境变量控制。
+验证码为 6 位数字，有效期 5 分钟、发送冷却 60 秒；按邮箱和业务场景存储在 Redis，校验成功后消费。邮件内容由调用方传入，须包含 `{code}`，可使用 `{expireMinutes}`。SMTP 参数以邮箱服务商要求为准；邮件与七牛云使用独立凭据。平台邮件实现会记录验证码，本应用关闭该业务包日志，并将 Sa-Token 日志限制为 WARN，避免记录 Token。当前工程尚未实现数据库 `email.enabled` 开关，启停由上述环境变量控制。
 
-验证码 Starter 提供服务 Bean，不自动提供 HTTP 接口。后续实现发送和校验接口时，需要结合登录注册流程消费验证码，并添加相应限流和精确白名单。
+验证码 Starter 提供服务 Bean，不自动提供 HTTP 接口。本应用提供 `/api/auth/email-code` 发送注册验证码，注册接口原子消费验证码；已添加认证接口频率限制和精确白名单。
 
 ## 文件存储
 
@@ -162,4 +166,8 @@ mvn test
 
 测试覆盖配置导入、profile 优先级、健康接口、文档开关、未登录拦截、七牛云及邮件服务装配，并确认短信 SDK、图片组件和 Quartz 未被引入。应用测试覆盖默认导入路径，避免读取开发者真实 .env；配置导入测试使用临时虚构文件。测试关闭数据库自动配置，使用 Mock Redis、虚构七牛云和 SMTP 参数，不执行云端上传或发送邮件。
 
-测试不包含数据库相关检查，也不验证真实 Redis 连通性、七牛云上传下载或邮件投递；配置实际服务后需进行业务联调。数据库自动配置的排除仅用于测试，运行应用仍使用 MySQL。
+业务集成测试使用 H2 MySQL 模式执行实际建表 SQL 和 Mapper，覆盖注册登录、多 Token 隔离、图片归属、分页筛选、四种格式、大小限制及上传回滚/删除重试；外部邮件和对象存储使用测试替身。基础设施测试继续排除数据库。自动化测试不发送真实邮件，也不连接生产云存储。
+
+## 一期业务与前端联调
+
+登录注册、上传记录与删除接口、数据库初始化、Vite/Nginx 代理和故障排查见 [后端接入说明](docs/backend-api.md)。前端已使用真实接口，启动方式见 [前端 README](frontend/README.md)。

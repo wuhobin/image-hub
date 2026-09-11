@@ -20,14 +20,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ImageHubApplicationTest extends InfrastructureTestSupport {
 
     @Autowired
-    private TestRestTemplate restTemplate;
+    private TestRestTemplate testRestTemplate;
 
     @Test
     void shouldServeHealthWithPlatformResponseAndTraceId() {
         HttpHeaders headers = new HttpHeaders();
         headers.set("X-Trace-Id", "image-hub-smoke-test");
 
-        ResponseEntity<JsonNode> response = restTemplate.exchange(
+        ResponseEntity<JsonNode> response = testRestTemplate.exchange(
                 "/api/health", HttpMethod.GET, new HttpEntity<>(headers), JsonNode.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -41,7 +41,7 @@ class ImageHubApplicationTest extends InfrastructureTestSupport {
 
     @Test
     void shouldExposeApiDocumentationInDevProfile() {
-        ResponseEntity<JsonNode> response = restTemplate.getForEntity(
+        ResponseEntity<JsonNode> response = testRestTemplate.getForEntity(
                 "/v3/api-docs/image-hub", JsonNode.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);

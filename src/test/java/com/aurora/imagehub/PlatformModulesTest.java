@@ -35,30 +35,30 @@ import static org.assertj.core.api.Assertions.assertThat;
 class PlatformModulesTest extends InfrastructureTestSupport {
 
     @Autowired
-    private ApplicationContext context;
+    private ApplicationContext applicationContext;
 
     @Autowired
-    private TestRestTemplate restTemplate;
+    private TestRestTemplate testRestTemplate;
 
     @Test
     void shouldAssemblePlatformModulesWithoutQuartz() {
-        assertThat(context.getBean(RedisCache.class)).isNotNull();
-        assertThat(context.getBean(LockService.class)).isNotNull();
-        assertThat(context.getBean(SaTokenDao.class)).isInstanceOf(SaTokenDaoForRedisson.class);
-        assertThat(context.getBean(OssTemplate.class)).isNotNull();
-        FileStorageService storageService = context.getBean(FileStorageService.class);
+        assertThat(applicationContext.getBean(RedisCache.class)).isNotNull();
+        assertThat(applicationContext.getBean(LockService.class)).isNotNull();
+        assertThat(applicationContext.getBean(SaTokenDao.class)).isInstanceOf(SaTokenDaoForRedisson.class);
+        assertThat(applicationContext.getBean(OssTemplate.class)).isNotNull();
+        FileStorageService storageService = applicationContext.getBean(FileStorageService.class);
         assertThat(storageService.getFileStorageList()).hasSize(1);
         QiniuKodoFileStorage storage = (QiniuKodoFileStorage) storageService.getFileStorage();
         assertThat(storage.getPlatform()).isEqualTo("qiniu-kodo-1");
         assertThat(storage.getBucketName()).isEqualTo("image-hub-test");
         assertThat(storage.getDomain()).isEqualTo("https://cdn.example.test/");
         assertThat(storage.getBasePath()).isEqualTo("images/");
-        assertThat(context.containsBean("imageVerificationService")).isFalse();
-        assertThat(context.containsBean("smsVerificationService")).isFalse();
-        assertThat(context.containsBean("aliyunSmsVerificationClient")).isFalse();
-        assertThat(context.getBean(MailVerificationService.class)).isNotNull();
+        assertThat(applicationContext.containsBean("imageVerificationService")).isFalse();
+        assertThat(applicationContext.containsBean("smsVerificationService")).isFalse();
+        assertThat(applicationContext.containsBean("aliyunSmsVerificationClient")).isFalse();
+        assertThat(applicationContext.getBean(MailVerificationService.class)).isNotNull();
         assertThat(ClassUtils.isPresent("cloud.tianai.captcha.application.ImageCaptchaApplication", getClass().getClassLoader())).isFalse();
-        JavaMailSenderImpl mailSender = context.getBean(JavaMailSenderImpl.class);
+        JavaMailSenderImpl mailSender = applicationContext.getBean(JavaMailSenderImpl.class);
         assertThat(mailSender.getHost()).isEqualTo("smtp.example.test");
         assertThat(mailSender.getUsername()).isEqualTo("noreply@example.test");
         assertThat(ClassUtils.isPresent("jakarta.mail.Session", getClass().getClassLoader())).isTrue();
@@ -68,7 +68,7 @@ class PlatformModulesTest extends InfrastructureTestSupport {
 
     @Test
     void shouldRejectAnonymousAccessToBusinessEndpoints() {
-        JsonNode response = restTemplate.getForObject("/api/test/protected", JsonNode.class);
+        JsonNode response = testRestTemplate.getForObject("/api/test/protected", JsonNode.class);
 
         assertThat(response).isNotNull();
         assertThat(response.path("code").asInt()).isEqualTo(401);

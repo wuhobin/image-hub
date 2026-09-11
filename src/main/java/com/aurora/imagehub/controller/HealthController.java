@@ -1,6 +1,6 @@
 package com.aurora.imagehub.controller;
 
-import com.aurora.imagehub.model.response.HealthResponse;
+import com.aurora.imagehub.model.vo.HealthVO;
 import com.aurora.starter.webmvc.domain.response.Result;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+/** 应用 HTTP 存活探针，不访问外部依赖。 */
 @Tag(name = "应用状态")
 @RestController
 @RequestMapping("/api/health")
@@ -22,7 +23,7 @@ public class HealthController {
 
     @Operation(summary = "检查应用是否可访问")
     @GetMapping
-    public Result<HealthResponse> health() {
-        return Result.data(new HealthResponse(applicationName, "UP"));
+    public Result<HealthVO> health() {
+        return Result.data(new HealthVO(applicationName, "UP"));
     }
 }

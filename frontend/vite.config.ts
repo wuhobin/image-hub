@@ -1,8 +1,10 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
+import { fileURLToPath } from 'node:url'
 
-export default defineConfig({
+const envDir = fileURLToPath(new URL('.', import.meta.url))
+
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
-  server: { port: 5173, strictPort: true },
-})
-
+  server: { port: 5173, strictPort: true, proxy: { '/api': { target: loadEnv(mode, envDir, 'IMAGE_HUB_').IMAGE_HUB_API_TARGET || 'http://127.0.0.1:8080', changeOrigin: true } } },
+}))
