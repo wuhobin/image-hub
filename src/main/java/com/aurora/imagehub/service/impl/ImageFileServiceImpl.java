@@ -14,7 +14,6 @@ import com.aurora.starter.webmvc.exception.BizException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.aurora.starter.mybatisplus.mybatis.PageUtils;
 import java.io.IOException;
-import java.time.Instant;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
@@ -67,7 +66,6 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
         image.setSize(file.getSize());
         image.setWidth(dimensions.getWidth());
         image.setHeight(dimensions.getHeight());
-        image.setCreatedAt(Instant.now());
         try {
             // 保存完整存储定位信息；若记录入库失败，补偿删除刚上传的云端文件。
             image.setStorageInfo(objectMapper.writeValueAsString(stored));
@@ -115,6 +113,7 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
         if (ossTemplate.getFileStorageService().exists(stored) && !ossTemplate.delete(stored)) {
             throw new BizException(502, "存储文件删除失败，请重试");
         }
+        // 云端删除成功后仅标记记录，不再物理删除数据库行。
         imageMapper.deleteOwned(userId, id);
     }
 

@@ -34,6 +34,6 @@ public class ImageVO {
 
     public static ImageVO from(ImageFile image) {
         return new ImageVO(image.getId(), image.getName(), image.getUrl(), image.getUrl(),
-                image.getType(), image.getSize(), image.getWidth(), image.getHeight(), image.getCreatedAt());
+                image.getType(), image.getSize(), image.getWidth(), image.getHeight(), image.getCreateTime().toInstant());
     }
 }

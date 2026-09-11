@@ -47,7 +47,7 @@ public class UserAccountServiceImpl extends ServiceImpl<UserMapper, UserAccount>
         username = username.trim();
         email = normalizeEmail(email);
         validatePassword(password);
-        if (userMapper.findByUsername(username) != null || userMapper.countByEmail(email) > 0) {
+        if (userMapper.countByUsername(username) > 0 || userMapper.countByEmail(email) > 0) {
             throw new BizException(409, "用户名或邮箱已被注册");
         }
         attemptLimiter.check("register", email, 10, 300);

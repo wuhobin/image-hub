@@ -1,9 +1,10 @@
 package com.aurora.imagehub.model.entity;
 
+import com.aurora.starter.mybatisplus.model.BaseEntity;
+import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
-import java.time.Instant;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -11,7 +12,7 @@ import lombok.Setter;
 @Getter
 @Setter
 @TableName("hub_image")
-public class ImageFile {
+public class ImageFile extends BaseEntity {
     @TableId(type = IdType.INPUT)
     private String id;
     private Long userId;
@@ -23,5 +24,7 @@ public class ImageFile {
     private int height;
     /** 完整的存储平台和对象定位信息，用于重启后删除云端文件；不对外返回。 */
     private String storageInfo;
-    private Instant createdAt;
+    /** 逻辑删除标记：0 未删除，1 已删除。 */
+    @TableLogic
+    private Integer deleted = 0;
 }

@@ -52,7 +52,7 @@ import static org.mockito.Mockito.*;
         "spring.datasource.url=jdbc:h2:mem:image_hub_business;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1;IGNORECASE=TRUE",
         "spring.datasource.driver-class-name=org.h2.Driver",
         "spring.datasource.username=sa", "spring.datasource.password=",
-        "spring.sql.init.mode=always", "spring.sql.init.schema-locations=classpath:db/schema.sql",
+        "spring.sql.init.mode=always", "spring.sql.init.schema-locations=file:deploy/db/schema.sql",
         "platform.security.is-log=false"
 })
 @Import(BusinessFlowTest.MemorySessions.class)
@@ -134,6 +134,19 @@ class BusinessFlowTest {
         ImageFile persisted = imageFileService.getById(image.path("id").asText());
         assertThat(persisted.getUserId()).isEqualTo(userMapper.findByUsername(username).getId());
         assertThat(persisted.getStorageInfo()).isNotBlank();
+        assertThat(persisted.getDeleted()).isZero();
+        assertThat(persisted.getCreateTime()).isNotNull();
+        assertThat(persisted.getUpdateTime()).isNotNull();
+        assertThat(persisted.getCreateTime().toInstant().getNano()).isZero();
+        assertThat(persisted.getUpdateTime().toInstant().getNano()).isZero();
+        assertThat(java.time.Instant.parse(image.path("createdAt").asText())).isEqualTo(persisted.getCreateTime().toInstant());
+        var createTime = persisted.getCreateTime();
+        persisted.setUpdateTime(new java.util.Date(0));
+        assertThat(imageFileService.updateById(persisted)).isTrue();
+        ImageFile updated = imageFileService.getById(persisted.getId());
+        assertThat(updated.getCreateTime()).isEqualTo(createTime);
+        assertThat(updated.getUpdateTime()).isAfter(new java.util.Date(0));
+        assertThat(updated.getUpdateTime().toInstant().getNano()).isZero();
         JsonNode page = get("/api/images?search=photo&type=PNG&page=1&pageSize=1", first).path("data");
         assertThat(page.path("total").asInt()).isEqualTo(1);
         assertThat(page.path("current").asInt()).isEqualTo(1);
@@ -160,6 +173,12 @@ class BusinessFlowTest {
         assertThat(get("/api/auth/me", second).path("code").asInt()).isEqualTo(200);
         assertThat(delete(image.path("id").asText(), second).path("code").asInt()).isEqualTo(200);
         var key = org.mockito.ArgumentCaptor.forClass(FileInfo.class);
+        assertThat(jdbcTemplate.queryForObject("SELECT deleted FROM hub_image WHERE id = ?", Integer.class, persisted.getId())).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("SELECT update_time FROM hub_image WHERE id = ?", java.sql.Timestamp.class, persisted.getId()))
+                .isAfterOrEqualTo(new java.sql.Timestamp(updated.getUpdateTime().getTime()));
+        assertThat(imageFileService.getById(persisted.getId())).isNull();
+        assertThat(imageMapper.findOwned(persisted.getUserId(), persisted.getId())).isNull();
+        assertThat(delete(persisted.getId(), second).path("code").asInt()).isEqualTo(404);
         verify(ossTemplate).delete(key.capture());
         assertThat(key.getValue().getBasePath()).isEqualTo("base/");
         assertThat(key.getValue().getPath()).isEqualTo("images/test/");
@@ -200,6 +219,7 @@ class BusinessFlowTest {
         assertThat(delete(id, token).path("code").asInt()).isEqualTo(502);
         assertThat(get("/api/images", token).path("data").path("total").asInt()).isEqualTo(1);
         when(storage.exists(any(FileInfo.class))).thenReturn(false);
+        assertThat(jdbcTemplate.queryForObject("SELECT deleted FROM hub_image WHERE id = ?", Integer.class, id)).isZero();
         assertThat(delete(id, token).path("code").asInt()).isEqualTo(200);
         assertThat(get("/api/images", token).path("data").path("total").asInt()).isZero();
     }
@@ -248,6 +268,36 @@ class BusinessFlowTest {
         assertThat(upload(token, "rollback.png", png()).path("code").asInt()).isEqualTo(500);
         verify(ossTemplate).delete(stored);
         assertThat(get("/api/images", token).path("data").path("total").asInt()).isEqualTo(4);
+    }
+
+    @Test
+    void accountAuditFieldsAndMybatisLogicDeletionWork() {
+        register("archived", "archived@example.test");
+        String token = login("archived");
+        var user = userMapper.findByUsername("archived");
+        assertThat(user.getDeleted()).isZero();
+        assertThat(user.getCreateTime()).isNotNull();
+        assertThat(user.getUpdateTime()).isNotNull();
+        assertThat(user.getCreateTime().toInstant().getNano()).isZero();
+        assertThat(user.getUpdateTime().toInstant().getNano()).isZero();
+        var createTime = user.getCreateTime();
+        user.setUpdateTime(new java.util.Date(0));
+        assertThat(userAccountService.updateById(user)).isTrue();
+        var updated = userAccountService.getById(user.getId());
+        assertThat(updated.getCreateTime()).isEqualTo(createTime);
+        assertThat(updated.getUpdateTime()).isAfter(new java.util.Date(0));
+        assertThat(updated.getUpdateTime().toInstant().getNano()).isZero();
+
+        assertThat(userAccountService.removeById(user.getId())).isTrue();
+        assertThat(jdbcTemplate.queryForObject("SELECT deleted FROM hub_user WHERE id = ?", Integer.class, user.getId())).isEqualTo(1);
+        assertThat(userAccountService.getById(user.getId())).isNull();
+        assertThat(userMapper.findById(user.getId())).isNull();
+        assertThat(userMapper.findByUsername("archived")).isNull();
+        assertThat(post("/api/auth/login", Map.of("username", "archived", "password", "secret123"), null).path("code").asInt()).isEqualTo(400);
+        assertThat(get("/api/auth/me", token).path("code").asInt()).isEqualTo(401);
+        assertThat(post("/api/auth/register", Map.of("username", "archived", "email", "new@example.test",
+                "password", "secret123", "code", "654321"), null).path("code").asInt()).isEqualTo(409);
+        assertThat(post("/api/auth/email-code", Map.of("email", "archived@example.test"), null).path("code").asInt()).isEqualTo(409);
     }
 
     private void register(String username, String email) {

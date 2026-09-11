@@ -3,7 +3,7 @@
 ## 运行
 
 1. 在根目录 `.env` 配置 MySQL、Redis、七牛云、SMTP。参考根目录 `.env.example`。
-2. 在 `MYSQL_DATABASE` 指向的库执行 [schema.sql](../src/main/resources/db/schema.sql)。脚本仅 `CREATE TABLE IF NOT EXISTS`，不会清空数据；后续字段变更应写迁移 SQL。
+2. 在 `MYSQL_DATABASE` 指向的库执行 [schema.sql](../deploy/db/schema.sql)。脚本仅 `CREATE TABLE IF NOT EXISTS`，不会升级已有表。已有旧表需在停止旧版后端后执行一次 [时间字段与逻辑删除迁移](../deploy/db/migrations/20260911_audit_and_logic_delete.sql)，再启动新版后端；旧 `created_at` 会保留数据并改名为 `create_time`，历史 `update_time` 初始化为创建时间。随后执行 [秒精度迁移](../deploy/db/migrations/20260911_time_seconds.sql)，两个时间列改为 `TIMESTAMP(0)`，历史毫秒直接截去，不四舍五入。
 3. 启动 Redis，再运行 `ImageHubApplication`。本机后端端口为 9000（来自 `.env`），默认配置为 8080。
 4. 在 `frontend/.env.local` 设置 `IMAGE_HUB_API_TARGET=http://127.0.0.1:9000`；然后在 frontend 下执行 `npm install`、`npm run dev`。
 5. 打开 `http://127.0.0.1:5173`，注册后到登录页输入用户名和密码。
@@ -11,6 +11,8 @@
 生产环境启用 HTTPS，前端同源代理 `/api/` 到后端。七牛云空间需公开读，`QINIU_DOMAIN` 为其已绑定访问域名。邮件开关 `MAIL_VERIFICATION_ENABLED=true` 且 SMTP 凭据有效时才能注册；不开启时返回明确错误，不跳过邮箱验证。
 
 本机数据库名为 `image-hub`，已创建 `hub_user`、`hub_image`。不要误连默认名 `image_hub`。当前 Redis 为用户启动的实例，应用使用根目录配置的连接参数和数据库编号。
+
+本机 `image-hub` 已执行时间字段、逻辑删除及秒精度迁移，无需再次执行；创建和更新时间只保留到秒。
 
 ## 接口约定
 
@@ -32,9 +34,9 @@
 | POST | /images | multipart 字段 `file`，每个请求一张；返回图片记录 |
 | GET | /images | `page=1&pageSize=24&search=&type=`，type 为 JPG/PNG/WEBP/GIF 或空 |
 | GET | /images/stats | 当前用户全部图片的 `{totalCount,totalBytes}` |
-| DELETE | /images/{id} | 仅限拥有者，删除文件和记录 |
+| DELETE | /images/{id} | 仅限拥有者，删除文件并逻辑删除记录 |
 
-图片结构：`{id,name,url,preview,type,size,width,height,createdAt}`，ID 为字符串，大小单位字节，时间为 ISO UTC，preview 使用同一公开原始 URL。
+图片结构：`{id,name,url,preview,type,size,width,height,createdAt}`，ID 为字符串，大小单位字节，时间为 ISO UTC，preview 使用同一公开原始 URL。`createdAt` 继续映射实体的 `createTime`，保持前端兼容。
 
 列表直接返回 MyBatis-Plus `Page<ImageVO>`，主要字段为 `{records,total,current,size,pages}`，total 为筛选匹配数。请求仍使用 page/pageSize（每页 1–100 张），按上传时间、ID 倒序；分页 SQL 和 count 由父项目拦截器处理。全量数量和大小通过 `/images/stats` 单独获取，不受筛选或分页影响。
 
@@ -46,8 +48,9 @@
 - 单张最大 10 MiB，前端每批最多 9 张，逐张请求并显示实际传输进度；99% 后等待服务器持久化完成才显示成功。部分失败仅重试失败项；连接中断后应先查询记录，以免重复上传。
 - 服务端检查文件扩展名与检测类型、图片尺寸。JPG/PNG/GIF 使用 JDK ImageIO；WebP 使用 [TwelveMonkeys ImageIO](https://github.com/haraldk/TwelveMonkeys/releases)。
 - 保存记录失败时尝试删除已上传对象。若补偿清理也失败，日志记录 imageId 供人工清理；MySQL 与七牛云不具备跨系统事务，进程在两次操作之间崩溃仍需人工核对孤立文件。
-- 数据库存储完整 FileInfo，仅在后端使用，应用重启后仍可正确删除对象。云端删除失败时保留记录；若文件已删除但数据库操作失败，重试可完成记录删除。
+- 数据库存储完整 FileInfo，仅在后端使用，应用重启后仍可正确删除对象。云端删除失败时保持 `deleted=0`；云端删除成功后置 `deleted=1` 并更新 `update_time`，数据库行保留。若文件已删除但数据库操作失败，重试可完成逻辑删除。列表、分页和统计排除已删除记录。
 - 外链公开访问，记录查询和删除必须登录且属于当前用户。源文件删除后浏览器/CDN 已缓存的内容可能延迟失效。
+- 所有表包含 `create_time`、`update_time`、`deleted`（0 未删除 / 1 已删除）。实体继承平台 `BaseEntity`，应用的 `SecondPrecisionMetaObjectHandler` 复用平台填充并截断到秒，MyBatis-Plus 通用查询自动过滤逻辑删除数据；自定义 SQL 显式处理。已删除账户不能重新登录，用户名和邮箱仍由原唯一约束保留。
 - 每日上传额度和总容量配额尚未实现。
 
 ## 生产代理示例

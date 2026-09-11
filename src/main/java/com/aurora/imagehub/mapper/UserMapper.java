@@ -7,12 +7,17 @@ import org.apache.ibatis.annotations.*;
 /** 用户账户持久化；唯一性由数据库约束兜底。 */
 @Mapper
 public interface UserMapper extends BaseMapper<UserAccount> {
-    @Select("SELECT * FROM hub_user WHERE username = #{username}")
+    @Select("SELECT * FROM hub_user WHERE username = #{username} AND deleted = 0")
     UserAccount findByUsername(String username);
 
-    @Select("SELECT * FROM hub_user WHERE id = #{id}")
+    @Select("SELECT * FROM hub_user WHERE id = #{id} AND deleted = 0")
     UserAccount findById(long id);
 
+    /** 唯一约束包含已删除账户，注册前仍需检查占用。 */
+    @Select("SELECT COUNT(*) FROM hub_user WHERE username = #{username}")
+    long countByUsername(String username);
+
+    /** 邮箱唯一约束包含已删除账户。 */
     @Select("SELECT COUNT(*) FROM hub_user WHERE email = #{email}")
     long countByEmail(String email);
 

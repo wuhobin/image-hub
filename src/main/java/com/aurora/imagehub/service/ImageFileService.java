@@ -15,9 +15,9 @@ public interface ImageFileService extends IService<ImageFile> {
     /** 使用平台 MyBatis-Plus 分页查询指定用户的图片。 */
     Page<ImageVO> list(long userId, String search, String type, int page, int pageSize);
 
-    /** 当前用户全部图片的数量和大小，不受列表筛选及分页影响。 */
+    /** 当前用户未删除图片的数量和大小，不受列表筛选及分页影响。 */
     ImageStatsVO stats(long userId);
 
-    /** 校验图片归属，先删除云端文件，再删除数据库记录；支持失败后重试。 */
+    /** 校验图片归属，先删除云端文件，再逻辑删除数据库记录；支持失败后重试。 */
     void delete(long userId, String id);
 }

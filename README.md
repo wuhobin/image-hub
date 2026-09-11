@@ -51,7 +51,7 @@ mvn -s C:/personal-program/Maven/conf/settings.xml "-Dmaven.repo.local=C:/person
 
 ## MySQL 与 Redis
 
-正常运行需要可用的 MySQL 和 Redis。先创建 `image_hub` 数据库（字符集 `utf8mb4`），为应用账号授予该库所需权限。业务表脚本为 `src/main/resources/db/schema.sql`，包含用户表和图片表。应用不会自动建库或建表，首次运行需在配置的数据库执行该脚本。本机 `.env` 使用 `image-hub` 数据库（已初始化），与默认名 `image_hub` 不同。
+正常运行需要可用的 MySQL 和 Redis。先创建 `image_hub` 数据库（字符集 `utf8mb4`），为应用账号授予该库所需权限。业务表脚本为 `deploy/db/schema.sql`，包含用户表和图片表。应用不会自动建库或建表，首次运行需在配置的数据库执行该脚本。本机 `.env` 使用 `image-hub` 数据库（已初始化），与默认名 `image_hub` 不同。
 
 连接参数在 `src/main/resources/application.yml` 中通过占位符注入，配置参考见 `.env.example`。本项目已使用 `spring.config.import` 显式导入进程工作目录下的 `.env`，无需另装 dotenv 依赖或 IDEA EnvFile 插件。
 

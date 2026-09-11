@@ -9,6 +9,7 @@
 根包为 `com.aurora.imagehub`。Java 包名统一小写，类名使用 PascalCase，VO、BO 后缀保持大写。
 
 - `model.entity`：数据库实体，如 `UserAccount`、`ImageFile`，与表字段对应，不直接作为接口响应。
+- 每张业务表必须包含 `create_time`、`update_time`、`deleted`；Java 时间字段 `createTime`、`updateTime` 继承父项目 `BaseEntity`，复用自动填充并通过应用处理器截断到秒，数据库时间列使用 `TIMESTAMP(0)`，不存毫秒；实体声明 `@TableLogic Integer deleted = 0`。MyBatis-Plus 全局配置 0 未删除、1 已删除；自定义 SQL 显式过滤 `deleted = 0`，逻辑删除同时更新 `update_time`。唯一性占用检查仍包含已删除数据。
 - `model.vo`：对外返回的数据，类名以 `VO` 结尾，如 `UserVO`、`ImageVO`；不得包含密码哈希、内部存储信息等敏感字段。
 - `model.bo`：业务内部计算、组合或传递的数据，类名以 `BO` 结尾，如 `ImageDimensionsBO`；按实际需要定义，不为每个实体机械复制一套字段。
 - `model.param`：接口请求参数，类名以 `Param` 结尾，声明 Bean Validation 约束；不在 Controller 或 Service 中嵌套定义请求模型。
@@ -30,6 +31,6 @@
 
 重要类补充中文 Javadoc，说明职责和边界；Service 接口说明关键业务约定。权限校验、密码处理、会话隔离、上传补偿和删除重试等重要逻辑应解释原因，避免仅复述代码。
 
-密码、验证码及 Token 不得写入日志；接口不直接暴露实体。注册成功不自动登录，退出仅注销当前 Token。图片操作的用户 ID 必须来自可信登录态；删除记录时同时删除存储文件，云端删除失败保留记录以便重试。
+密码、验证码及 Token 不得写入日志；接口不直接暴露实体。注册成功不自动登录，退出仅注销当前 Token。图片操作的用户 ID 必须来自可信登录态；删除图片时先删除存储文件，再将数据库记录标记为已删除，云端删除失败保留记录以便重试。
 
 结构重构应保持 HTTP 路径、请求字段、响应 JSON 和业务码兼容。修改后通过 IDEA 编译，并运行相关测试；后端整体重构运行 `mvn clean verify`。不为尚未使用的功能添加占位类或额外依赖。
