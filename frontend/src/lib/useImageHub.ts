@@ -6,7 +6,7 @@ import type { ImageRecord, LoginResult, PendingImage, User } from './types'
 type Preview = Pick<ImageRecord, 'name' | 'preview' | 'size' | 'width' | 'height'>
 type Notice = { text: string; error: boolean }
 
-export function useImageHub() {
+export function useImageHub(onUploadPage: boolean) {
   const [user, setUser] = useState<string | null>(null)
   const [initializing, setInitializing] = useState(!!getToken())
   const [pending, setPending] = useState<PendingImage[]>([])
@@ -22,6 +22,16 @@ export function useImageHub() {
   const uploadLock = useRef(false)
   const activeUpload = useRef<AbortController | null>(null)
   const generation = useRef(0)
+
+  useEffect(() => {
+    // 结果仅供本次首页查看；批次进行中保留完整队列，避免影响总进度。
+    if (onUploadPage || busy) return
+    const completed = pending.filter(item => item.status === 'done')
+    if (!completed.length) return
+    completed.forEach(item => release(item.preview))
+    setPreview(current => completed.some(item => item.preview === current?.preview) ? null : current)
+    setPending(current => current.filter(item => item.status !== 'done'))
+  }, [onUploadPage, busy, pending])
 
   useEffect(() => {
     let controller = new AbortController()

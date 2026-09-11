@@ -1,6 +1,6 @@
 # Image Hub 前端
 
-React + Vite + TypeScript；客户端渲染，无 SSR。独立于根目录的 Spring Boot 项目。
+React + Vite + TypeScript；客户端渲染，无 SSR。开发时由 Vite 提供热更新，发布时随根目录 Spring Boot 项目一起打包。
 
 ## 运行
 
@@ -20,7 +20,9 @@ npm run build
 npm run preview
 ```
 
-构建产物在 `dist/`。生产使用静态服务器，配置 SPA 回退至 `index.html`，使 /history、/login、/register 刷新后可访问。开发服务器仅监听本机。
+`npm run build` 仍输出到 `dist/`，供独立静态部署和 preview 使用。`npm run build:backend` 将产物直接输出到 `../src/main/resources/static/`，该目录构建时清空重建，不要存放手写文件。
+
+根目录 `mvn clean verify` 自动调用 `build:backend` 并将页面装入 JAR；首次构建先运行 `npm ci`，更新锁文件后重新安装依赖（Windows 上先停止 Vite）。后端启动后打开 `http://127.0.0.1:9000/`（本机配置），无需单独部署前端。/history、/login、/register 支持刷新；开发服务器仍仅监听本机。
 
 ## 功能范围
 
@@ -35,7 +37,7 @@ npm run preview
 
 开发时将 `.env.example` 复制为 `.env.local`，设置 `IMAGE_HUB_API_TARGET` 为后端地址；所有页面调用同源 `/api`，由 Vite 转发。本机后端使用 9000，因此本地配置为 `http://127.0.0.1:9000`。示例默认 8080。配置修改后重启开发服务器。
 
-生产静态服务器还需将 `/api/` 反向代理到 Spring Boot；仅配置 SPA 回退无法提供后端接口。服务配置和接口见 [后端接入说明](../docs/backend-api.md)。
+随 JAR 部署时 `/api` 直接由同一个 Spring Boot 服务处理，无需 Vite 代理。若选择独立静态服务器部署，则仍需把 `/api/` 反向代理到 Spring Boot。服务配置和接口见 [后端接入说明](../docs/backend-api.md)。
 
 ## 动效
 

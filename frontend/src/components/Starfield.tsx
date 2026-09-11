@@ -196,22 +196,31 @@ export default memo(function Starfield({ target, active = false, paused }: Props
     let width = 1
     let height = 1
     let boxDirty = true
+    let sizeDirty = true
     const resize = () => {
-      width = host.clientWidth
-      height = host.clientHeight
-      const dpr = Math.min(window.devicePixelRatio, width < 600 ? 1.25 : 1.5)
-      renderer.setPixelRatio(dpr)
-      renderer.setSize(width, height)
-      texture.setSize(Math.round(width * dpr), Math.round(height * dpr))
-      camera.aspect = width / height
-      camera.updateProjectionMatrix()
+      const nextWidth = Math.max(host.clientWidth, 1)
+      const nextHeight = Math.max(host.clientHeight, 1)
+      const dpr = Math.min(window.devicePixelRatio, nextWidth < 600 ? 1.25 : 1.5)
+      const dprChanged = renderer.getPixelRatio() !== dpr
+      if (width !== nextWidth || height !== nextHeight || dprChanged) {
+        width = nextWidth
+        height = nextHeight
+        if (dprChanged) renderer.setPixelRatio(dpr)
+        renderer.setSize(width, height)
+        texture.setSize(Math.round(width * dpr), Math.round(height * dpr))
+      }
+      // 首页以视口为固定取景范围，内容增高只向下延伸，不缩放或挪动原有星点。
+      camera.setViewOffset(width, target ? window.innerHeight : height, 0, 0, width, height)
       pointsMaterial.uniforms.uDpr.value = dpr
       material.uniforms.uResolution.value.set(width, height)
+      sizeDirty = false
       boxDirty = true
     }
-    const observer = new ResizeObserver(resize)
+    const onResize = () => { sizeDirty = true }
+    const observer = new ResizeObserver(onResize)
     observer.observe(host)
     if (target?.current) observer.observe(target.current)
+    window.addEventListener('resize', onResize)
     const wanted = { x: 0, y: 0, expansion: 0, energy: 0 }
     const motion = { ...wanted }
     // Reuse four tweens; retarget from the current value instead of reversing an
@@ -262,6 +271,8 @@ export default memo(function Starfield({ target, active = false, paused }: Props
     const render = (_time: number, deltaMs: number) => {
       const delta = Math.min(deltaMs / 1000, 0.05)
       if (!visible || document.hidden) return
+      // 调整缓冲区会清空画布，必须紧接着绘制，避免 ResizeObserver 留下一帧空白。
+      if (sizeDirty) resize()
       const still = reducedMotion.matches || pausedRef.current
       if (still && renderedStatic && !boxDirty) return
       if (!still) elapsed += delta
@@ -324,13 +335,13 @@ export default memo(function Starfield({ target, active = false, paused }: Props
       renderer.render(postScene, postCamera)
       renderedStatic = still
     }
-    resize()
     gsap.ticker.add(render)
     const onLost = (event: Event) => { event.preventDefault(); host.classList.add('webgl-unavailable') }
     renderer.domElement.addEventListener('webglcontextlost', onLost)
     return () => {
       gsap.ticker.remove(render)
       observer.disconnect()
+      window.removeEventListener('resize', onResize)
       visibility.disconnect()
       surface.removeEventListener('pointermove', onPointer)
       surface.removeEventListener('pointerleave', resetPointer)

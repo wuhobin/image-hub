@@ -27,6 +27,8 @@
 
 ## 首次构建
 
+本地需安装 Node.js 22.12+，先执行 `npm --prefix frontend ci` 安装锁定的前端依赖（更新锁文件后重新执行，Windows 上先停止 Vite）。Maven 构建会自动执行前端 `build:backend`，将产物写入 `src/main/resources/static/`，再随 JAR 打包；服务器只需要 Java。
+
 以下命令在 `image-hub` 目录执行，假定两个工程位于同一父目录：
 
 ```shell
@@ -96,19 +98,21 @@ mvn clean verify
 java -jar target/image-hub-0.0.1-SNAPSHOT.jar
 ```
 
-默认端口为 `8080`，可通过 `SERVER_PORT` 修改。
+默认端口为 `8080`，可通过 `SERVER_PORT` 修改。本机 `.env` 配置为 `9000`，启动后访问 `http://127.0.0.1:9000/` 即为前端；`/login`、`/register`、`/history` 支持直接访问和刷新，接口使用同源 `/api`。
+
+IDEA 直接运行前，执行一次 `npm --prefix frontend run build:backend`，再由 IDEA 编译资源。开发时仍可运行 `npm --prefix frontend run dev` 使用 Vite 热更新。`static/` 为生成目录，构建时清空重建，已加入 Git 忽略，不放手写资源。
 
 - 存活接口：`GET http://localhost:8080/api/health`，仅表示 HTTP 服务可响应，不检查数据库或 Redis 健康状态。
 - 开发文档：`http://localhost:8080/doc.html`。
 - 开发 OpenAPI：`http://localhost:8080/v3/api-docs/image-hub`。
 
-只有 `dev` 配置启用接口文档和静态资源；默认配置关闭。健康接口返回平台 `Result<T>`，支持 `X-Trace-Id` 透传。
+所有环境通过 `FrontendWebConfig` 提供前端页面和资源；只有 `dev` 配置启用接口文档。健康接口返回平台 `Result<T>`，支持 `X-Trace-Id` 透传。
 
 ## 生产环境
 
 上传 JAR 到 Linux 服务器并使用 Docker Compose 部署，见 [完整部署教程](docs/deploy-docker-compose.md)。可直接使用 `deploy/` 下的 Compose 文件及参数模板，复用已有 MySQL、Redis。
 
-`application.yml` 存放公共配置，`application-prod.yml` 覆盖生产环境差异：关闭接口文档和静态资源映射、关闭调试及 Sa-Token 操作日志、隐藏 Spring Boot 错误响应细节，保留鉴权和 INFO 级别日志。
+`application.yml` 存放公共配置，`application-prod.yml` 覆盖生产环境差异：关闭接口文档和框架默认静态资源映射（前端显式映射仍启用）、关闭调试及 Sa-Token 操作日志、隐藏 Spring Boot 错误响应细节，保留鉴权和 INFO 级别日志。
 
 部署环境注入 MySQL、Redis、七牛云及 SMTP 环境变量后启动：
 

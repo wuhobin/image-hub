@@ -8,7 +8,7 @@ spring:
     name: image-hub
   web:
     resources:
-      # API 应用默认不暴露静态资源，包括依赖 JAR 中的 Knife4j 页面。
+      # 前端由 FrontendWebConfig 显式托管；默认不暴露依赖 JAR 的文档页面。
       add-mappings: false
   lifecycle:
     timeout-per-shutdown-phase: 30s
@@ -77,6 +77,13 @@ platform:
     token-style: uuid
     is-log: true
     exclude-paths:
+      - /
+      - /index.html
+      - /login
+      - /register
+      - /history
+      - /assets/**
+      - /favicon.svg
       - /api/health
       - /api/auth/login
       - /api/auth/register

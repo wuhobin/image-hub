@@ -2,7 +2,7 @@ import { Suspense, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
 import { Link } from 'react-router-dom'
-import { ArrowRight, ArrowUp, ArrowUpRight, Check, CheckCircle, CloudArrowUp, Copy, ImageSquare, LinkSimple, Pause, Play, Plus, X } from '@phosphor-icons/react'
+import { ArrowRight, ArrowUp, ArrowUpRight, CheckCircle, CloudArrowUp, Copy, ImageSquare, LinkSimple, Pause, Play, Plus, X } from '@phosphor-icons/react'
 import { fileAccept, Starfield } from '../App'
 import type { AppState } from '../App'
 import { formatSize, MAX_FILES } from '../lib/rules'
@@ -20,7 +20,7 @@ export default function Home({ app }: { app: AppState }) {
   const [focused, setFocused] = useState(false)
   const ready = app.pending.filter(item => item.status === 'ready' || item.status === 'error')
   const completed = app.pending.filter(item => item.status === 'done')
-  const progress = app.pending.length ? Math.round(app.pending.reduce((total, item) => total + item.progress, 0) / app.pending.length) : 0
+  const progress = app.pending.length ? Math.floor(app.pending.reduce((total, item) => total + item.progress, 0) / app.pending.length) : 0
 
   useGSAP(() => {
     const media = gsap.matchMedia()
@@ -75,45 +75,51 @@ export default function Home({ app }: { app: AppState }) {
           </button>
           <div className="upload-toolbar">
             <span className="upload-limit"><ImageSquare size={16} />{app.pending.length ? `已选择 ${app.pending.length} / ${MAX_FILES} 张` : `支持批量上传，最多 ${MAX_FILES} 张`}</span>
-            {app.user
+            {app.initializing
+              ? <button className="button button-primary button-upload" disabled>正在恢复登录… <ArrowUp size={17} /></button>
+              : app.user
               ? <button className="button button-primary button-upload" disabled={!ready.length || app.busy || app.selecting} onClick={app.upload}>
-                  {app.busy ? `上传中 ${progress}%` : app.pending.some(item => item.status === 'error') ? '重试失败图片' : '开始上传'}<ArrowUp size={17} weight="bold" />
+                  {app.busy ? '上传中…' : app.pending.some(item => item.status === 'error') ? '重试失败图片' : '开始上传'}<ArrowUp size={17} weight="bold" />
                 </button>
               : <Link to="/login" state={{ from: '/' }} className="button button-primary button-upload">登录后开始上传 <ArrowUpRight size={17} /></Link>}
           </div>
-          {app.busy && <div className="overall-progress" role="progressbar" aria-label="图片上传进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style={{ transform: `scaleX(${progress / 100})` }} /></div>}
         </div>
 
         {app.pending.length > 0 && <div className="selection-panel">
-          <div className="selection-heading"><span>已选图片 <span className="count-badge">{app.pending.length}</span></span>
+          <div className="selection-heading"><span>本次上传 <span className="count-badge">{app.pending.length} 张</span></span>
             <button className="text-button" disabled={app.busy} onClick={app.clearPending}>清空列表</button>
           </div>
-          <div className="selection-grid">
-            {app.pending.map(item => <article className="selected-image" key={item.id}>
+          <div className="selection-list">
+            {app.pending.map(item => <article className="selected-image" key={item.id} data-status={item.status}>
               <button className="selected-preview" aria-label={`预览 ${item.file.name}`} onClick={() => app.setPreview({ name: item.file.name, preview: item.preview, size: item.file.size, width: item.width, height: item.height })}>
                 <img src={item.preview} alt={item.file.name} />
               </button>
-              <button className="remove-image" aria-label={`移除 ${item.file.name}`} disabled={app.busy} onClick={() => app.removePending(item.id)}><X size={14} /></button>
-              {item.status === 'done' && <span className="image-done" aria-label="上传完成"><Check size={13} weight="bold" /></span>}
-              {item.status === 'uploading' && <span className="image-progress">{item.progress}%</span>}
-              <span className="selected-name" title={item.file.name}>{item.file.name}</span>
-              <span className="selected-size">{formatSize(item.file.size)}</span>
-              {item.error && <span className="field-error" role="alert">{item.error}</span>}
+              <div className="selected-details">
+                <div className="selected-file-heading">
+                  <span className="selected-name" title={item.file.name}>{item.file.name}</span>
+                  <button className="remove-image" aria-label={`移除 ${item.file.name}`} title="从列表移除" disabled={app.busy} onClick={() => app.removePending(item.id)}><X size={16} /></button>
+                </div>
+                <div className="selected-meta">
+                  <span className="selected-size">{formatSize(item.file.size)}</span>
+                  {item.status === 'done' ? <span className="image-done" aria-label="上传完成"><CheckCircle size={14} weight="fill" />已上传</span>
+                    : <span className="file-status">{item.status === 'uploading' ? '正在上传' : item.status === 'error' ? '上传失败' : '等待上传'}</span>}
+                </div>
+                {item.error && <span className="field-error" role="alert">{item.error}</span>}
+              </div>
+              {item.record && <div className="result-row">
+                <LinkSimple size={16} aria-hidden="true" />
+                <input aria-label={`${item.record.name} 的原始链接`} value={item.record.url} readOnly onFocus={event => event.target.select()} />
+                <button className="copy-link-button" title="复制原始 URL" aria-label={`复制 ${item.record.name} 的原始 URL`} onClick={() => app.copyUrl(item.record!.url)}><Copy size={15} /><span>复制链接</span></button>
+              </div>}
             </article>)}
-            {app.pending.length < MAX_FILES && <button className="add-image" aria-label="继续添加图片" disabled={app.busy || app.selecting} onClick={() => input.current?.click()}><Plus size={22} /><span>继续添加</span></button>}
           </div>
+          <div className="selection-footer">
+            {app.pending.length < MAX_FILES && <button className="add-image" aria-label="继续添加图片" disabled={app.busy || app.selecting} onClick={() => input.current?.click()}><Plus size={16} /><span>继续添加</span></button>}
+            {completed.length > 0 && <Link className="quiet-link" to="/history">查看上传记录 <ArrowUpRight size={14} /></Link>}
+          </div>
+          {(app.busy || completed.length === app.pending.length) && <UploadProgress value={progress}
+            label={app.busy ? `正在上传 ${app.pending.findIndex(item => item.status === 'uploading') + 1}/${app.pending.length}` : `上传完成 ${completed.length}/${app.pending.length}`} />}
         </div>}
-
-        {completed.length > 0 && <section className="upload-results">
-          <div className="selection-heading"><span className="success-title"><CheckCircle weight="fill" size={18} />上传完成</span><Link className="quiet-link" to="/history">查看全部记录 <ArrowRight size={14} /></Link></div>
-          {completed.map(item => {
-            const record = item.record
-            return record && <div className="result-row" key={item.id}>
-              <img src={item.preview} alt="" /><div className="result-info"><strong>{record.name}</strong><input aria-label={`${record.name} 的原始链接`} value={record.url} readOnly onFocus={event => event.target.select()} /></div>
-              <button className="icon-button" title="复制原始 URL" aria-label={`复制 ${record.name} 的原始 URL`} onClick={() => app.copyUrl(record.url)}><Copy size={18} /></button>
-            </div>
-          })}
-        </section>}
 
         <div className="hero-bottom">
           <span><LinkSimple size={15} />一个链接，连接你的每次分享</span>
@@ -131,4 +137,34 @@ export default function Home({ app }: { app: AppState }) {
       <div className="workflow-step"><span className="step-icon"><LinkSimple size={22} weight="light" /></span><div><h2>随处分享</h2><p>复制链接，嵌入你的世界</p></div></div>
     </section>
   </main>
+}
+
+function UploadProgress({ value, label }: { value: number; label: string }) {
+  const panel = useRef<HTMLDivElement>(null)
+  const bar = useRef<HTMLProgressElement>(null)
+  const percentage = useRef<HTMLSpanElement>(null)
+  const moveProgress = useRef<gsap.QuickToFunc | null>(null)
+
+  useGSAP(() => {
+    const element = bar.current!
+    const text = percentage.current!
+    // 复用同一补间，新进度从当前显示值继续；不逐帧触发 React 和星空重绘。
+    moveProgress.current = gsap.quickTo(element, 'value', {
+      duration: 0.65,
+      ease: 'power2.out',
+      onUpdate: () => { text.textContent = `${Math.floor(element.value)}%` },
+    })
+    return () => { moveProgress.current = null }
+  }, { scope: panel })
+
+  useGSAP(() => {
+    const move = moveProgress.current!
+    move(value)
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) move.tween.progress(1).pause()
+  }, { dependencies: [value], scope: panel })
+
+  return <div className="upload-progress-panel" ref={panel}>
+    <div className="upload-progress-heading"><span>{label}</span><span ref={percentage} aria-hidden="true">0%</span></div>
+    <progress ref={bar} className="upload-progress" value={0} max={100} aria-label="图片上传总进度" />
+  </div>
 }

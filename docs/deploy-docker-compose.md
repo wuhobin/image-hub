@@ -57,6 +57,8 @@ sudo chmod 750 logs
 
 ## 2. 本地打包并上传
 
+本地需安装 Node.js 22.12+。首次构建或更新前端锁文件后执行 `npm --prefix frontend ci`（Windows 上先停止 Vite）；Maven 会自动构建前端到 resources/static，再打包到同一个 JAR。服务器无需 Node.js。
+
 在本地 PowerShell 中执行：
 
 ```powershell
@@ -168,6 +170,8 @@ sudo docker compose logs --tail=100 -f image-hub
 ```bash
 curl --fail --show-error http://127.0.0.1:9000/api/health
 ```
+
+浏览器打开 `http://SERVER_IP:9000/` 即可使用前端，`/login`、`/register`、`/history` 支持刷新。前端接口使用同源 `/api`。
 
 期望 HTTP 请求成功，JSON 中 `code` 为 200、`data.status` 为 `UP`。该接口只代表 Web 应用可响应，不验证 MySQL、Redis、七牛云或 SMTP；上线前仍需按业务流程验证数据库操作、缓存、文件上传和邮件投递。本 Compose 没有内置健康检查，`ps` 显示 running 不能单独证明应用已就绪。
 

@@ -24,8 +24,11 @@ function Header({ app }: { app: AppState }) {
         <NavLink to="/" end>上传图片</NavLink>
         <NavLink to="/history">上传记录</NavLink>
       </nav>}
-      <div className="header-actions">
-        {app.user ? <>
+      <div className="header-actions" aria-busy={app.initializing}>
+        {/* 登录态尚未确认时保留占位，避免把空 user 提前当成游客。 */}
+        {app.initializing ? <span className="session-placeholder" role="status" aria-label="正在恢复登录状态">
+          <span className="avatar" aria-hidden="true" /><span className="session-placeholder-name" aria-hidden="true" />
+        </span> : app.user ? <>
           <span className="user-name"><span className="avatar">{app.user.slice(0, 1).toUpperCase()}</span><span>{app.user}</span></span>
           <button className="icon-button logout-button" aria-label="退出登录" title="退出登录" onClick={app.logout}><SignOut size={19} /></button>
         </> : authPage
@@ -37,8 +40,8 @@ function Header({ app }: { app: AppState }) {
 }
 
 export default function App() {
-  const app = useImageHub()
   const location = useLocation()
+  const app = useImageHub(location.pathname === '/')
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'instant' })
     const titles: Record<string, string> = { '/': '你的图片，即刻分享', '/history': '上传记录', '/login': '登录', '/register': '注册' }
