@@ -109,7 +109,7 @@ try {
   await goHistory();
   check(completedPreviews.every(url => revoked.has(url)), 'Release completed local previews');
   await goHome();
-  check(!document.querySelector('.selection-panel, .upload-results, progress'), 'Return home with completed results cleared');
+  check(!document.querySelector('.selection-panel, .result-row, progress'), 'Return home with completed results cleared');
 
   select(2); await until(() => document.querySelectorAll('.selected-image').length === 2);
   const readyPreviews = [...document.querySelectorAll('.selected-preview img')].map(img => img.src);
@@ -123,7 +123,7 @@ try {
   await goHistory();
   request.onerror(); request.onloadend(); await wait(100);
   await goHome();
-  check(document.querySelectorAll('.selected-image').length === 1 && document.querySelector('.field-error') && !document.querySelector('.upload-results'), 'Preserve failure and clean background completion');
+  check(document.querySelectorAll('.selected-image').length === 1 && document.querySelector('.field-error') && !document.querySelector('.result-row'), 'Preserve failure and clean background completion');
   check(revoked.has(readyPreviews[0]) && !revoked.has(readyPreviews[1]), 'Release only completed previews');
   document.querySelector('.button-upload').click(); await until(() => bar());
   const matchMedia = window.matchMedia.bind(window);
