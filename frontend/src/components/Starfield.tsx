@@ -60,6 +60,7 @@ const lensFragment = `
   uniform float uHasBox;
   uniform float uRadius;
   uniform float uArrival;
+  uniform float uIntroBurst;
   varying vec2 vUv;
 
   vec3 sampleStars(vec2 uv) {
@@ -73,8 +74,10 @@ const lensFragment = `
     float edge = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - uRadius;
     float outside = max(edge, 0.0);
     float amount = uHasBox * uArrival;
-    float spread = 1.0 + uExpansion * 0.28;
-    float mass = 1.0 + uEnergy * 0.3 + uExpansion * 0.35;
+    // 开场扩散独立于悬停，结束后归零；只扩大框外星光，不改变上传框尺寸。
+    float burst = uIntroBurst * uHasBox;
+    float spread = 1.0 + uExpansion * 0.28 + burst * 1.8;
+    float mass = 1.0 + uEnergy * 0.3 + uExpansion * 0.35 + burst * 0.65;
 
     // Point-mass lens equation over a rounded rectangle: stars curve and stretch
     // continuously near the boundary, rather than repeating shifted copies.
@@ -87,6 +90,7 @@ const lensFragment = `
     vec2 bent = (uBox.xy + p * 0.45 + direction * source * 1.8) / uResolution;
     float influence = amount * (1.0 - smoothstep(45.0 * spread, 115.0 * spread, edge));
     vec3 light = sampleStars(mix(vUv, bent, influence));
+    light *= 1.0 + burst * influence * 0.8;
     light *= mix(1.0, smoothstep(-1.0, 1.0, edge), amount);
     vec2 title = (p - vec2(0.0, uBox.w + 110.0)) / vec2(max(uBox.z * 1.25, 210.0), 200.0);
     float quiet = (1.0 - smoothstep(0.35, 1.0, length(title))) * smoothstep(12.0, 48.0, edge);
@@ -108,12 +112,12 @@ const lensFragment = `
           compressed += sampleStars(bent + ray / uResolution) * weight;
         }
       }
-      light += compressed * (coverage + exp(-abs(ring) / 0.6) * 0.3) * amount * 3.0;
+      light += compressed * (coverage + exp(-abs(ring) / 0.6) * 0.3) * amount * (3.0 + burst * 2.0);
     }
 
     float orbit = atan(direction.y, direction.x) + uTime * 0.45;
     float flow = 0.12 + 1.4 * pow(0.5 + 0.32 * sin(orbit * 2.0) + 0.18 * sin(orbit * 5.0), 2.0);
-    float flare = max(exp(-outside / (20.0 * spread)) - exp(-5.0), 0.0) * 0.035 * flow;
+    float flare = max(exp(-outside / (20.0 * spread)) - exp(-5.0), 0.0) * 0.035 * flow * (1.0 + burst * 2.0);
     light += vec3(0.5, 0.72, 1.0) * flare * amount * smoothstep(-0.5, 0.5, edge);
     float vignette = 1.0 - smoothstep(0.22, 0.85, distance(vUv, vec2(0.5, 0.5)));
     float bottomFade = smoothstep(0.0, 0.18, vUv.y);
@@ -127,240 +131,317 @@ const lensFragment = `
   }
 `
 
-type Props = { target?: RefObject<HTMLDivElement | null>; active?: boolean; paused: boolean }
+export type StarfieldProps = { target?: RefObject<HTMLDivElement | null>; active?: boolean; paused: boolean }
 
-export default memo(function Starfield({ target, active = false, paused }: Props) {
+export default memo(function Starfield({ target, active = false, paused }: StarfieldProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const activeRef = useRef(active)
   const pausedRef = useRef(paused)
   useEffect(() => { activeRef.current = active }, [active])
-  useEffect(() => { pausedRef.current = paused }, [paused])
+  const wake = useRef(() => {})
+  useEffect(() => { pausedRef.current = paused; wake.current() }, [paused])
 
-  useGSAP(() => {
-    const host = hostRef.current
-    if (!host) return
-    let renderer: THREE.WebGLRenderer
-    try {
-      renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, powerPreference: 'low-power' })
-    } catch {
-      // Keep the CSS background and all product interactions when WebGL is unavailable.
-      return
-    }
-    host.appendChild(renderer.domElement)
-    renderer.toneMapping = THREE.ReinhardToneMapping
-    renderer.domElement.setAttribute('aria-hidden', 'true')
-    const scene = new THREE.Scene()
-    const camera = new THREE.PerspectiveCamera(65, 1, 0.1, 100)
-    const geometry = new THREE.BufferGeometry()
-    const count = window.innerWidth < 600 ? 3000 : 7000
-    const positions = new Float32Array(count * 3)
-    const stars = new Float32Array(count * 4)
-    const tints = new Float32Array(count * 3)
-    for (let i = 0; i < count; i++) {
-      positions[i * 3] = (Math.random() - 0.5) * 90
-      positions[i * 3 + 1] = (Math.random() - 0.5) * 60
-      positions[i * 3 + 2] = -Math.random() * 55 - 6
-      stars.set([0.3 + Math.pow(Math.random(), 3) * 1.9, 0.07 + Math.pow(Math.random(), 4) * 2.1, Math.random() * 100, 0.65 + Math.random() * 0.9], i * 4)
-      const color = Math.random()
-      tints.set(color < 0.65 ? [0.32, 0.63, 1] : color < 0.94 ? [0.85, 0.91, 1] : [1, 0.76, 0.52], i * 3)
-    }
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-    geometry.setAttribute('aStar', new THREE.BufferAttribute(stars, 4))
-    geometry.setAttribute('aTint', new THREE.BufferAttribute(tints, 3))
-    const pointsMaterial = new THREE.ShaderMaterial({
-      vertexShader: pointVertex, fragmentShader: pointFragment,
-      uniforms: { uTime: { value: 0 }, uDpr: { value: 1 } },
-      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-    })
-    const points = new THREE.Points(geometry, pointsMaterial)
-    scene.add(points)
-    const texture = new THREE.WebGLRenderTarget(1, 1, {
-      depthBuffer: false,
-      type: renderer.extensions.has('EXT_color_buffer_float') ? THREE.HalfFloatType : THREE.UnsignedByteType,
-    })
-    const postScene = new THREE.Scene()
-    const postCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
-    const postGeometry = new THREE.PlaneGeometry(2, 2)
-    const material = new THREE.ShaderMaterial({
-      vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }',
-      fragmentShader: lensFragment,
-      uniforms: {
-        uStars: { value: texture.texture }, uResolution: { value: new THREE.Vector2(1, 1) },
-        uBox: { value: new THREE.Vector4(0, 0, 1, 1) }, uTime: { value: 0 },
-        uEnergy: { value: 0 }, uHasBox: { value: target ? 1 : 0 },
-        uExpansion: { value: 0 },
-        uRadius: { value: 0 }, uArrival: { value: 0 },
-      },
-    })
-    postScene.add(new THREE.Mesh(postGeometry, material))
-    let width = 1
-    let height = 1
-    let boxDirty = true
-    let sizeDirty = true
-    const resize = () => {
-      const nextWidth = Math.max(host.clientWidth, 1)
-      const nextHeight = Math.max(host.clientHeight, 1)
-      const dpr = Math.min(window.devicePixelRatio, nextWidth < 600 ? 1.25 : 1.5)
-      const dprChanged = renderer.getPixelRatio() !== dpr
-      if (width !== nextWidth || height !== nextHeight || dprChanged) {
-        width = nextWidth
-        height = nextHeight
-        if (dprChanged) renderer.setPixelRatio(dpr)
-        renderer.setSize(width, height)
-        texture.setSize(Math.round(width * dpr), Math.round(height * dpr))
+  useGSAP((_context, contextSafe) => {
+    // 留出一次页面绘制，并让 StrictMode 的检查先完成，避免重复创建昂贵的 WebGL 上下文。
+    // contextSafe 让延后的补间和清理函数仍归属当前组件，切换页面时一并回收。
+    const initialize = contextSafe!(() => {
+      const host = hostRef.current
+      if (!host) return
+      let renderer: THREE.WebGLRenderer
+      try {
+        renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, powerPreference: 'low-power' })
+      } catch {
+        // Keep the CSS background and all product interactions when WebGL is unavailable.
+        return
       }
-      // 首页以视口为固定取景范围，内容增高只向下延伸，不缩放或挪动原有星点。
-      camera.setViewOffset(width, target ? window.innerHeight : height, 0, 0, width, height)
-      pointsMaterial.uniforms.uDpr.value = dpr
-      material.uniforms.uResolution.value.set(width, height)
-      sizeDirty = false
-      boxDirty = true
-    }
-    const onResize = () => { sizeDirty = true }
-    const observer = new ResizeObserver(onResize)
-    observer.observe(host)
-    if (target?.current) observer.observe(target.current)
-    window.addEventListener('resize', onResize)
-    const wanted = { x: 0, y: 0, expansion: 0, energy: 0 }
-    const motion = { ...wanted }
-    // Reuse four tweens; retarget from the current value instead of reversing an
-    // eased timeline (which feels unresponsive when hover changes near its ends).
-    const controls = (Object.keys(wanted) as (keyof typeof wanted)[]).map(key => ({
-      key,
-      destination: Number.NaN,
-      to: gsap.quickTo(motion, key, { duration: 0.85, ease: 'power3.out', paused: true }),
-    }))
-    const surface = host.parentElement ?? host
-    const uploadSurface = target?.current
-    const entrance = { progress: 0 }
-    const introMotion = gsap.timeline({ paused: true })
-      .to(entrance, { progress: 1, duration: 4.4, ease: 'power3.out' }, 0)
-      .to(material.uniforms.uArrival, { value: 1, duration: 1.7, ease: 'power2.inOut' }, 1.1)
-      .from(renderer.domElement, { autoAlpha: 0, duration: 1.4, ease: 'sine.out' }, 0)
-    const hoverMotion = gsap.timeline({ paused: true, defaults: { duration: 1, ease: 'none' } })
-      .to(material.uniforms.uExpansion, { value: 1 }, 0)
-    const uploadIcon = uploadSurface?.querySelector('.upload-symbol')
-    if (uploadIcon) hoverMotion.to(uploadIcon, { y: -5, scale: 1.06 }, 0)
-    let hovered = false
-    const enterUpload = (event: PointerEvent) => { if (event.pointerType === 'mouse') hovered = true }
-    const leaveUpload = () => { hovered = false }
-    uploadSurface?.addEventListener('pointerenter', enterUpload)
-    uploadSurface?.addEventListener('pointerleave', leaveUpload)
-    uploadSurface?.addEventListener('pointercancel', leaveUpload)
-    window.addEventListener('blur', leaveUpload)
-    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
-    let hostBounds = host.getBoundingClientRect()
-    let pointerEvent: PointerEvent | null = null
-    const onPointer = (event: PointerEvent) => {
-      if (event.pointerType !== 'mouse' || pausedRef.current || reducedMotion.matches) return
-      pointerEvent = event
-    }
-    const resetPointer = () => { pointerEvent = null; wanted.x = wanted.y = 0 }
-    const onScroll = () => { boxDirty = true }
-    surface.addEventListener('pointermove', onPointer, { passive: true })
-    surface.addEventListener('pointerleave', resetPointer)
-    window.addEventListener('blur', resetPointer)
-    window.addEventListener('scroll', onScroll, { passive: true, capture: true })
-    let visible = true
-    const visibility = new IntersectionObserver(([entry]) => { visible = entry.isIntersecting })
-    visibility.observe(host)
-    let elapsed = 0
-    let renderedStatic = false
-    const resetStatic = () => { resetPointer(); renderedStatic = false; boxDirty = true }
-    reducedMotion.addEventListener('change', resetStatic)
-    const render = (_time: number, deltaMs: number) => {
-      const delta = Math.min(deltaMs / 1000, 0.05)
-      if (!visible || document.hidden) return
-      // 调整缓冲区会清空画布，必须紧接着绘制，避免 ResizeObserver 留下一帧空白。
-      if (sizeDirty) resize()
-      const still = reducedMotion.matches || pausedRef.current
-      if (still && renderedStatic && !boxDirty) return
-      if (!still) elapsed += delta
-      if (boxDirty) {
-        hostBounds = host.getBoundingClientRect()
-        if (target?.current) {
-          const rect = target.current.getBoundingClientRect()
-          material.uniforms.uBox.value.set(
-            rect.left - hostBounds.left + rect.width / 2,
-            height - (rect.top - hostBounds.top + rect.height / 2),
-            rect.width / 2, rect.height / 2,
-          )
-          material.uniforms.uRadius.value = parseFloat(getComputedStyle(target.current).borderTopLeftRadius) || 0
-        }
-        boxDirty = false
+      host.appendChild(renderer.domElement)
+      renderer.toneMapping = THREE.ReinhardToneMapping
+      renderer.domElement.setAttribute('aria-hidden', 'true')
+      const scene = new THREE.Scene()
+      const camera = new THREE.PerspectiveCamera(65, 1, 0.1, 100)
+      const geometry = new THREE.BufferGeometry()
+      const count = window.innerWidth < 600 ? 3000 : 7000
+      const positions = new Float32Array(count * 3)
+      const stars = new Float32Array(count * 4)
+      const tints = new Float32Array(count * 3)
+      for (let i = 0; i < count; i++) {
+        positions[i * 3] = (Math.random() - 0.5) * 90
+        positions[i * 3 + 1] = (Math.random() - 0.5) * 60
+        positions[i * 3 + 2] = -Math.random() * 55 - 6
+        stars.set([0.3 + Math.pow(Math.random(), 3) * 1.9, 0.07 + Math.pow(Math.random(), 4) * 2.1, Math.random() * 100, 0.65 + Math.random() * 0.9], i * 4)
+        const color = Math.random()
+        tints.set(color < 0.65 ? [0.32, 0.63, 1] : color < 0.94 ? [0.85, 0.91, 1] : [1, 0.76, 0.52], i * 3)
       }
-      // One clock drives rendering and GSAP, so offscreen/pause also freezes shader tweens.
-      introMotion.time(still ? introMotion.duration() : Math.max(introMotion.time(), Math.min(elapsed, introMotion.duration())))
-      camera.position.z = 8 * (1 - entrance.progress)
-      if (!still) {
-        // Consume only the latest pointer event per frame, with cached bounds.
-        if (pointerEvent) {
-          wanted.x = THREE.MathUtils.clamp((pointerEvent.clientX - hostBounds.left) / Math.max(hostBounds.width, 1) * 2 - 1, -1, 1)
-          wanted.y = THREE.MathUtils.clamp(1 - (pointerEvent.clientY - hostBounds.top) / Math.max(hostBounds.height, 1) * 2, -1, 1)
-          pointerEvent = null
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+      geometry.setAttribute('aStar', new THREE.BufferAttribute(stars, 4))
+      geometry.setAttribute('aTint', new THREE.BufferAttribute(tints, 3))
+      const pointsMaterial = new THREE.ShaderMaterial({
+        vertexShader: pointVertex, fragmentShader: pointFragment,
+        uniforms: { uTime: { value: 0 }, uDpr: { value: 1 } },
+        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      })
+      const points = new THREE.Points(geometry, pointsMaterial)
+      scene.add(points)
+      const texture = new THREE.WebGLRenderTarget(1, 1, {
+        depthBuffer: false,
+        type: renderer.extensions.has('EXT_color_buffer_float') ? THREE.HalfFloatType : THREE.UnsignedByteType,
+      })
+      const postScene = new THREE.Scene()
+      const postCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
+      const postGeometry = new THREE.PlaneGeometry(2, 2)
+      const material = new THREE.ShaderMaterial({
+        vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }',
+        fragmentShader: lensFragment,
+        uniforms: {
+          uStars: { value: texture.texture }, uResolution: { value: new THREE.Vector2(1, 1) },
+          uBox: { value: new THREE.Vector4(0, 0, 1, 1) }, uTime: { value: 0 },
+          uEnergy: { value: 0 }, uHasBox: { value: target ? 1 : 0 },
+          uExpansion: { value: 0 },
+          uRadius: { value: 0 }, uArrival: { value: 0 }, uIntroBurst: { value: 0 },
+        },
+      })
+      postScene.add(new THREE.Mesh(postGeometry, material))
+      let quality = 1
+      let width = 1
+      let height = 1
+      let boxDirty = true
+      let sizeDirty = true
+      const resize = () => {
+        const nextWidth = Math.max(host.clientWidth, 1)
+        const nextHeight = Math.max(host.clientHeight, 1)
+        // 同时限制像素密度和总像素数，避免大屏、长列表放大两遍全屏后处理的成本。
+        const dpr = Math.min(window.devicePixelRatio, nextWidth < 600 ? 1 : 1.5,
+          Math.sqrt(1_000_000 / (nextWidth * nextHeight))) * quality
+        const dprChanged = renderer.getPixelRatio() !== dpr
+        if (width !== nextWidth || height !== nextHeight || dprChanged) {
+          width = nextWidth
+          height = nextHeight
+          if (dprChanged) renderer.setPixelRatio(dpr)
+          renderer.setSize(width, height)
+          texture.setSize(Math.round(width * dpr), Math.round(height * dpr))
         }
-        wanted.expansion = hovered ? 1 : 0
-        wanted.energy = activeRef.current ? 1 : 0
-        for (const control of controls) {
-          if (control.destination !== wanted[control.key]) {
-            control.destination = wanted[control.key]
-            if (control.key === 'expansion') control.to.tween.duration(hovered ? 0.85 : 1.1)
-            control.to(control.destination).pause()
+        // 首页以视口为固定取景范围，内容增高只向下延伸，不缩放或挪动原有星点。
+        camera.setViewOffset(width, target ? window.innerHeight : height, 0, 0, width, height)
+        pointsMaterial.uniforms.uDpr.value = dpr
+        material.uniforms.uResolution.value.set(width, height)
+        sizeDirty = false
+        boxDirty = true
+      }
+      const onResize = () => { sizeDirty = true; syncLoop() }
+      const observer = new ResizeObserver(onResize)
+      observer.observe(host)
+      if (target?.current) observer.observe(target.current)
+      window.addEventListener('resize', onResize)
+      const wanted = { x: 0, y: 0, expansion: 0, energy: 0 }
+      const motion = { ...wanted }
+      // Reuse four tweens; retarget from the current value instead of reversing an
+      // eased timeline (which feels unresponsive when hover changes near its ends).
+      const controls = (Object.keys(wanted) as (keyof typeof wanted)[]).map(key => ({
+        key,
+        destination: Number.NaN,
+        to: gsap.quickTo(motion, key, { duration: 0.85, ease: 'power3.out', paused: true }),
+      }))
+      const surface = host.closest<HTMLElement>('.hero, .auth-story') ?? host.parentElement ?? host
+      const uploadSurface = target?.current
+      const entrance = { progress: 0 }
+      const introMotion = gsap.timeline({ paused: true })
+        .to(entrance, { progress: 1, duration: 4.4, ease: 'power3.out' }, 0)
+        .to(material.uniforms.uArrival, { value: 1, duration: 1.7, ease: 'power2.inOut' }, 1.1)
+        .from(renderer.domElement, { autoAlpha: 0, duration: 1.4, ease: 'sine.out' }, 0)
+      if (uploadSurface) {
+        // 与画布共用时钟；减少动态效果或暂停时直接落到无扩散的最终状态。
+        introMotion
+          .to(material.uniforms.uIntroBurst, { value: 1, duration: 1.55, ease: 'power2.inOut' }, 0.75)
+          .to(material.uniforms.uIntroBurst, { value: 0, duration: 3.5, ease: 'power2.inOut' }, 2.3)
+      }
+      const hoverMotion = gsap.timeline({ paused: true, defaults: { duration: 1, ease: 'none' } })
+        .to(material.uniforms.uExpansion, { value: 1 }, 0)
+      const uploadIcon = uploadSurface?.querySelector('.upload-symbol')
+      if (uploadIcon) hoverMotion.to(uploadIcon, { y: -5, scale: 1.06 }, 0)
+      let hovered = false
+      const enterUpload = (event: PointerEvent) => { if (event.pointerType === 'mouse') hovered = true }
+      const leaveUpload = () => { hovered = false }
+      uploadSurface?.addEventListener('pointerenter', enterUpload)
+      uploadSurface?.addEventListener('pointerleave', leaveUpload)
+      uploadSurface?.addEventListener('pointercancel', leaveUpload)
+      window.addEventListener('blur', leaveUpload)
+      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
+      let hostBounds = host.getBoundingClientRect()
+      let pointerEvent: PointerEvent | null = null
+      const onPointer = (event: PointerEvent) => {
+        if (event.pointerType !== 'mouse' || pausedRef.current || reducedMotion.matches) return
+        pointerEvent = event
+      }
+      const resetPointer = () => { pointerEvent = null; wanted.x = wanted.y = 0 }
+      const onScroll = () => { boxDirty = true; syncLoop() }
+      surface.addEventListener('pointermove', onPointer, { passive: true })
+      surface.addEventListener('pointerleave', resetPointer)
+      window.addEventListener('blur', resetPointer)
+      window.addEventListener('scroll', onScroll, { passive: true, capture: true })
+      let visible = false
+      const visibility = new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; syncLoop() })
+      visibility.observe(host)
+      let elapsed = 0
+      let renderedStatic = false
+      const resetStatic = () => { resetPointer(); renderedStatic = false; boxDirty = true; syncLoop() }
+      reducedMotion.addEventListener('change', resetStatic)
+      let accumulatedMs = 0
+      let sampleMs = 0
+      let sampleFrames = 0
+      const render = (_time: number, deltaMs: number) => {
+        if (!visible || document.hidden || failed) return
+        const still = reducedMotion.matches || pausedRef.current
+        accumulatedMs += deltaMs
+        // 移动端背景最多 30 帧；只节流装饰，业务交互仍按浏览器正常帧率响应。
+        const interval = width < 600 ? 1000 / 30 : 1000 / 60
+        if (!still && !sizeDirty && !boxDirty && accumulatedMs < interval - 1) return
+        const delta = Math.min(accumulatedMs / 1000, 0.1)
+        accumulatedMs = 0
+        // 连续慢帧才降低分辨率，避免一次网络回调或着色器准备影响画质。
+        if (!still && deltaMs > 0) {
+          sampleMs += deltaMs
+          sampleFrames++
+          if (sampleFrames >= 45) {
+            if (sampleMs / sampleFrames > 40 && quality > 0.65) {
+              quality = Math.max(0.65, quality - 0.15)
+              sizeDirty = true
+            }
+            sampleMs = sampleFrames = 0
           }
-          // Manually advance reusable tweens so pause/offscreen cannot run ahead.
-          control.to.tween.time(control.to.tween.time() + delta)
         }
-        camera.position.x = -motion.x * 1.4
-        camera.position.y = -motion.y * 0.85
-        camera.rotation.y = motion.x * 0.012
-        camera.rotation.x = -motion.y * 0.009
-        points.rotation.y = Math.sin(elapsed * 0.018) * 0.045
-        points.rotation.z = Math.sin(elapsed * 0.025) * 0.008
-      } else if (reducedMotion.matches) {
-        camera.position.x = camera.position.y = 0
-        camera.rotation.set(0, 0, 0)
+        // 调整缓冲区会清空画布，必须紧接着绘制，避免 ResizeObserver 留下一帧空白。
+        if (sizeDirty) resize()
+        if (still && renderedStatic && !boxDirty) return
+        if (!still) elapsed += delta
+        if (boxDirty) {
+          hostBounds = host.getBoundingClientRect()
+          if (target?.current) {
+            const rect = target.current.getBoundingClientRect()
+            material.uniforms.uBox.value.set(
+              rect.left - hostBounds.left + rect.width / 2,
+              height - (rect.top - hostBounds.top + rect.height / 2),
+              rect.width / 2, rect.height / 2,
+            )
+            material.uniforms.uRadius.value = parseFloat(getComputedStyle(target.current).borderTopLeftRadius) || 0
+          }
+          boxDirty = false
+        }
+        // One clock drives rendering and GSAP, so offscreen/pause also freezes shader tweens.
+        introMotion.time(still ? introMotion.duration() : Math.max(introMotion.time(), Math.min(elapsed, introMotion.duration())))
+        camera.position.z = 8 * (1 - entrance.progress)
+        if (!still) {
+          // Consume only the latest pointer event per frame, with cached bounds.
+          if (pointerEvent) {
+            wanted.x = THREE.MathUtils.clamp((pointerEvent.clientX - hostBounds.left) / Math.max(hostBounds.width, 1) * 2 - 1, -1, 1)
+            wanted.y = THREE.MathUtils.clamp(1 - (pointerEvent.clientY - hostBounds.top) / Math.max(hostBounds.height, 1) * 2, -1, 1)
+            pointerEvent = null
+          }
+          wanted.expansion = hovered ? 1 : 0
+          wanted.energy = activeRef.current ? 1 : 0
+          for (const control of controls) {
+            if (control.destination !== wanted[control.key]) {
+              control.destination = wanted[control.key]
+              if (control.key === 'expansion') control.to.tween.duration(hovered ? 0.85 : 1.1)
+              control.to(control.destination).pause()
+            }
+            // Manually advance reusable tweens so pause/offscreen cannot run ahead.
+            control.to.tween.time(control.to.tween.time() + delta)
+          }
+          camera.position.x = -motion.x * 1.4
+          camera.position.y = -motion.y * 0.85
+          camera.rotation.y = motion.x * 0.012
+          camera.rotation.x = -motion.y * 0.009
+          points.rotation.y = Math.sin(elapsed * 0.018) * 0.045
+          points.rotation.z = Math.sin(elapsed * 0.025) * 0.008
+        } else if (reducedMotion.matches) {
+          camera.position.x = camera.position.y = 0
+          camera.rotation.set(0, 0, 0)
+        }
+        pointsMaterial.uniforms.uTime.value = elapsed
+        material.uniforms.uTime.value = elapsed
+        material.uniforms.uEnergy.value = reducedMotion.matches ? 0 : motion.energy
+        if (reducedMotion.matches) {
+          hoverMotion.time(0)
+        } else if (!still) {
+          hoverMotion.progress(motion.expansion)
+        }
+        renderer.setClearColor(0x000000)
+        renderer.setRenderTarget(texture)
+        renderer.render(scene, camera)
+        renderer.setRenderTarget(null)
+        renderer.render(postScene, postCamera)
+        renderedStatic = still
       }
-      pointsMaterial.uniforms.uTime.value = elapsed
-      material.uniforms.uTime.value = elapsed
-      material.uniforms.uEnergy.value = reducedMotion.matches ? 0 : motion.energy
-      if (reducedMotion.matches) {
-        hoverMotion.time(0)
-      } else if (!still) {
-        hoverMotion.progress(motion.expansion)
+      // 暂停、离屏和后台标签不保留空转 ticker；恢复时先同步几何边界。
+      let disposed = false
+      let ready = false
+      let failed = false
+      let running = false
+      const syncLoop = () => {
+        const drawable = ready && !disposed && !failed && visible && !document.hidden
+        const animate = drawable && !pausedRef.current && !reducedMotion.matches
+        if (animate && !running) {
+          accumulatedMs = 0
+          boxDirty = true
+          gsap.ticker.add(render)
+          running = true
+        } else if (!animate && running) {
+          gsap.ticker.remove(render)
+          running = false
+        }
+        if (drawable && !animate) render(0, 0)
       }
-      renderer.setClearColor(0x000000)
+      wake.current = () => { renderedStatic = false; syncLoop() }
+      document.addEventListener('visibilitychange', syncLoop)
+      // 着色器先并行准备，完成后再启动开场时钟，避免首次绘制同步等待编译。
+      resize()
       renderer.setRenderTarget(texture)
-      renderer.render(scene, camera)
+      const starsReady = renderer.compileAsync(scene, camera)
       renderer.setRenderTarget(null)
-      renderer.render(postScene, postCamera)
-      renderedStatic = still
-    }
-    gsap.ticker.add(render)
-    const onLost = (event: Event) => { event.preventDefault(); host.classList.add('webgl-unavailable') }
-    renderer.domElement.addEventListener('webglcontextlost', onLost)
-    return () => {
-      gsap.ticker.remove(render)
-      observer.disconnect()
-      window.removeEventListener('resize', onResize)
-      visibility.disconnect()
-      surface.removeEventListener('pointermove', onPointer)
-      surface.removeEventListener('pointerleave', resetPointer)
-      window.removeEventListener('blur', resetPointer)
-      window.removeEventListener('scroll', onScroll, true)
-      uploadSurface?.removeEventListener('pointerenter', enterUpload)
-      uploadSurface?.removeEventListener('pointerleave', leaveUpload)
-      uploadSurface?.removeEventListener('pointercancel', leaveUpload)
-      window.removeEventListener('blur', leaveUpload)
-      reducedMotion.removeEventListener('change', resetStatic)
-      renderer.domElement.removeEventListener('webglcontextlost', onLost)
-      geometry.dispose()
-      pointsMaterial.dispose()
-      postGeometry.dispose()
-      material.dispose()
-      texture.dispose()
-      renderer.dispose()
-      renderer.domElement.remove()
-    }
+      const lensReady = renderer.compileAsync(postScene, postCamera)
+      void Promise.all([starsReady, lensReady]).then(() => {
+        if (disposed) return
+        ready = true
+        syncLoop()
+      }).catch(() => {
+        if (!disposed) host.classList.add('webgl-unavailable')
+      })
+      const onLost = (event: Event) => {
+        event.preventDefault()
+        failed = true
+        host.classList.add('webgl-unavailable')
+        syncLoop()
+      }
+      renderer.domElement.addEventListener('webglcontextlost', onLost)
+      return () => {
+        disposed = true
+        wake.current = () => {}
+        document.removeEventListener('visibilitychange', syncLoop)
+        gsap.ticker.remove(render)
+        observer.disconnect()
+        window.removeEventListener('resize', onResize)
+        visibility.disconnect()
+        surface.removeEventListener('pointermove', onPointer)
+        surface.removeEventListener('pointerleave', resetPointer)
+        window.removeEventListener('blur', resetPointer)
+        window.removeEventListener('scroll', onScroll, true)
+        uploadSurface?.removeEventListener('pointerenter', enterUpload)
+        uploadSurface?.removeEventListener('pointerleave', leaveUpload)
+        uploadSurface?.removeEventListener('pointercancel', leaveUpload)
+        window.removeEventListener('blur', leaveUpload)
+        reducedMotion.removeEventListener('change', resetStatic)
+        renderer.domElement.removeEventListener('webglcontextlost', onLost)
+        geometry.dispose()
+        pointsMaterial.dispose()
+        postGeometry.dispose()
+        material.dispose()
+        texture.dispose()
+        renderer.dispose()
+        renderer.domElement.remove()
+      }
+    })
+    let frame = requestAnimationFrame(() => { frame = requestAnimationFrame(initialize) })
+    return () => cancelAnimationFrame(frame)
   }, { dependencies: [target], scope: hostRef, revertOnUpdate: true })
 
   return <div ref={hostRef} className="starfield" aria-hidden="true" />

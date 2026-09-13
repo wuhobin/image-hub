@@ -26,7 +26,7 @@ public interface ImageMapper extends BaseMapper<ImageFile> {
     @Select("SELECT COUNT(*) AS totalCount, COALESCE(SUM(size),0) AS totalBytes FROM hub_image WHERE user_id = #{userId} AND deleted = 0")
     ImageStatsVO stats(long userId);
 
-    // 自定义 SQL 需显式维护逻辑删除和更新时间。
-    @Update("UPDATE hub_image SET deleted = 1, update_time = CURRENT_TIMESTAMP(0) WHERE id = #{id} AND user_id = #{userId} AND deleted = 0")
+    // 逻辑删除会改变业务列，数据库 ON UPDATE 自动维护更新时间。
+    @Update("UPDATE hub_image SET deleted = 1 WHERE id = #{id} AND user_id = #{userId} AND deleted = 0")
     int deleteOwned(@Param("userId") long userId, @Param("id") String id);
 }

@@ -78,7 +78,15 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
             }
             throw new BizException(500, "上传记录保存失败，请稍后重试", e);
         }
-        return ImageVO.from(image);
+        // 时间由数据库生成，重新读取后再返回；入库已成功，回读失败不能触发云端补偿删除。
+        ImageFile saved;
+        try {
+            saved = imageMapper.findOwned(userId, id);
+        } catch (RuntimeException e) {
+            throw new BizException(500, "图片已保存，但读取记录失败，请刷新上传记录", e);
+        }
+        if (saved == null) throw new BizException(500, "图片已保存，但读取记录失败，请刷新上传记录");
+        return ImageVO.from(saved);
     }
 
     @Override

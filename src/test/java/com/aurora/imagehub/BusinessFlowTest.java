@@ -52,7 +52,7 @@ import static org.mockito.Mockito.*;
         "spring.datasource.url=jdbc:h2:mem:image_hub_business;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1;IGNORECASE=TRUE",
         "spring.datasource.driver-class-name=org.h2.Driver",
         "spring.datasource.username=sa", "spring.datasource.password=",
-        "spring.sql.init.mode=always", "spring.sql.init.schema-locations=file:deploy/db/schema.sql",
+        "spring.sql.init.mode=always", "spring.sql.init.schema-locations=file:deploy/db/schema.sql,classpath:h2-datetime-precision.sql",
         "platform.security.is-log=false"
 })
 @Import(BusinessFlowTest.MemorySessions.class)
@@ -141,11 +141,16 @@ class BusinessFlowTest {
         assertThat(persisted.getUpdateTime().toInstant().getNano()).isZero();
         assertThat(java.time.Instant.parse(image.path("createdAt").asText())).isEqualTo(persisted.getCreateTime().toInstant());
         var createTime = persisted.getCreateTime();
+        // 制造旧的数据库时间，确认更新时间来自数据库，而非传入实体。
+        jdbcTemplate.update("UPDATE hub_image SET update_time = ? WHERE id = ?",
+                java.sql.Timestamp.valueOf("2001-01-01 00:00:00"), persisted.getId());
+        persisted.setName("photo-renamed.png");
+        persisted.setCreateTime(new java.util.Date(0));
         persisted.setUpdateTime(new java.util.Date(0));
         assertThat(imageFileService.updateById(persisted)).isTrue();
         ImageFile updated = imageFileService.getById(persisted.getId());
         assertThat(updated.getCreateTime()).isEqualTo(createTime);
-        assertThat(updated.getUpdateTime()).isAfter(new java.util.Date(0));
+        assertThat(updated.getUpdateTime()).isAfter(java.sql.Timestamp.valueOf("2001-01-01 00:00:00"));
         assertThat(updated.getUpdateTime().toInstant().getNano()).isZero();
         JsonNode page = get("/api/images?search=photo&type=PNG&page=1&pageSize=1", first).path("data");
         assertThat(page.path("total").asInt()).isEqualTo(1);
@@ -281,14 +286,22 @@ class BusinessFlowTest {
         assertThat(user.getCreateTime().toInstant().getNano()).isZero();
         assertThat(user.getUpdateTime().toInstant().getNano()).isZero();
         var createTime = user.getCreateTime();
+        jdbcTemplate.update("UPDATE hub_user SET update_time = ? WHERE id = ?",
+                java.sql.Timestamp.valueOf("2001-01-01 00:00:00"), user.getId());
+        user.setEmail("archived-updated@example.test");
+        user.setCreateTime(new java.util.Date(0));
         user.setUpdateTime(new java.util.Date(0));
         assertThat(userAccountService.updateById(user)).isTrue();
         var updated = userAccountService.getById(user.getId());
         assertThat(updated.getCreateTime()).isEqualTo(createTime);
-        assertThat(updated.getUpdateTime()).isAfter(new java.util.Date(0));
+        assertThat(updated.getUpdateTime()).isAfter(java.sql.Timestamp.valueOf("2001-01-01 00:00:00"));
         assertThat(updated.getUpdateTime().toInstant().getNano()).isZero();
 
+        jdbcTemplate.update("UPDATE hub_user SET update_time = ? WHERE id = ?",
+                java.sql.Timestamp.valueOf("2001-01-01 00:00:00"), user.getId());
         assertThat(userAccountService.removeById(user.getId())).isTrue();
+        assertThat(jdbcTemplate.queryForObject("SELECT update_time FROM hub_user WHERE id = ?",
+                java.sql.Timestamp.class, user.getId())).isAfter(java.sql.Timestamp.valueOf("2001-01-01 00:00:00"));
         assertThat(jdbcTemplate.queryForObject("SELECT deleted FROM hub_user WHERE id = ?", Integer.class, user.getId())).isEqualTo(1);
         assertThat(userAccountService.getById(user.getId())).isNull();
         assertThat(userMapper.findById(user.getId())).isNull();
@@ -297,7 +310,56 @@ class BusinessFlowTest {
         assertThat(get("/api/auth/me", token).path("code").asInt()).isEqualTo(401);
         assertThat(post("/api/auth/register", Map.of("username", "archived", "email", "new@example.test",
                 "password", "secret123", "code", "654321"), null).path("code").asInt()).isEqualTo(409);
-        assertThat(post("/api/auth/email-code", Map.of("email", "archived@example.test"), null).path("code").asInt()).isEqualTo(409);
+        assertThat(post("/api/auth/email-code", Map.of("email", "archived-updated@example.test"), null).path("code").asInt()).isEqualTo(409);
+    }
+
+    @Test
+    void databaseIgnoresCallerSuppliedAuditTimesOnInsert() {
+        var callerTime = java.sql.Timestamp.valueOf("2001-01-01 00:00:00.123");
+        var user = new com.aurora.imagehub.model.entity.UserAccount();
+        user.setUsername("database-clock");
+        user.setEmail("database-clock@example.test");
+        user.setPasswordHash("unused-test-hash");
+        user.setCreateTime(callerTime);
+        user.setUpdateTime(callerTime);
+        assertThat(userAccountService.save(user)).isTrue();
+        var savedUser = userAccountService.getById(user.getId());
+        assertThat(savedUser.getCreateTime()).isAfter(callerTime);
+        assertThat(savedUser.getUpdateTime()).isAfter(callerTime);
+        assertThat(savedUser.getCreateTime().toInstant().getNano()).isZero();
+        assertThat(savedUser.getUpdateTime().toInstant().getNano()).isZero();
+
+        ImageFile image = new ImageFile();
+        image.setId(java.util.UUID.randomUUID().toString());
+        image.setUserId(user.getId());
+        image.setName("database-clock.png");
+        image.setUrl("https://cdn.example.test/database-clock.png");
+        image.setType("PNG");
+        image.setSize(100);
+        image.setWidth(3);
+        image.setHeight(2);
+        image.setStorageInfo("{}");
+        image.setCreateTime(callerTime);
+        image.setUpdateTime(callerTime);
+        assertThat(imageFileService.save(image)).isTrue();
+        ImageFile savedImage = imageFileService.getById(image.getId());
+        assertThat(savedImage.getCreateTime()).isAfter(callerTime);
+        assertThat(savedImage.getUpdateTime()).isAfter(callerTime);
+        assertThat(savedImage.getCreateTime().toInstant().getNano()).isZero();
+        assertThat(savedImage.getUpdateTime().toInstant().getNano()).isZero();
+    }
+
+    @Test
+    void failedUploadReadbackKeepsSavedRecordAndCloudFile() throws Exception {
+        register("readback", "readback@example.test");
+        String token = login("readback");
+        doThrow(new org.springframework.dao.DataAccessResourceFailureException("simulated read failure"))
+                .when(imageMapper).findOwned(anyLong(), anyString());
+        JsonNode response = upload(token, "saved.png", png());
+        assertThat(response.path("code").asInt()).isEqualTo(500);
+        assertThat(response.path("message").asText()).contains("图片已保存");
+        verify(ossTemplate, never()).delete(any(FileInfo.class));
+        assertThat(get("/api/images", token).path("data").path("total").asInt()).isEqualTo(1);
     }
 
     private void register(String username, String email) {

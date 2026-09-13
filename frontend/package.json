@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "build:backend": "tsc -b && vite build --outDir ../src/main/resources/static --emptyOutDir",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "node --experimental-strip-types --test src/lib/rules.test.ts src/lib/api.test.ts"
+    "test": "node --experimental-strip-types --test src/lib/rules.test.ts src/lib/api.test.ts",
+    "test:performance": "node scripts/check-performance.mjs"
   },
   "dependencies": {
     "@gsap/react": "^2.1.2",

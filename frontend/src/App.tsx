@@ -1,14 +1,16 @@
 import { lazy, Suspense, useEffect } from 'react'
 import { Link, NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
-import { ArrowUpRight, CheckCircle, ImageSquare, SignOut, WarningCircle, X } from '@phosphor-icons/react'
+import { ArrowUpRight } from '@phosphor-icons/react/dist/csr/ArrowUpRight'
+import { ImageSquare } from '@phosphor-icons/react/dist/csr/ImageSquare'
+import { SignOut } from '@phosphor-icons/react/dist/csr/SignOut'
 import Home from './pages/Home'
-import History from './pages/History'
-import Auth from './pages/Auth'
 import { Modal } from './components/Modal'
-import { ACCEPTED_TYPES, formatSize } from './lib/rules'
+import { NoticeToast } from './components/NoticeToast'
+import { formatSize } from './lib/rules'
 import { useImageHub } from './lib/useImageHub'
 
-export const Starfield = lazy(() => import('./components/Starfield'))
+const History = lazy(() => import('./pages/History'))
+const Auth = lazy(() => import('./pages/Auth'))
 export type AppState = ReturnType<typeof useImageHub>
 
 function Header({ app }: { app: AppState }) {
@@ -51,6 +53,7 @@ export default function App() {
   return <>
     <a className="skip-link" href="#main">跳到主要内容</a>
     <Header app={app} />
+    <Suspense fallback={<main id="main" className="empty-state" role="status">正在加载页面…</main>}>
     <Routes>
       <Route path="/" element={<Home app={app} />} />
       <Route path="/history" element={app.initializing ? <main id="main" className="empty-state" role="status">正在恢复登录状态…</main> : app.user ? <History app={app} /> : <Navigate to="/login" state={{ from: '/history' }} replace />} />
@@ -58,26 +61,16 @@ export default function App() {
       <Route path="/register" element={<Auth app={app} mode="register" />} />
       <Route path="*" element={<main id="main" className="not-found"><h1>这里还没有图片。</h1><p>页面不存在，回首页开始一次新的分享。</p><Link to="/" className="button button-primary">返回首页</Link></main>} />
     </Routes>
+    </Suspense>
     <footer className="footer">
       <span className="footer-brand">imagehub.</span>
       <span>每一张图片，都有自己的去处。</span>
       <span className="demo-label">图片托管 · 即刻分享</span>
     </footer>
-    <div className="toast-container" aria-live="polite" aria-atomic="true">
-      {app.notice && <div className={`toast ${app.notice.error ? 'toast-error' : ''}`}>
-        {app.notice.error ? <WarningCircle size={20} /> : <CheckCircle size={20} weight="fill" />}
-        <span>{app.notice.text}</span>
-        <button className="icon-button" aria-label="关闭提示" onClick={() => app.setNotice(null)}><X size={16} /></button>
-      </div>}
-    </div>
+    <NoticeToast notice={app.notice} onDismiss={() => app.setNotice(null)} />
     {app.preview && <Modal title={app.preview.name} onClose={() => app.setPreview(null)} className="preview-modal">
       <div className="preview-image-wrap"><img src={app.preview.preview} alt={app.preview.name} /></div>
       <div className="preview-caption"><span>{app.preview.width} × {app.preview.height}</span><span>{formatSize(app.preview.size)}</span></div>
     </Modal>}
   </>
 }
-
-export function Ambient({ paused }: { paused: boolean }) {
-  return <Suspense fallback={<div className="starfield" />}><Starfield paused={paused} /></Suspense>
-}
-export const fileAccept = ACCEPTED_TYPES.join(',')

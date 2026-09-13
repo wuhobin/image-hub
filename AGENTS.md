@@ -9,7 +9,7 @@
 根包为 `com.aurora.imagehub`。Java 包名统一小写，类名使用 PascalCase，VO、BO 后缀保持大写。
 
 - `model.entity`：数据库实体，如 `UserAccount`、`ImageFile`，与表字段对应，不直接作为接口响应。
-- 每张业务表必须包含 `create_time`、`update_time`、`deleted`；Java 时间字段 `createTime`、`updateTime` 继承父项目 `BaseEntity`，复用自动填充并通过应用处理器截断到秒，数据库时间列使用 `TIMESTAMP(0)`，不存毫秒；实体声明 `@TableLogic Integer deleted = 0`。MyBatis-Plus 全局配置 0 未删除、1 已删除；自定义 SQL 显式过滤 `deleted = 0`，逻辑删除同时更新 `update_time`。唯一性占用检查仍包含已删除数据。
+- 每张业务表必须包含 `create_time`、`update_time`、`deleted`；时间由数据库 `DEFAULT CURRENT_TIMESTAMP` 和 `ON UPDATE CURRENT_TIMESTAMP` 生成与维护，数据库时间列使用不带精度参数的 `datetime`，不加 `NOT NULL`，按 MySQL 默认秒精度保存；实体自行声明 `createTime`、`updateTime`，使用 `@TableField(insertStrategy = FieldStrategy.NEVER, updateStrategy = FieldStrategy.NEVER)` 只读映射，不继承带时间自动填充的父项目 `BaseEntity`，不添加应用时间处理器；写入后需要返回时间时重新查询数据库；实体声明 `@TableLogic Integer deleted = 0`。MyBatis-Plus 全局配置 0 未删除、1 已删除；自定义 SQL 显式过滤 `deleted = 0`，逻辑删除同时更新 `update_time`。唯一性占用检查仍包含已删除数据。
 - `model.vo`：对外返回的数据，类名以 `VO` 结尾，如 `UserVO`、`ImageVO`；不得包含密码哈希、内部存储信息等敏感字段。
 - `model.bo`：业务内部计算、组合或传递的数据，类名以 `BO` 结尾，如 `ImageDimensionsBO`；按实际需要定义，不为每个实体机械复制一套字段。
 - `model.param`：接口请求参数，类名以 `Param` 结尾，声明 Bean Validation 约束；不在 Controller 或 Service 中嵌套定义请求模型。

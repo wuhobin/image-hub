@@ -4,8 +4,8 @@ CREATE TABLE IF NOT EXISTS hub_user (
     username VARCHAR(32) NOT NULL,
     email VARCHAR(254) NOT NULL,
     password_hash VARCHAR(100) NOT NULL,
-    create_time TIMESTAMP(0) NOT NULL DEFAULT CURRENT_TIMESTAMP(0) COMMENT '创建时间',
-    update_time TIMESTAMP(0) NOT NULL DEFAULT CURRENT_TIMESTAMP(0) ON UPDATE CURRENT_TIMESTAMP(0) COMMENT '更新时间',
+    `create_time` datetime DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     deleted TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除：0未删除，1已删除',
     UNIQUE KEY uk_hub_user_username (username),
     UNIQUE KEY uk_hub_user_email (email)
@@ -21,8 +21,8 @@ CREATE TABLE IF NOT EXISTS hub_image (
     width INT NOT NULL,
     height INT NOT NULL,
     storage_info TEXT NOT NULL,
-    create_time TIMESTAMP(0) NOT NULL DEFAULT CURRENT_TIMESTAMP(0) COMMENT '创建时间',
-    update_time TIMESTAMP(0) NOT NULL DEFAULT CURRENT_TIMESTAMP(0) ON UPDATE CURRENT_TIMESTAMP(0) COMMENT '更新时间',
+    `create_time` datetime DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     deleted TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除：0未删除，1已删除',
     KEY idx_hub_image_user_created (user_id, deleted, create_time, id),
     CONSTRAINT fk_hub_image_user FOREIGN KEY (user_id) REFERENCES hub_user(id)

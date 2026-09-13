@@ -1,18 +1,25 @@
-import { Suspense, useRef, useState } from 'react'
-import gsap from 'gsap'
-import { useGSAP } from '@gsap/react'
+import { lazy, Suspense, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowRight, ArrowUp, ArrowUpRight, CheckCircle, CloudArrowUp, Copy, ImageSquare, LinkSimple, Pause, Play, Plus, X } from '@phosphor-icons/react'
-import { fileAccept, Starfield } from '../App'
+import { ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight'
+import { ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp'
+import { ArrowUpRight } from '@phosphor-icons/react/dist/csr/ArrowUpRight'
+import { CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle'
+import { CloudArrowUp } from '@phosphor-icons/react/dist/csr/CloudArrowUp'
+import { Copy } from '@phosphor-icons/react/dist/csr/Copy'
+import { ImageSquare } from '@phosphor-icons/react/dist/csr/ImageSquare'
+import { LinkSimple } from '@phosphor-icons/react/dist/csr/LinkSimple'
+import { Pause } from '@phosphor-icons/react/dist/csr/Pause'
+import { Play } from '@phosphor-icons/react/dist/csr/Play'
+import { Plus } from '@phosphor-icons/react/dist/csr/Plus'
+import { X } from '@phosphor-icons/react/dist/csr/X'
+import { Ambient } from '../components/Ambient'
 import type { AppState } from '../App'
-import { formatSize, MAX_FILES } from '../lib/rules'
+import { ACCEPTED_TYPES, formatSize, MAX_FILES } from '../lib/rules'
 
-gsap.registerPlugin(useGSAP)
+const UploadProgress = lazy(() => import('../components/UploadProgress'))
+const fileAccept = ACCEPTED_TYPES.join(',')
 
 export default function Home({ app }: { app: AppState }) {
-  const page = useRef<HTMLElement>(null)
-  const intro = useRef<gsap.core.Timeline | null>(null)
-  const paused = useRef(app.paused)
   const input = useRef<HTMLInputElement>(null)
   const lensTarget = useRef<HTMLDivElement>(null)
   const dragDepth = useRef(0)
@@ -22,31 +29,9 @@ export default function Home({ app }: { app: AppState }) {
   const completed = app.pending.filter(item => item.status === 'done')
   const progress = app.pending.length ? Math.floor(app.pending.reduce((total, item) => total + item.progress, 0) / app.pending.length) : 0
 
-  useGSAP(() => {
-    const media = gsap.matchMedia()
-    media.add('(prefers-reduced-motion: no-preference)', () => {
-      if (paused.current) return
-      intro.current = gsap.timeline({ defaults: { ease: 'power3.out', duration: 0.85 } })
-        .from('.hero-heading .eyebrow', { autoAlpha: 0, y: 10 }, 0.1)
-        .from('.hero-heading h1', { autoAlpha: 0, y: 24, duration: 1.15 }, 0.22)
-        .from('.hero-heading > p', { autoAlpha: 0, y: 12 }, 0.4)
-        .from('.upload-shell', { autoAlpha: 0, duration: 1 }, 0.5)
-        .from('.hero-bottom', { autoAlpha: 0, y: 8 }, 0.85)
-        .from('.workflow-step, .step-arrow', { autoAlpha: 0, y: 10, stagger: 0.06 }, 1)
-      return () => { intro.current = null }
-    }, page)
-    return () => media.revert()
-  }, { scope: page })
-
-  useGSAP(() => {
-    paused.current = app.paused
-    // Never leave the upload controls hidden when motion is paused mid-entrance.
-    if (app.paused) intro.current?.progress(1).pause()
-  }, { dependencies: [app.paused], scope: page })
-
-  return <main id="main" className="home" ref={page}>
+  return <main id="main" className="home" data-paused={app.paused}>
     <section className="hero" aria-labelledby="hero-title">
-      <Suspense fallback={<div className="starfield" />}><Starfield target={lensTarget} active={dragging || focused || app.busy} paused={app.paused} /></Suspense>
+      <Ambient target={lensTarget} active={dragging || focused || app.busy} paused={app.paused} />
       <div className="hero-content">
         <div className="hero-heading">
           <span className="eyebrow"><span className="tiny-line" />让分享，从一张图片开始<span className="tiny-line" /></span>
@@ -92,7 +77,7 @@ export default function Home({ app }: { app: AppState }) {
           <div className="selection-list">
             {app.pending.map(item => <article className="selected-image" key={item.id} data-status={item.status}>
               <button className="selected-preview" aria-label={`预览 ${item.file.name}`} onClick={() => app.setPreview({ name: item.file.name, preview: item.preview, size: item.file.size, width: item.width, height: item.height })}>
-                <img src={item.preview} alt={item.file.name} />
+                <img src={item.preview} alt={item.file.name} loading="lazy" decoding="async" width={76} height={76} />
               </button>
               <div className="selected-details">
                 <div className="selected-file-heading">
@@ -117,8 +102,8 @@ export default function Home({ app }: { app: AppState }) {
             {app.pending.length < MAX_FILES && <button className="add-image" aria-label="继续添加图片" disabled={app.busy || app.selecting} onClick={() => input.current?.click()}><Plus size={16} /><span>继续添加</span></button>}
             {completed.length > 0 && <Link className="quiet-link" to="/history">查看上传记录 <ArrowUpRight size={14} /></Link>}
           </div>
-          {(app.busy || completed.length === app.pending.length) && <UploadProgress value={progress}
-            label={app.busy ? `正在上传 ${app.pending.findIndex(item => item.status === 'uploading') + 1}/${app.pending.length}` : `上传完成 ${completed.length}/${app.pending.length}`} />}
+          {(app.busy || completed.length === app.pending.length) && <Suspense fallback={<progress className="upload-progress" value={progress} max={100} aria-label="图片上传总进度" />}><UploadProgress value={progress}
+            label={app.busy ? `正在上传 ${app.pending.findIndex(item => item.status === 'uploading') + 1}/${app.pending.length}` : `上传完成 ${completed.length}/${app.pending.length}`} /></Suspense>}
         </div>}
 
         <div className="hero-bottom">
@@ -137,34 +122,4 @@ export default function Home({ app }: { app: AppState }) {
       <div className="workflow-step"><span className="step-icon"><LinkSimple size={22} weight="light" /></span><div><h2>随处分享</h2><p>复制链接，嵌入你的世界</p></div></div>
     </section>
   </main>
-}
-
-function UploadProgress({ value, label }: { value: number; label: string }) {
-  const panel = useRef<HTMLDivElement>(null)
-  const bar = useRef<HTMLProgressElement>(null)
-  const percentage = useRef<HTMLSpanElement>(null)
-  const moveProgress = useRef<gsap.QuickToFunc | null>(null)
-
-  useGSAP(() => {
-    const element = bar.current!
-    const text = percentage.current!
-    // 复用同一补间，新进度从当前显示值继续；不逐帧触发 React 和星空重绘。
-    moveProgress.current = gsap.quickTo(element, 'value', {
-      duration: 0.65,
-      ease: 'power2.out',
-      onUpdate: () => { text.textContent = `${Math.floor(element.value)}%` },
-    })
-    return () => { moveProgress.current = null }
-  }, { scope: panel })
-
-  useGSAP(() => {
-    const move = moveProgress.current!
-    move(value)
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) move.tween.progress(1).pause()
-  }, { dependencies: [value], scope: panel })
-
-  return <div className="upload-progress-panel" ref={panel}>
-    <div className="upload-progress-heading"><span>{label}</span><span ref={percentage} aria-hidden="true">0%</span></div>
-    <progress ref={bar} className="upload-progress" value={0} max={100} aria-label="图片上传总进度" />
-  </div>
 }
