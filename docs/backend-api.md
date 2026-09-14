@@ -33,13 +33,18 @@
 | GET | /auth/me | 当前用户，不返回密码或哈希 |
 | POST | /auth/logout | 注销当前 Token |
 | POST | /images | multipart 字段 `file`，每个请求一张；返回图片记录 |
-| GET | /images | `page=1&pageSize=24&search=&type=`，type 为 JPG/PNG/WEBP/GIF 或空 |
-| GET | /images/stats | 当前用户全部图片的 `{totalCount,totalBytes}` |
+| GET | /images | `page=1&pageSize=24&search=&type=&sort=desc`，返回 `ImageListVO {page,totalBytes}`；type 为 JPG/PNG/WEBP/GIF 或空 |
 | DELETE | /images/{id} | 仅限拥有者，删除文件并逻辑删除记录 |
 
 图片结构：`{id,name,url,preview,type,size,width,height,createdAt}`，ID 为字符串，大小单位字节，时间为 ISO UTC，preview 使用同一公开原始 URL。`createdAt` 继续映射实体的 `createTime`，保持前端兼容。
 
-列表直接返回 MyBatis-Plus `Page<ImageVO>`，主要字段为 `{records,total,current,size,pages}`，total 为筛选匹配数。请求仍使用 page/pageSize（每页 1–100 张），按上传时间、ID 倒序；分页 SQL 和 count 由父项目拦截器处理。全量数量和大小通过 `/images/stats` 单独获取，不受筛选或分页影响。
+列表返回 `ImageListVO`：`data.page` 复用 MyBatis-Plus `Page<ImageVO>`，包含 `{records,total,current,size,pages}`；`data.totalBytes` 为全部匹配图片的总字节数。列表与总大小共用用户、逻辑删除、搜索和图片类型条件，统计不受分页和排序影响。前端只请求 `/images`，图片数量取 `data.page.total`，大小取 `data.totalBytes`。
+
+请求使用 page/pageSize（每页 1–100 张），sort 默认为 desc（最新优先），asc 为最早优先，同秒上传按 ID 稳定排序；分页 SQL 和 count 由父项目拦截器处理。类型不区分大小写，不支持的类型返回业务码 400。此次列表响应增加 VO 层，原 `data.records` 等分页字段移到 `data.page` 下，前后端需一起更新。
+
+```json
+{"code":200,"message":"success","data":{"page":{"records":[],"total":0,"current":1,"size":24,"pages":0},"totalBytes":0},"traceId":"...","extra":{}}
+```
 
 ## 行为与失败处理
 

@@ -3,6 +3,7 @@ import { useGSAP } from '@gsap/react'
 import gsap from 'gsap'
 import { Link } from 'react-router-dom'
 import { ArrowDown } from '@phosphor-icons/react/dist/csr/ArrowDown'
+import { ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp'
 import { ArrowUpRight } from '@phosphor-icons/react/dist/csr/ArrowUpRight'
 import { Copy } from '@phosphor-icons/react/dist/csr/Copy'
 import { ImageSquare } from '@phosphor-icons/react/dist/csr/ImageSquare'
@@ -13,8 +14,9 @@ import { X } from '@phosphor-icons/react/dist/csr/X'
 import type { AppState } from '../App'
 import { Modal } from '../components/Modal'
 import HistoryLoading, { HistoryCardsSkeleton, HistoryHeading } from '../components/HistoryLoading'
+import HistoryViewToggle, { getHistoryView } from '../components/HistoryViewToggle'
 import { formatSize, toDateTime } from '../lib/rules'
-import type { ImageRecord, ImageStats, Page } from '../lib/types'
+import type { ImageRecord, ImageList } from '../lib/types'
 import { api } from '../lib/api'
 
 const timeFormat = new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
@@ -25,11 +27,13 @@ export default function History({ app }: { app: AppState }) {
   const hasEntered = useRef(false)
   const [search, setSearch] = useState('')
   const [format, setFormat] = useState('全部格式')
+  const [sort, setSort] = useState<'desc' | 'asc'>('desc')
+  const [view, setView] = useState(getHistoryView)
   const [deleting, setDeleting] = useState<ImageRecord | null>(null)
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(1)
-  const [data, setData] = useState<Page<ImageRecord> | null>(null)
-  const [stats, setStats] = useState<ImageStats | null>(null)
+  const [images, setImages] = useState<ImageList | null>(null)
+  const data = images?.page
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [deletingBusy, setDeletingBusy] = useState(false)
@@ -42,26 +46,23 @@ export default function History({ app }: { app: AppState }) {
     const controller = new AbortController()
     setLoading(true)
     setError('')
-    const params = new URLSearchParams({ search: query, type: format === '全部格式' ? '' : format, page: String(page), pageSize: '24' })
-    Promise.all([
-      api<Page<ImageRecord>>('/images?' + params, { signal: controller.signal }),
-      api<ImageStats>('/images/stats', { signal: controller.signal }),
-    ]).then(([result, summary]) => {
+    const params = new URLSearchParams({ search: query, type: format === '全部格式' ? '' : format, sort, page: String(page), pageSize: '24' })
+    api<ImageList>('/images?' + params, { signal: controller.signal }).then(result => {
       if (controller.signal.aborted) return
-      if (!result.records.length && page > 1 && result.total <= (page - 1) * result.size) {
-        setPage(Math.max(1, Math.ceil(result.total / result.size)))
+      if (!result.page.records.length && page > 1 && result.page.total <= (page - 1) * result.page.size) {
+        setPage(Math.max(1, Math.ceil(result.page.total / result.page.size)))
         return
       }
-      setData(result)
-      setStats(summary)
+      setImages(result)
     }).catch(error => {
       if (!controller.signal.aborted) setError(error instanceof Error ? error.message : '记录读取失败')
     }).finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [query, format, page, app.revision, reload])
+  }, [query, format, sort, page, app.revision, reload])
   const filtered = data?.records || []
-  const count = stats?.totalCount || 0
-  const bytes = stats?.totalBytes || 0
+  const count = data?.total || 0
+  const bytes = images?.totalBytes || 0
+  const hasFilters = !!query || format !== '全部格式'
 
   useGSAP(() => {
     if (loading || !pageRef.current) return
@@ -97,7 +98,7 @@ export default function History({ app }: { app: AppState }) {
     } finally { setDeletingBusy(false) }
   }
 
-  if (loading && !data) return <HistoryLoading />
+  if (loading && !data) return <HistoryLoading view={view} />
 
   return <main ref={pageRef} id="main" className="history-page" aria-busy={loading}>
     <HistoryHeading />
@@ -110,13 +111,17 @@ export default function History({ app }: { app: AppState }) {
     <div className="library-toolbar">
       <label className="search-field"><MagnifyingGlass size={18} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索图片名称" aria-label="搜索图片名称" />{search && <button className="icon-button" aria-label="清空搜索" onClick={() => setSearch('')}><X size={15} /></button>}</label>
       <div className="filter-group">
-        <select aria-label="按图片格式筛选" value={format} onChange={event => { setFormat(event.target.value); setPage(1) }}>
+        <select className="format-select" aria-label="按图片格式筛选" value={format} onChange={event => { setFormat(event.target.value); setPage(1) }}>
           {['全部格式', 'JPG', 'PNG', 'WEBP', 'GIF'].map(value => <option key={value}>{value}</option>)}
         </select>
-        <span className="sort-label"><ArrowDown size={15} />最新上传</span>
+        <button type="button" className="sort-label sort-button" title={sort === 'desc' ? '点击切换为最早上传' : '点击切换为最新上传'}
+          onClick={() => { setSort(current => current === 'desc' ? 'asc' : 'desc'); setPage(1) }}>
+          {sort === 'desc' ? <ArrowDown size={15} aria-hidden="true" /> : <ArrowUp size={15} aria-hidden="true" />}{sort === 'desc' ? '最新上传' : '最早上传'}
+        </button>
+        <HistoryViewToggle view={view} onChange={setView} />
       </div>
     </div>
-    {error ? <div className="empty-state" role="alert"><p>{error}</p><button className="button button-secondary" onClick={() => setReload(value => value + 1)}>重新加载</button></div> : loading ? <HistoryCardsSkeleton /> : filtered.length > 0 ? <div className="image-library">
+    {error ? <div className="empty-state" role="alert"><p>{error}</p><button className="button button-secondary" onClick={() => setReload(value => value + 1)}>重新加载</button></div> : loading ? <HistoryCardsSkeleton view={view} /> : filtered.length > 0 ? <div className={`image-library ${view === 'list' ? 'is-list' : ''}`}>
       {filtered.map((record, index) => <article className="library-card" key={record.id}>
         <button className="library-preview" onClick={() => app.setPreview(record)} aria-label={`预览 ${record.name}`}>
           <img src={record.preview} alt={record.name} loading={index > 3 ? 'lazy' : 'eager'} />
@@ -134,9 +139,9 @@ export default function History({ app }: { app: AppState }) {
         </div>
       </article>)}
     </div> : <div className="empty-state"><span className="empty-icon"><ImageSquare size={36} weight="light" /></span>
-      <h2>{count ? '没有找到这张图片' : '给这里添一点精彩'}</h2>
-      <p>{count ? '换个关键词或图片格式，再试一次。' : '上传第一张图片，让分享从这里开始。'}</p>
-      {count ? <button className="button button-secondary" onClick={() => { setSearch(''); setFormat('全部格式') }}>重置筛选</button> : <Link className="button button-primary" to="/">上传图片 <ArrowUpRight size={17} /></Link>}
+      <h2>{hasFilters || count ? '没有找到这张图片' : '给这里添一点精彩'}</h2>
+      <p>{hasFilters || count ? '换个关键词或图片格式，再试一次。' : '上传第一张图片，让分享从这里开始。'}</p>
+      {hasFilters || count ? <button className="button button-secondary" onClick={() => { setSearch(''); setFormat('全部格式') }}>重置筛选</button> : <Link className="button button-primary" to="/">上传图片 <ArrowUpRight size={17} /></Link>}
     </div>}
     {!loading && !error && data && data.total > 0 && <div className="library-pagination">
       <button className="button button-secondary" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>上一页</button>

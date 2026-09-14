@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, getToken, SESSION_EXPIRED, TOKEN_KEY, uploadImage } from './api'
+import { api, ApiError, getToken, SESSION_EXPIRED, TOKEN_KEY, uploadImage } from './api'
 import { fileError, MAX_FILES } from './rules'
-import type { ImageRecord, LoginResult, PendingImage, User } from './types'
+import type { ImageRecord, LoginResult, PendingImage, UploadQuota, User } from './types'
 
 type Preview = Pick<ImageRecord, 'name' | 'preview' | 'size' | 'width' | 'height'> & Partial<Pick<ImageRecord, 'url'>>
 type Notice = { text: string; error: boolean }
 
-export function useImageHub(onUploadPage: boolean) {
+export function useImageHub(onUploadPage: boolean, onProfilePage: boolean) {
   const [user, setUser] = useState<string | null>(null)
   const [initializing, setInitializing] = useState(!!getToken())
   const [pending, setPending] = useState<PendingImage[]>([])
@@ -15,12 +15,38 @@ export function useImageHub(onUploadPage: boolean) {
   const [selecting, setSelecting] = useState(false)
   const [busy, setBusy] = useState(false)
   const [revision, setRevision] = useState(0)
+  const [quota, setQuota] = useState<UploadQuota | null>(null)
+  const [quotaError, setQuotaError] = useState('')
   const ownedUrls = useRef(new Set<string>())
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const selectionLock = useRef(false)
   const uploadLock = useRef(false)
   const activeUpload = useRef<AbortController | null>(null)
   const generation = useRef(0)
+
+  useEffect(() => {
+    if (!user || !(onUploadPage || onProfilePage) || busy) return
+    const controller = new AbortController()
+    void refreshQuota(controller.signal).catch(() => {})
+    const refresh = () => { if (!document.hidden) void refreshQuota(controller.signal).catch(() => {}) }
+    window.addEventListener('focus', refresh)
+    return () => { controller.abort(); window.removeEventListener('focus', refresh) }
+  }, [user, onUploadPage, onProfilePage, busy])
+
+  async function refreshQuota(signal?: AbortSignal) {
+    const version = generation.current
+    try {
+      const result = await api<UploadQuota>('/images/quota', { signal })
+      if (version === generation.current && !signal?.aborted) { setQuota(result); setQuotaError('') }
+      return result
+    } catch (error) {
+      if (version === generation.current && !signal?.aborted) {
+        setQuota(null)
+        setQuotaError('额度读取失败，点击重试')
+      }
+      throw error
+    }
+  }
 
   useEffect(() => {
     // 结果仅供本次首页查看；批次进行中保留完整队列，避免影响总进度。
@@ -89,6 +115,8 @@ export function useImageHub(onUploadPage: boolean) {
     uploadLock.current = false
     setBusy(false)
     setUser(null)
+    setQuota(null)
+    setQuotaError('')
     setPreview(null)
     setRevision(value => value + 1)
     if (clearSelection) {
@@ -162,7 +190,16 @@ export function useImageHub(onUploadPage: boolean) {
     activeUpload.current = controller
     const version = generation.current
     let succeeded = 0
+    let quotaStopped = false
     try {
+      // 整批预检在任何文件发送前完成；后端仍逐张校验，防止另一设备抢占额度。
+      const available = await refreshQuota(controller.signal)
+      if (controller.signal.aborted || version !== generation.current) return
+      if (items.length > available.remaining) {
+        notify(available.remaining === 0 ? '免费上传额度已用完'
+          : `剩余 ${available.remaining} 次额度，请将本次图片减少至 ${available.remaining} 张`, true)
+        return
+      }
       for (const item of items) {
         if (controller.signal.aborted || version !== generation.current) break
         setPending(current => current.map(image => image.id === item.id ? { ...image, status: 'uploading', progress: 0, error: undefined } : image))
@@ -173,15 +210,24 @@ export function useImageHub(onUploadPage: boolean) {
           if (version !== generation.current) break
           setPending(current => current.map(image => image.id === item.id ? { ...image, status: 'done', progress: 100, record } : image))
           succeeded++
+          setQuota(current => current ? { ...current, remaining: Math.max(0, current.remaining - 1) } : current)
           setRevision(value => value + 1)
         } catch (error) {
           if (controller.signal.aborted || version !== generation.current) break
           setPending(current => current.map(image => image.id === item.id
             ? { ...image, status: 'error', progress: 0, error: error instanceof Error ? error.message : '上传失败，请重试' } : image))
+          if (error instanceof ApiError && [40301, 409, 503].includes(error.code)) {
+            quotaStopped = true
+            if (error.code === 40301) setQuota(current => current ? { ...current, remaining: 0 } : current)
+            notify(`${error.message}；已成功 ${succeeded} 张，其余图片保留在列表中`, true)
+            break
+          }
         }
       }
-      if (version === generation.current) notify(succeeded === items.length
+      if (!quotaStopped && version === generation.current) notify(succeeded === items.length
         ? `${succeeded} 张图片上传完成` : `${succeeded} 张成功，${items.length - succeeded} 张失败，可重试失败图片`, succeeded !== items.length)
+    } catch (error) {
+      if (!controller.signal.aborted && version === generation.current) notify(error instanceof Error ? error.message : '额度校验失败，请重试', true)
     } finally {
       if (version === generation.current) {
         uploadLock.current = false
@@ -225,6 +271,6 @@ export function useImageHub(onUploadPage: boolean) {
     catch { notify('复制失败，请选中链接后手动复制', true) }
   }
 
-  return { user, initializing, pending, preview, setPreview, notice, setNotice, selecting,
+  return { user, initializing, quota, quotaError, refreshQuota, pending, preview, setPreview, notice, setNotice, selecting,
     busy, revision, selectFiles, removePending, clearPending, upload, authenticate, logout, deleteRecord, copyUrl, notify }
 }

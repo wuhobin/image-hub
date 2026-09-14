@@ -79,6 +79,7 @@ class BusinessFlowTest {
     private final Map<String, String> codes = new ConcurrentHashMap<>();
     private FileStorageService storage;
     private FileInfo stored;
+    private final Map<String, String> quotaState = new ConcurrentHashMap<>();
 
     @BeforeEach
     void setup() {
@@ -86,6 +87,23 @@ class BusinessFlowTest {
         jdbcTemplate.update("DELETE FROM hub_image");
         jdbcTemplate.update("DELETE FROM hub_user");
         codes.clear();
+        quotaState.clear();
+        var locks = new ConcurrentHashMap<String, java.util.concurrent.locks.ReentrantLock>();
+        when(redissonClient.getBucket(anyString(), eq(org.redisson.client.codec.StringCodec.INSTANCE))).thenAnswer(call -> {
+            String key = call.getArgument(0);
+            org.redisson.api.RBucket<String> bucket = mock(org.redisson.api.RBucket.class);
+            when(bucket.get()).thenAnswer(ignored -> quotaState.get(key));
+            doAnswer(write -> { quotaState.put(key, write.getArgument(0)); return null; }).when(bucket).set(anyString());
+            return bucket;
+        });
+        when(redissonClient.getLock(anyString())).thenAnswer(call -> {
+            var mutex = locks.computeIfAbsent(call.getArgument(0), ignored -> new java.util.concurrent.locks.ReentrantLock());
+            org.redisson.api.RLock lock = mock(org.redisson.api.RLock.class);
+            when(lock.tryLock()).thenAnswer(ignored -> mutex.tryLock());
+            when(lock.isHeldByCurrentThread()).thenAnswer(ignored -> mutex.isHeldByCurrentThread());
+            doAnswer(ignored -> { mutex.unlock(); return null; }).when(lock).unlock();
+            return lock;
+        });
         doAnswer(call -> {
             var request = call.getArgument(0, com.aurora.starter.verification.mail.MailVerificationSendRequest.class);
             codes.put(request.email(), "654321");
@@ -169,27 +187,27 @@ class BusinessFlowTest {
         assertThat(updated.getCreateTime()).isEqualTo(createTime);
         assertThat(updated.getUpdateTime()).isAfter(java.sql.Timestamp.valueOf("2001-01-01 00:00:00"));
         assertThat(updated.getUpdateTime().toInstant().getNano()).isZero();
-        JsonNode page = get("/api/images?search=photo&type=PNG&page=1&pageSize=1", first).path("data");
+        JsonNode page = get("/api/images?search=photo&type=PNG&page=1&pageSize=1", first).path("data").path("page");
         assertThat(page.path("total").asInt()).isEqualTo(1);
         assertThat(page.path("current").asInt()).isEqualTo(1);
         assertThat(page.path("size").asInt()).isEqualTo(1);
         assertThat(page.path("pages").asInt()).isEqualTo(1);
-        JsonNode stats = get("/api/images/stats", first).path("data");
-        assertThat(stats.path("totalCount").asInt()).isEqualTo(1);
+        JsonNode stats = get("/api/images", first).path("data");
+        assertThat(stats.path("page").path("total").asInt()).isEqualTo(1);
         assertThat(stats.path("totalBytes").asInt()).isEqualTo(png().length);
         assertThat(page.path("records").get(0).path("id")).isEqualTo(image.path("id"));
         assertThat(page.path("records").get(0).path("createdAt")).isEqualTo(image.path("createdAt"));
         assertThat(page.path("records").get(0).path("url")).isEqualTo(image.path("url"));
         assertThat(page.path("records").get(0).path("preview")).isEqualTo(image.path("preview"));
-        assertThat(get("/api/images?search=absent", first).path("data").path("total").asInt()).isZero();
+        assertThat(get("/api/images?search=absent", first).path("data").path("page").path("total").asInt()).isZero();
         assertThat(get("/api/images?pageSize=101", first).path("code").asInt()).isEqualTo(400);
 
         register("bob", "bob@example.test");
         String bob = login("bob");
-        assertThat(get("/api/images/stats", null).path("code").asInt()).isEqualTo(401);
-        assertThat(get("/api/images/stats", bob).path("data").path("totalCount").asInt()).isZero();
-        assertThat(get("/api/images/stats", bob).path("data").path("totalBytes").asInt()).isZero();
-        assertThat(get("/api/images", bob).path("data").path("total").asInt()).isZero();
+        assertThat(get("/api/images", null).path("code").asInt()).isEqualTo(401);
+        assertThat(get("/api/images", bob).path("data").path("page").path("total").asInt()).isZero();
+        assertThat(get("/api/images", bob).path("data").path("totalBytes").asInt()).isZero();
+        assertThat(get("/api/images", bob).path("data").path("page").path("total").asInt()).isZero();
         assertThat(delete(image.path("id").asText(), bob).path("code").asInt()).isEqualTo(404);
         verify(ossTemplate, never()).delete(any(FileInfo.class));
 
@@ -208,8 +226,91 @@ class BusinessFlowTest {
         assertThat(key.getValue().getBasePath()).isEqualTo("base/");
         assertThat(key.getValue().getPath()).isEqualTo("images/test/");
         assertThat(key.getValue().getFilename()).isEqualTo("stored.png");
-        assertThat(get("/api/images", second).path("data").path("total").asInt()).isZero();
-        assertThat(get("/api/images/stats", second).path("data").path("totalBytes").asInt()).isZero();
+        assertThat(get("/api/images", second).path("data").path("page").path("total").asInt()).isZero();
+        assertThat(get("/api/images", second).path("data").path("totalBytes").asInt()).isZero();
+    }
+
+    @Test
+    void uploadTimeSortingAppliesBeforePaginationAndKeepsUserFilters() throws Exception {
+        register("sorting", "sorting@example.test");
+        String token = login("sorting");
+        var ids = new java.util.ArrayList<String>();
+        for (int i = 0; i < 4; i++) ids.add(upload(token, "sort.png", png()).path("data").path("id").asText());
+        ids.sort(String::compareTo);
+        // 中间两张同秒上传，分页必须按主键稳定排序；两端验证时间优先级。
+        for (int i = 0; i < ids.size(); i++) jdbcTemplate.update("UPDATE hub_image SET create_time = ? WHERE id = ?",
+                java.sql.Timestamp.valueOf("2026-09-14 12:00:0" + (i == 3 ? 0 : i == 0 ? 2 : 1)), ids.get(i));
+        String deleted = upload(token, "sort-deleted.png", png()).path("data").path("id").asText();
+        assertThat(delete(deleted, token).path("code").asInt()).isEqualTo(200);
+        register("sort-other", "sort-other@example.test");
+        upload(login("sort-other"), "sort-other.png", png());
+
+        for (String sort : new String[]{"asc", "desc"}) {
+            var actual = new java.util.ArrayList<String>();
+            for (int page = 1; page <= 2; page++) {
+                JsonNode response = get("/api/images?search=sort&type=PNG&pageSize=2&page=" + page + "&sort=" + sort, token);
+                assertThat(response.path("code").asInt()).isEqualTo(200);
+                assertThat(response.path("data").path("page").path("total").asInt()).isEqualTo(4);
+                response.path("data").path("page").path("records").forEach(record -> actual.add(record.path("id").asText()));
+            }
+            var expected = new java.util.ArrayList<>(java.util.List.of(ids.get(3), ids.get(1), ids.get(2), ids.get(0)));
+            if (sort.equals("desc")) java.util.Collections.reverse(expected);
+            assertThat(actual).containsExactlyElementsOf(expected);
+        }
+        assertThat(get("/api/images?pageSize=1", token).path("data").path("page").path("records").get(0).path("id").asText()).isEqualTo(ids.get(0));
+        assertThat(get("/api/images?sort=asc&type=JPG", token).path("data").path("page").path("total").asInt()).isZero();
+        assertThat(get("/api/images?sort=asc&search=missing", token).path("data").path("page").path("total").asInt()).isZero();
+        assertThat(get("/api/images?sort=invalid", token).path("code").asInt()).isEqualTo(400);
+    }
+
+    @Test
+    void imageStatsFilterTypesAndExcludeDeletedAndOtherUsers() throws Exception {
+        register("stats", "stats@example.test");
+        String token = login("stats");
+        var sizes = Map.of("PNG", 1024L, "JPG", 2048L, "WEBP", 4096L, "GIF", 8192L);
+        for (var entry : sizes.entrySet()) {
+            String id = upload(token, "stats-" + entry.getKey() + ".png", png()).path("data").path("id").asText();
+            jdbcTemplate.update("UPDATE hub_image SET type = ?, size = ? WHERE id = ?", entry.getKey(), entry.getValue(), id);
+        }
+        String deleted = upload(token, "deleted.png", png()).path("data").path("id").asText();
+        assertThat(delete(deleted, token).path("code").asInt()).isEqualTo(200);
+        register("stats-other", "stats-other@example.test");
+        String otherToken = login("stats-other");
+        upload(otherToken, "other.png", png());
+
+        for (var entry : sizes.entrySet()) {
+            JsonNode response = get("/api/images?type=" + entry.getKey().toLowerCase(java.util.Locale.ROOT), token);
+            assertThat(response.path("code").asInt()).isEqualTo(200);
+            assertThat(response.path("data").path("page").path("total").asInt()).isEqualTo(1);
+            assertThat(response.path("data").path("totalBytes").asLong()).isEqualTo(entry.getValue());
+            JsonNode list = get("/api/images?search=stats&type=" + entry.getKey() + "&pageSize=1&page=2", token).path("data");
+            assertThat(list.path("page").path("total").asInt()).isEqualTo(1);
+            assertThat(list.path("page").path("records").size()).isZero();
+            assertThat(list.path("totalBytes").asLong()).isEqualTo(entry.getValue());
+        }
+        for (String path : new String[]{"/api/images", "/api/images?type="}) {
+            JsonNode stats = get(path, token).path("data");
+            assertThat(stats.path("page").path("total").asInt()).isEqualTo(4);
+            assertThat(stats.path("totalBytes").asLong()).isEqualTo(15360);
+        }
+        JsonNode empty = get("/api/images?type=GIF", otherToken).path("data");
+        assertThat(empty.path("page").path("total").asInt()).isZero();
+        assertThat(empty.path("totalBytes").asLong()).isZero();
+        assertThat(get("/api/images?type=invalid", token).path("code").asInt()).isEqualTo(400);
+        assertThat(get("/api/images?type=PNG", null).path("code").asInt()).isEqualTo(401);
+        JsonNode combined = get("/api/images?search=stats-PNG&type=png", token).path("data");
+        assertThat(combined.path("page").path("total").asInt()).isEqualTo(1);
+        assertThat(combined.path("page").path("records").get(0).path("name").asText()).isEqualTo("stats-PNG.png");
+        assertThat(combined.path("totalBytes").asLong()).isEqualTo(1024);
+        JsonNode noMatch = get("/api/images?search=stats-PNG&type=JPG", token).path("data");
+        assertThat(noMatch.path("page").path("total").asInt()).isZero();
+        assertThat(noMatch.path("totalBytes").asLong()).isZero();
+        for (int page = 1; page <= 2; page++) {
+            JsonNode list = get("/api/images?pageSize=2&page=" + page, token).path("data");
+            assertThat(list.path("page").path("total").asInt()).isEqualTo(4);
+            assertThat(list.path("page").path("records").size()).isEqualTo(2);
+            assertThat(list.path("totalBytes").asLong()).isEqualTo(15360);
+        }
     }
 
     @Test
@@ -270,11 +371,11 @@ class BusinessFlowTest {
         String id = upload(token, "retry.png", png()).path("data").path("id").asText();
         when(ossTemplate.delete(any(FileInfo.class))).thenReturn(false);
         assertThat(delete(id, token).path("code").asInt()).isEqualTo(502);
-        assertThat(get("/api/images", token).path("data").path("total").asInt()).isEqualTo(1);
+        assertThat(get("/api/images", token).path("data").path("page").path("total").asInt()).isEqualTo(1);
         when(storage.exists(any(FileInfo.class))).thenReturn(false);
         assertThat(jdbcTemplate.queryForObject("SELECT deleted FROM hub_image WHERE id = ?", Integer.class, id)).isZero();
         assertThat(delete(id, token).path("code").asInt()).isEqualTo(200);
-        assertThat(get("/api/images", token).path("data").path("total").asInt()).isZero();
+        assertThat(get("/api/images", token).path("data").path("page").path("total").asInt()).isZero();
     }
 
     @Test
@@ -295,8 +396,8 @@ class BusinessFlowTest {
         assertThat(response.path("code").asInt()).isEqualTo(200);
         assertThat(response.path("data").path("width").asInt()).isEqualTo(3);
         assertThat(response.path("data").path("height").asInt()).isEqualTo(2);
-        JsonNode firstPage = get("/api/images?page=1&pageSize=2", token).path("data");
-        JsonNode secondPage = get("/api/images?page=2&pageSize=2", token).path("data");
+        JsonNode firstPage = get("/api/images?page=1&pageSize=2", token).path("data").path("page");
+        JsonNode secondPage = get("/api/images?page=2&pageSize=2", token).path("data").path("page");
         assertThat(firstPage.path("total").asInt()).isEqualTo(4);
         assertThat(firstPage.path("pages").asInt()).isEqualTo(2);
         assertThat(firstPage.path("records").size()).isEqualTo(2);
@@ -308,19 +409,19 @@ class BusinessFlowTest {
             assertThat(firstIds).doesNotContain(record.path("id").asText());
             assertThat(record.has("storageInfo")).isFalse();
         });
-        JsonNode beyond = get("/api/images?page=3&pageSize=2", token).path("data");
+        JsonNode beyond = get("/api/images?page=3&pageSize=2", token).path("data").path("page");
         assertThat(beyond.path("records").size()).isZero();
         assertThat(beyond.path("total").asInt()).isEqualTo(4);
-        assertThat(get("/api/images?type=WEBP&pageSize=1", token).path("data").path("total").asInt()).isEqualTo(1);
-        assertThat(get("/api/images?search=absent", token).path("data").path("records").size()).isZero();
-        assertThat(get("/api/images/stats", token).path("data").path("totalCount").asInt()).isEqualTo(4);
+        assertThat(get("/api/images?type=WEBP&pageSize=1", token).path("data").path("page").path("total").asInt()).isEqualTo(1);
+        assertThat(get("/api/images?search=absent", token).path("data").path("page").path("records").size()).isZero();
+        assertThat(get("/api/images", token).path("data").path("page").path("total").asInt()).isEqualTo(4);
         assertThat(get("/api/images?page=0", token).path("code").asInt()).isEqualTo(400);
         assertThat(upload(token, "too-large.png", new byte[10 * 1024 * 1024 + 1]).path("code").asInt()).isEqualTo(413);
         doThrow(new org.springframework.dao.DataIntegrityViolationException("simulated database failure"))
                 .when(imageMapper).insert(any(ImageFile.class));
         assertThat(upload(token, "rollback.png", png()).path("code").asInt()).isEqualTo(500);
         verify(ossTemplate).delete(stored);
-        assertThat(get("/api/images", token).path("data").path("total").asInt()).isEqualTo(4);
+        assertThat(get("/api/images", token).path("data").path("page").path("total").asInt()).isEqualTo(4);
     }
 
     @Test
@@ -407,7 +508,97 @@ class BusinessFlowTest {
         assertThat(response.path("code").asInt()).isEqualTo(500);
         assertThat(response.path("message").asText()).contains("图片已保存");
         verify(ossTemplate, never()).delete(any(FileInfo.class));
-        assertThat(get("/api/images", token).path("data").path("total").asInt()).isEqualTo(1);
+        assertThat(get("/api/images", token).path("data").path("page").path("total").asInt()).isEqualTo(1);
+    }
+
+    @Test
+    void quotaIgnoresLegacyUploadsAndSurvivesDeletionAndRedisLoss() throws Exception {
+        register("quota", "quota@example.test");
+        String token = login("quota");
+        assertThat(get("/api/images/quota", null).path("code").asInt()).isEqualTo(401);
+        assertThat(get("/api/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(100);
+        String legacyId = upload(token, "legacy.png", png()).path("data").path("id").asText();
+        jdbcTemplate.update("UPDATE hub_image SET quota_charged = 0 WHERE id = ?", legacyId);
+        quotaState.clear();
+        assertThat(get("/api/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(100);
+        // 种入 99 条新版成功记录，其中包含已删除图片；历史记录始终不计费。
+        for (int i = 0; i < 99; i++) jdbcTemplate.update("""
+                INSERT INTO hub_image (id,user_id,name,url,type,size,width,height,storage_info,quota_charged,deleted)
+                SELECT ?,user_id,name,url,type,size,width,height,storage_info,1,1 FROM hub_image WHERE id = ?
+                """, java.util.UUID.randomUUID().toString(), legacyId);
+        quotaState.clear();
+        assertThat(get("/api/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(1);
+        String lastId = upload(token, "last.png", png()).path("data").path("id").asText();
+        assertThat(lastId).isNotBlank();
+        assertThat(delete(lastId, token).path("code").asInt()).isEqualTo(200);
+        quotaState.clear();
+        assertThat(get("/api/images/quota", token).path("data").path("remaining").asInt()).isZero();
+        clearInvocations(storage);
+        assertThat(upload(token, "over.png", png()).path("code").asInt()).isEqualTo(40301);
+        verify(storage, never()).of(any(MultipartFile.class));
+        register("fresh", "fresh@example.test");
+        assertThat(get("/api/images/quota", login("fresh")).path("data").path("remaining").asInt()).isEqualTo(100);
+    }
+
+    @Test
+    void quotaRefundsFailuresAndRecoversInterruptedReservation() throws Exception {
+        register("refund", "refund@example.test");
+        String token = login("refund");
+        long userId = userMapper.findByUsername("refund").getId();
+        String key = "image-hub:quota:v1:{" + userId + "}";
+        quotaState.put(key, "99:interrupted-upload");
+        assertThat(get("/api/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(100);
+        UploadPretreatment uploadPretreatment = mock(UploadPretreatment.class, Answers.RETURNS_SELF);
+        when(storage.of(any(MultipartFile.class))).thenReturn(uploadPretreatment);
+        assertThat(upload(token, "cloud-failed.png", png()).path("code").asInt()).isEqualTo(502);
+        assertThat(get("/api/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(100);
+        when(uploadPretreatment.upload()).thenReturn(stored);
+        doThrow(new org.springframework.dao.DataIntegrityViolationException("simulated failure"))
+                .when(imageMapper).insert(any(ImageFile.class));
+        assertThat(upload(token, "database-failed.png", png()).path("code").asInt()).isEqualTo(500);
+        assertThat(get("/api/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(100);
+        reset(imageMapper);
+        doThrow(new org.springframework.dao.DataAccessResourceFailureException("readback failed"))
+                .when(imageMapper).findOwned(anyLong(), anyString());
+        assertThat(upload(token, "saved.png", png()).path("code").asInt()).isEqualTo(500);
+        assertThat(get("/api/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(99);
+        quotaState.put(key, "98:another-interrupted-upload");
+        assertThat(get("/api/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(99);
+        when(redissonClient.getBucket(anyString(), eq(org.redisson.client.codec.StringCodec.INSTANCE)))
+                .thenThrow(new IllegalStateException("Redis unavailable"));
+        clearInvocations(storage);
+        assertThat(upload(token, "redis-failed.png", png()).path("code").asInt()).isEqualTo(503);
+        verify(storage, never()).of(any(MultipartFile.class));
+    }
+
+    @Test
+    void concurrentUploadCannotSpendTheSameLastQuota() throws Exception {
+        register("parallel", "parallel@example.test");
+        String token = login("parallel");
+        long userId = userMapper.findByUsername("parallel").getId();
+        quotaState.put("image-hub:quota:v1:{" + userId + "}", "1");
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var finish = new java.util.concurrent.CountDownLatch(1);
+        UploadPretreatment uploadPretreatment = mock(UploadPretreatment.class, Answers.RETURNS_SELF);
+        when(storage.of(any(MultipartFile.class))).thenReturn(uploadPretreatment);
+        when(uploadPretreatment.upload()).thenAnswer(call -> {
+            entered.countDown();
+            if (!finish.await(5, java.util.concurrent.TimeUnit.SECONDS)) throw new IllegalStateException("test timeout");
+            return stored;
+        });
+        var executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+        byte[] bytes = png();
+        try {
+            var first = executor.submit(() -> upload(token, "first.png", bytes));
+            assertThat(entered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(get("/api/images/quota", token).path("data").path("remaining").asInt()).isZero();
+            assertThat(upload(token, "second.png", bytes).path("code").asInt()).isEqualTo(409);
+            finish.countDown();
+            assertThat(first.get(5, java.util.concurrent.TimeUnit.SECONDS).path("code").asInt()).isEqualTo(200);
+            assertThat(get("/api/images/quota", token).path("data").path("remaining").asInt()).isZero();
+            assertThat(upload(token, "third.png", bytes).path("code").asInt()).isEqualTo(40301);
+            verify(uploadPretreatment).upload();
+        } finally { finish.countDown(); executor.shutdownNow(); }
     }
 
     private void register(String username, String email) {

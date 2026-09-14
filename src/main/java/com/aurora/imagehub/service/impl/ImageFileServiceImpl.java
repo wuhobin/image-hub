@@ -2,8 +2,10 @@ package com.aurora.imagehub.service.impl;
 
 import com.aurora.imagehub.mapper.ImageMapper;
 import com.aurora.imagehub.service.ImageFileService;
+import com.aurora.imagehub.cache.UploadQuotaCache;
+import com.aurora.imagehub.model.vo.UploadQuotaVO;
 import com.aurora.imagehub.model.bo.ImageDimensionsBO;
-import com.aurora.imagehub.model.vo.ImageStatsVO;
+import com.aurora.imagehub.model.vo.ImageListVO;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.aurora.imagehub.model.entity.ImageFile;
 import com.aurora.imagehub.model.vo.ImageVO;
@@ -42,6 +44,12 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
     private final OssTemplate ossTemplate;
     private final FileUploadValidator fileUploadValidator;
     private final ObjectMapper objectMapper;
+    private final UploadQuotaCache uploadQuotaCache;
+
+    @Override
+    public UploadQuotaVO quota(long userId) {
+        return uploadQuotaCache.get(userId);
+    }
 
     @Override
     public ImageVO upload(long userId, MultipartFile file) {
@@ -54,6 +62,10 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
         if (!TYPES.containsKey(mime)) throw new BizException(400, "不支持的图片格式");
         ImageDimensionsBO dimensions = dimensions(file);
         String id = UUID.randomUUID().toString();
+        return uploadQuotaCache.consume(userId, id, () -> uploadValidated(userId, file, mime, dimensions, id));
+    }
+
+    private ImageVO uploadValidated(long userId, MultipartFile file, String mime, ImageDimensionsBO dimensions, String id) {
         String path = "images/" + userId + "/";
         String filename = id + "." + TYPES.get(mime).toLowerCase(Locale.ROOT);
         FileInfo stored = ossTemplate.getFileStorageService().of(file).setPath(path)
@@ -70,10 +82,12 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
         image.setSize(file.getSize());
         image.setWidth(dimensions.getWidth());
         image.setHeight(dimensions.getHeight());
+        image.setQuotaCharged(1);
         try {
             // 保存完整存储定位信息；若记录入库失败，补偿删除刚上传的云端文件。
             // 持久化元数据固定使用 ISO 时间并保留毫秒，不受接口展示格式影响。
             image.setStorageInfo(objectMapper.writer(new StdDateFormat()).writeValueAsString(stored));
+            uploadQuotaCache.checkOwnership(userId);
             imageMapper.insert(image);
         } catch (Exception e) {
             try {
@@ -95,21 +109,28 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
     }
 
     @Override
-    public Page<ImageVO> list(long userId, String search, String type, int page, int pageSize) {
-        search = search == null ? "" : search.trim();
-        type = type == null ? "" : type.toUpperCase(Locale.ROOT);
-        if (search.length() > 255 || page < 1 || pageSize < 1 || pageSize > 100
-                || (!type.isEmpty() && !TYPES.containsValue(type))) {
+    public ImageListVO list(long userId, String search, String type, int page, int pageSize, String sort) {
+        search = normalizeSearch(search);
+        type = normalizeType(type);
+        if (page < 1 || pageSize < 1 || pageSize > 100
+                || (!"asc".equals(sort) && !"desc".equals(sort))) {
             throw new BizException(400, "查询参数无效");
         }
         // 平台分页拦截器自动执行 count 和分页 SQL，转换时保留原生分页元信息。
-        Page<ImageFile> result = imageMapper.list(PageUtils.buildPage(page, pageSize), userId, search, type);
-        return PageUtils.convert(result, ImageVO::from);
+        Page<ImageFile> result = imageMapper.list(PageUtils.buildPage(page, pageSize), userId, search, type, "asc".equals(sort));
+        return new ImageListVO(PageUtils.convert(result, ImageVO::from), imageMapper.sumBytes(userId, search, type));
     }
 
-    @Override
-    public ImageStatsVO stats(long userId) {
-        return imageMapper.stats(userId);
+    private String normalizeSearch(String search) {
+        String normalized = search == null ? "" : search.trim();
+        if (normalized.length() > 255) throw new BizException(400, "查询参数无效");
+        return normalized;
+    }
+
+    private String normalizeType(String type) {
+        String normalized = type == null ? "" : type.toUpperCase(Locale.ROOT);
+        if (!normalized.isEmpty() && !TYPES.containsValue(normalized)) throw new BizException(400, "查询参数无效");
+        return normalized;
     }
 
     @Override

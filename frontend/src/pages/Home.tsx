@@ -23,6 +23,7 @@ export default function Home({ app }: { app: AppState }) {
   const dragDepth = useRef(0)
   const [dragging, setDragging] = useState(false)
   const [focused, setFocused] = useState(false)
+  const quotaLoading = app.initializing || (!!app.user && !app.quota && !app.quotaError)
   const ready = app.pending.filter(item => item.status === 'ready' || item.status === 'error')
   const completed = app.pending.filter(item => item.status === 'done')
   const progress = app.pending.length ? Math.floor(app.pending.reduce((total, item) => total + item.progress, 0) / app.pending.length) : 0
@@ -52,12 +53,22 @@ export default function Home({ app }: { app: AppState }) {
             <span className="drop-formats">JPG · PNG · WEBP · GIF<span />单张最大 10 MB</span>
           </button>
           <div className="upload-toolbar">
-            <span className="upload-limit"><ImageSquare size={16} />{app.pending.length ? `已选择 ${app.pending.length} / ${MAX_FILES} 张` : `支持批量上传，最多 ${MAX_FILES} 张`}</span>
+            <div className="upload-info">
+              <span className="upload-limit"><ImageSquare size={16} />{app.pending.length ? `已选择 ${app.pending.length} / ${MAX_FILES} 张` : `支持批量上传，最多 ${MAX_FILES} 张`}</span>
+              <span className={`upload-quota ${app.quota?.remaining === 0 ? 'quota-exhausted' : ''}`} role="status" aria-live="polite" aria-busy={quotaLoading}>
+                {quotaLoading ? <><span className="quota-placeholder" aria-hidden="true" /><span className="visually-hidden">正在读取上传额度</span></>
+                  : app.user && <span className="quota-content">
+                    {app.quotaError ? <button className="text-button" onClick={() => { void app.refreshQuota().catch(() => {}) }}>{app.quotaError}</button>
+                      : app.quota && (app.quota.remaining === 0 ? '免费上传额度已用完'
+                        : <>剩余上传额度：<span className="quota-number">{app.quota.remaining}</span> / <span className="quota-number">{app.quota.total}</span></>)}
+                  </span>}
+              </span>
+            </div>
             {app.initializing
-              ? <button className="button button-primary button-upload" disabled>正在恢复登录… <ArrowUp size={17} /></button>
+              ? <button className="button button-primary button-upload" disabled aria-label="正在恢复登录"><span className="quota-placeholder" aria-hidden="true" /><ArrowUp size={17} /></button>
               : app.user
-              ? <button className="button button-primary button-upload" disabled={!ready.length || app.busy || app.selecting} onClick={app.upload}>
-                  {app.busy ? '上传中…' : app.pending.some(item => item.status === 'error') ? '重试失败图片' : '开始上传'}<ArrowUp size={17} weight="bold" />
+              ? <button className="button button-primary button-upload" disabled={!ready.length || app.busy || app.selecting || !app.quota || app.quota.remaining === 0} onClick={app.upload}>
+                  {app.busy ? '上传中…' : app.quota?.remaining === 0 ? '额度已用完' : app.pending.some(item => item.status === 'error') ? '重试失败图片' : '开始上传'}<ArrowUp size={17} weight="bold" />
                 </button>
               : <Link to="/login" state={{ from: '/' }} className="button button-primary button-upload">登录后开始上传 <ArrowUpRight size={17} /></Link>}
           </div>

@@ -31,6 +31,10 @@ test('API client checks business codes, sends Bearer tokens and ignores stale 40
       return new Response(JSON.stringify({ code: 200, data: { username: 'alice' } }))
     }
     assert.deepEqual(await api('/auth/me'), { username: 'alice' })
+    const page = { records: [], total: 0, current: 1, size: 24, pages: 0 }
+    const images = { page, totalBytes: 0 }
+    globalThis.fetch = async () => new Response(JSON.stringify({ code: 200, data: images }))
+    assert.deepEqual(await api('/images'), images)
     globalThis.fetch = async () => new Response(JSON.stringify({ code: 409, message: 'already registered' }))
     await assert.rejects(api('/auth/register'), /already registered/)
   } finally { globalThis.fetch = original }

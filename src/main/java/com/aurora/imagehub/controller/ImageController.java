@@ -3,8 +3,8 @@ package com.aurora.imagehub.controller;
 import cn.dev33.satoken.stp.StpUtil;
 import com.aurora.imagehub.service.ImageFileService;
 import com.aurora.imagehub.model.vo.ImageVO;
-import com.aurora.imagehub.model.vo.ImageStatsVO;
-import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.aurora.imagehub.model.vo.UploadQuotaVO;
+import com.aurora.imagehub.model.vo.ImageListVO;
 import com.aurora.starter.webmvc.domain.response.Result;
 import com.aurora.starter.webmvc.exception.BizException;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -32,15 +32,15 @@ public class ImageController {
     }
 
     @GetMapping
-    public Result<Page<ImageVO>> list(@RequestParam(defaultValue = "") String search,
+    public Result<ImageListVO> list(@RequestParam(defaultValue = "") String search,
             @RequestParam(defaultValue = "") String type, @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "24") int pageSize) {
-        return Result.data(imageFileService.list(StpUtil.getLoginIdAsLong(), search, type, page, pageSize));
+            @RequestParam(defaultValue = "24") int pageSize, @RequestParam(defaultValue = "desc") String sort) {
+        return Result.data(imageFileService.list(StpUtil.getLoginIdAsLong(), search, type, page, pageSize, sort));
     }
 
-    @GetMapping("/stats")
-    public Result<ImageStatsVO> stats() {
-        return Result.data(imageFileService.stats(StpUtil.getLoginIdAsLong()));
+    @GetMapping("/quota")
+    public Result<UploadQuotaVO> quota() {
+        return Result.data(imageFileService.quota(StpUtil.getLoginIdAsLong()));
     }
 
     @DeleteMapping("/{id}")

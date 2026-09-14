@@ -26,6 +26,8 @@ public class ImageFile {
     private int height;
     /** 完整的存储平台和对象定位信息，用于重启后删除云端文件；不对外返回。 */
     private String storageInfo;
+    /** 额度功能上线后成功上传的标记；仅供恢复额度，不对外暴露。 */
+    private Integer quotaCharged = 0;
     /** 数据库生成创建时间；通用写入忽略调用方传入的时间。 */
     @TableField(insertStrategy = FieldStrategy.NEVER, updateStrategy = FieldStrategy.NEVER)
     private Date createTime;

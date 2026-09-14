@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { Plus } from '@phosphor-icons/react/dist/csr/Plus'
+import { getHistoryView, type HistoryView } from './HistoryViewToggle'
 
 export function HistoryHeading() {
   return <div className="page-heading">
@@ -8,10 +9,10 @@ export function HistoryHeading() {
   </div>
 }
 
-export function HistoryCardsSkeleton() {
+export function HistoryCardsSkeleton({ view = getHistoryView() }: { view?: HistoryView }) {
   return <div role="status" aria-label="正在加载上传记录">
     <span className="visually-hidden">正在加载上传记录…</span>
-    <div className="image-library history-skeleton-grid" aria-hidden="true">
+    <div className={`image-library history-skeleton-grid ${view === 'list' ? 'is-list' : ''}`} aria-hidden="true">
       {Array.from({ length: 8 }, (_, index) => <div className="history-skeleton-card" key={index}>
         <div className="library-preview skeleton-block" />
         <div className="library-card-body">
@@ -25,7 +26,7 @@ export function HistoryCardsSkeleton() {
 }
 
 // 路由代码、登录态和首批数据等待共用布局，避免加载阶段切换时页面塌缩。
-export default function HistoryLoading() {
+export default function HistoryLoading({ view = getHistoryView() }: { view?: HistoryView }) {
   return <main id="main" className="history-page" aria-busy="true">
     <HistoryHeading />
     <div className="library-summary" aria-hidden="true">
@@ -36,8 +37,8 @@ export default function HistoryLoading() {
     </div>
     <div className="library-toolbar" aria-hidden="true">
       <div className="search-field"><span className="skeleton-block skeleton-search" /></div>
-      <div className="filter-group"><span className="skeleton-block skeleton-filter" /><span className="skeleton-block skeleton-sort" /></div>
+      <div className="filter-group"><span className="skeleton-block skeleton-filter" /><span className="skeleton-block skeleton-sort sort-label" /><span className="skeleton-block skeleton-view-toggle" /></div>
     </div>
-    <HistoryCardsSkeleton />
+    <HistoryCardsSkeleton view={view} />
   </main>
 }

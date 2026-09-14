@@ -17,7 +17,7 @@ export default function Auth({ app, mode }: { app: AppState; mode: 'login' | 're
   const navigate = useNavigate()
   const location = useLocation()
   const registering = mode === 'register'
-  const destination = location.state?.from === '/history' ? '/history' : '/'
+  const destination = ['/history', '/profile'].includes(location.state?.from) ? location.state.from : '/'
   const [showPassword, setShowPassword] = useState(false)
   const [email, setEmail] = useState('')
   const [sentEmail, setSentEmail] = useState('')
