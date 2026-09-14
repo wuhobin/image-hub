@@ -19,7 +19,6 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <npm.executable>npm</npm.executable>
     </properties>
 
     <dependencies>
@@ -95,35 +94,16 @@
 
     </dependencies>
 
-    <profiles>
-        <profile>
-            <id>windows</id>
-            <activation><os><family>Windows</family></os></activation>
-            <properties><npm.executable>npm.cmd</npm.executable></properties>
-        </profile>
-    </profiles>
-
     <build>
         <plugins>
-            <!-- 前端产物先写入 static，再由 Maven resources 随后端打包。 -->
+            <!-- 排除旧版前端构建残留；前端独立发布 frontend/dist。 -->
             <plugin>
-                <groupId>org.codehaus.mojo</groupId>
-                <artifactId>exec-maven-plugin</artifactId>
-                <version>3.5.0</version>
+                <artifactId>maven-jar-plugin</artifactId>
                 <configuration>
-                    <executable>${npm.executable}</executable>
-                    <workingDirectory>${project.basedir}/frontend</workingDirectory>
+                    <excludes>
+                        <exclude>static/**</exclude>
+                    </excludes>
                 </configuration>
-                <executions>
-                    <execution>
-                        <id>frontend-build</id>
-                        <phase>generate-resources</phase>
-                        <goals><goal>exec</goal></goals>
-                        <configuration>
-                            <arguments><argument>run</argument><argument>build:backend</argument></arguments>
-                        </configuration>
-                    </execution>
-                </executions>
             </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>

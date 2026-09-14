@@ -5,9 +5,9 @@
 1. 在根目录 `.env` 配置 MySQL、Redis、七牛云、SMTP。参考根目录 `.env.example`。
 2. 在 `MYSQL_DATABASE` 指向的库执行 [schema.sql](../deploy/db/schema.sql)。脚本仅 `CREATE TABLE IF NOT EXISTS`，不会升级已有表。已有旧表需在停止旧版后端后执行一次 [时间字段与逻辑删除迁移](../deploy/db/migrations/20260911_audit_and_logic_delete.sql)，再启动新版后端；旧 `created_at` 会保留数据并改名为 `create_time`，历史 `update_time` 初始化为创建时间。随后执行 [秒精度迁移](../deploy/db/migrations/20260911_time_seconds.sql)，历史毫秒直接截去，不四舍五入；最后执行 [DATETIME 迁移](../deploy/db/migrations/20260913_audit_datetime.sql)，将时间列改为 `datetime DEFAULT CURRENT_TIMESTAMP`，更新时间增加 `ON UPDATE CURRENT_TIMESTAMP`。已执行的历史迁移不用重复执行；新建库只需执行最新 schema.sql。
 3. 启动 Redis，再运行 `ImageHubApplication`。本机后端端口为 9000（来自 `.env`），默认配置为 8080。
-4. 前后端合并运行：首次执行 `npm --prefix frontend ci`，然后 `mvn clean verify` 自动构建并打包前端；启动后访问 `http://127.0.0.1:9000/`。IDEA 直接运行前可单独执行 `npm --prefix frontend run build:backend` 并编译项目。
-5. 需要 Vite 热更新时，在 `frontend/.env.local` 设置 `IMAGE_HUB_API_TARGET=http://127.0.0.1:9000`；然后在 frontend 下执行 `npm install`、`npm run dev`。
-6. Vite 开发模式打开 `http://127.0.0.1:5173`，注册后到登录页输入用户名和密码。
+4. 后端执行 `mvn clean verify` 独立构建，也可直接在 IDEA 启动，无需 Node.js；后端端口不再提供前端页面。
+5. 前端首次执行 `npm --prefix frontend ci`，在 `frontend/.env.local` 设置 `IMAGE_HUB_API_TARGET=http://127.0.0.1:9000`，然后执行 `npm --prefix frontend run dev`。
+6. 打开 `http://127.0.0.1:5173`，注册后到登录页输入用户名和密码。部署时执行 `npm --prefix frontend run build`，将 `frontend/dist/` 单独交给 Nginx 托管。
 
 生产环境启用 HTTPS，前端同源代理 `/api/` 到后端。七牛云空间需公开读，`QINIU_DOMAIN` 为其已绑定访问域名。邮件开关 `MAIL_VERIFICATION_ENABLED=true` 且 SMTP 凭据有效时才能注册；不开启时返回明确错误，不跳过邮箱验证。
 
@@ -59,32 +59,11 @@
 - 所有表包含 `create_time`、`update_time`、`deleted`（0 未删除 / 1 已删除）。时间列使用 `datetime`（允许 NULL），由数据库 `DEFAULT CURRENT_TIMESTAMP` 和 `ON UPDATE CURRENT_TIMESTAMP` 生成与维护，实体的时间字段仅用于读取，不参与通用插入和更新；上传入库后按所属用户回读记录，保证返回数据库实际保存的时间，MyBatis-Plus 通用查询自动过滤逻辑删除数据；自定义 SQL 显式处理。已删除账户不能重新登录，用户名和邮箱仍由原唯一约束保留。
 - 每日上传额度和总容量配额尚未实现。
 
-## 生产代理示例
+## 生产代理
 
-默认随 JAR 部署，前端和 `/api` 共用后端端口；网关可将整个站点反向代理到 Spring Boot。下面仅为独立静态部署的可选配置。
+使用仓库中的 [Nginx 配置](../deploy/nginx/imghub.conf) 和 [部署教程](deploy-docker-compose.md)：前端 `dist/` 独立托管，`/api` 原路径转发到后端。模板对应宿主机后端端口 `9000`；直接以默认端口启动 JAR 时改为 `8080`。
 
-前端 `npm run build` 后将 dist 部署到静态服务器，后端单独运行：
-
-```nginx
-server {
-    listen 80;
-    server_name imagehub.example.com;
-    root /srv/imagehub/frontend/dist;
-    client_max_body_size 11m;
-
-    location /api/ {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_set_header Host $host;
-        proxy_read_timeout 120s;
-    }
-
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-}
-```
-
-示例后端端口为 8080，按部署配置调整；公网部署由网关/Nginx 配置 HTTPS。代理层超限可能返回非 JSON 错误页，前端会转为通用错误提示。
+只有已声明的页面回退到 `index.html`；缺失资源、未知页面和文档返回 404，API 错误不会被前端首页覆盖。首页要求重新验证缓存，带哈希的 assets 长期缓存。公网部署配置 HTTPS；代理层超限可能返回非 JSON 错误页，前端会转为通用错误提示。
 
 ## 验证
 

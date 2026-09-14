@@ -1,6 +1,6 @@
 # Image Hub 前端
 
-React + Vite + TypeScript；客户端渲染，无 SSR。开发时由 Vite 提供热更新，发布时随根目录 Spring Boot 项目一起打包。
+React + Vite + TypeScript；客户端渲染，无 SSR。开发时由 Vite 提供热更新，发布时独立构建为静态文件，由 Nginx 托管。
 
 ## 运行
 
@@ -8,7 +8,7 @@ React + Vite + TypeScript；客户端渲染，无 SSR。开发时由 Vite 提供
 
 ```powershell
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
@@ -20,9 +20,9 @@ npm run build
 npm run preview
 ```
 
-`npm run build` 仍输出到 `dist/`，供独立静态部署和 preview 使用。`npm run build:backend` 将产物直接输出到 `../src/main/resources/static/`，该目录构建时清空重建，不要存放手写文件。
+`npm run build` 输出到 `dist/`，独立部署到 Nginx。`npm run preview` 仅用于本地检查构建产物，不能替代生产服务器；接口联调使用 `npm run dev` 的代理或生产 Nginx。
 
-根目录 `mvn clean verify` 自动调用 `build:backend` 并将页面装入 JAR；首次构建先运行 `npm ci`，更新锁文件后重新安装依赖（Windows 上先停止 Vite）。后端启动后打开 `http://127.0.0.1:9000/`（本机配置），无需单独部署前端。/history、/login、/register 支持刷新；开发服务器仍仅监听本机。
+根目录 `mvn clean verify` 只构建后端，不安装或构建前端。首次前端构建先运行 `npm ci`，更新锁文件后重新安装依赖（Windows 上先停止 Vite）。开发服务器仅监听本机；部署后由 Nginx 支持 `/`、`/history`、`/login`、`/register`、`/profile` 直接访问和刷新。
 
 ## 功能范围
 
@@ -37,7 +37,7 @@ npm run preview
 
 开发时将 `.env.example` 复制为 `.env.local`，设置 `IMAGE_HUB_API_TARGET` 为后端地址；所有页面调用同源 `/api`，由 Vite 转发。本机后端使用 9000，因此本地配置为 `http://127.0.0.1:9000`。示例默认 8080。配置修改后重启开发服务器。
 
-随 JAR 部署时 `/api` 直接由同一个 Spring Boot 服务处理，无需 Vite 代理。若选择独立静态服务器部署，则仍需把 `/api/` 反向代理到 Spring Boot。服务配置和接口见 [后端接入说明](../docs/backend-api.md)。
+生产部署使用 [Nginx 配置](../deploy/nginx/imghub.conf)，静态文件与 `/api` 共用域名，API 反向代理到 Spring Boot，无需跨域配置。只更新前端时无需重启后端，发布和回滚步骤见 [部署教程](../docs/deploy-docker-compose.md)。服务配置和接口见 [后端接入说明](../docs/backend-api.md)。
 
 ## 动效
 

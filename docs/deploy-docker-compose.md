@@ -1,8 +1,8 @@
-# Image Hub：上传 JAR 后使用 Docker Compose 部署
+# Image Hub：后端 Docker Compose + 前端 Nginx 独立部署
 
-适用场景：本地 Windows 打包，Linux 服务器运行，复用已有 MySQL 和 Redis。Compose 只管理 image-hub 应用，不创建或修改数据库服务。
+适用场景：本地 Windows 分别构建后端 JAR 和前端 dist，Linux 服务器运行，复用已有 MySQL 和 Redis。Compose 只管理后端应用，宿主机 Nginx 托管前端并将同域名 `/api` 转发到后端。图片仍由浏览器直接访问七牛云。
 
-采用 Java 21 官方运行镜像挂载 JAR，服务器无需 Maven、JDK 或项目源码，也无需自己构建镜像。每次发布保存一个独立版本目录，切换版本后重建容器即可。该方式是 [Eclipse Temurin 官方镜像支持的用法](https://hub.docker.com/_/eclipse-temurin)。
+采用 Java 21 官方运行镜像挂载 JAR，服务器无需 Maven、JDK、Node.js 或项目源码，也无需自己构建镜像。后端切换 JAR 版本后重建容器；前端切换静态目录即可，无需重启后端。挂载 JAR 是 [Eclipse Temurin 官方镜像支持的用法](https://hub.docker.com/_/eclipse-temurin)。
 
 ## 1. 准备服务器
 
@@ -27,7 +27,12 @@ sudo systemctl enable --now docker
 sudo docker compose version
 ```
 
-已安装 Docker 的服务器跳过安装步骤，不要重装已有数据库环境。
+已安装 Docker 的服务器跳过安装步骤，不要重装已有数据库环境。Ubuntu/Debian 如尚未安装宿主机 Nginx，执行：
+
+```bash
+sudo apt-get install -y nginx
+sudo systemctl enable --now nginx
+```
 
 以下示例使用 SSH 账号 `deploy`、服务器地址 `SERVER_IP`，请替换为自己的值。登录服务器，创建目录：
 
@@ -35,7 +40,7 @@ sudo docker compose version
 sudo mkdir -p /opt/image-hub
 sudo chown "$(id -u):$(id -g)" /opt/image-hub
 cd /opt/image-hub
-mkdir -p releases/20260910-001 logs
+mkdir -p releases/20260910-001 frontend/releases/20260910-001 nginx logs
 sudo chown 10001:10001 logs
 sudo chmod 750 logs
 ```
@@ -50,6 +55,10 @@ sudo chmod 750 logs
 ├── .env                 # Compose 参数：版本、镜像、宿主机端口
 ├── app.env              # 业务连接参数和密钥，仅服务器保存
 ├── logs/
+├── nginx/imghub.conf     # 安装前编辑的 Nginx 配置
+├── frontend/
+│   ├── current -> releases/20260910-001/dist
+│   └── releases/20260910-001/dist/
 └── releases/
     ├── 20260910-001/app.jar
     └── 20260910-002/app.jar
@@ -57,7 +66,7 @@ sudo chmod 750 logs
 
 ## 2. 本地打包并上传
 
-本地需安装 Node.js 22.12+。首次构建或更新前端锁文件后执行 `npm --prefix frontend ci`（Windows 上先停止 Vite）；Maven 会自动构建前端到 resources/static，再打包到同一个 JAR。服务器无需 Node.js。
+后端需要 Java 21、Maven；前端需要 Node.js 22.12+。两者独立构建，Maven 不再运行 npm。首次构建或更新前端锁文件后执行 `npm --prefix frontend ci`（Windows 上先停止 Vite）。
 
 在本地 PowerShell 中执行：
 
@@ -66,13 +75,22 @@ Set-Location C:/IdeaProjects/personal/image-hub
 & 'C:/personal-program/Maven/bin/mvn.cmd' -s 'C:/personal-program/Maven/conf/settings.xml' '-Dmaven.repo.local=C:/personal-program/Maven/repoBack' clean verify
 if ($LASTEXITCODE -ne 0) { throw '打包失败，请先修复构建错误' }
 
+npm.cmd --prefix frontend ci
+if ($LASTEXITCODE -ne 0) { throw '前端依赖安装失败' }
+npm.cmd --prefix frontend test
+if ($LASTEXITCODE -ne 0) { throw '前端测试失败' }
+npm.cmd --prefix frontend run build
+if ($LASTEXITCODE -ne 0) { throw '前端构建失败' }
+
 Get-FileHash ./target/image-hub-0.0.1-SNAPSHOT.jar -Algorithm SHA256
 
 # 上传部署文件及无密钥模板，不要上传本地真实 .env。
 scp ./deploy/compose.yaml deploy@SERVER_IP:/opt/image-hub/compose.yaml
 scp ./deploy/.env.example deploy@SERVER_IP:/opt/image-hub/.env.example
 scp ./deploy/app.env.example deploy@SERVER_IP:/opt/image-hub/app.env.example
+scp ./deploy/nginx/imghub.conf deploy@SERVER_IP:/opt/image-hub/nginx/imghub.conf
 scp ./target/image-hub-0.0.1-SNAPSHOT.jar deploy@SERVER_IP:/opt/image-hub/releases/20260910-001/app.jar
+scp -r ./frontend/dist deploy@SERVER_IP:/opt/image-hub/frontend/releases/20260910-001/
 ```
 
 如果使用非默认 SSH 端口，`scp` 加 `-P 端口`，`ssh` 加 `-p 端口`。没有 scp 时也可使用 SFTP 工具上传至相同位置。
@@ -108,11 +126,11 @@ nano app.env
 APP_VERSION=20260910-001
 JAVA_IMAGE=eclipse-temurin:21-jre-jammy
 HTTP_PORT=9000
-PUBLISH_HOST=0.0.0.0
+PUBLISH_HOST=127.0.0.1
 APP_MEMORY=1g
 ```
 
-`APP_VERSION` 必须与上传目录一致。宿主机的 `9000` 映射到容器固定端口 `8080`；更换外部端口只修改 `HTTP_PORT`。容器内始终使用 prod，命令行参数会覆盖误填的 dev profile。
+`APP_VERSION` 只控制后端 JAR，必须与后端上传目录一致。宿主机的 `9000` 映射到容器固定端口 `8080`；修改 `HTTP_PORT` 时同时更新 Nginx 的 `proxy_pass` 端口。容器内始终使用 prod，命令行参数会覆盖误填的 dev profile。已有部署需将原来的 `PUBLISH_HOST=0.0.0.0` 改为 `127.0.0.1` 并重建容器。
 
 `app.env` 根据 `app.env.example` 填写真实值：
 
@@ -171,15 +189,32 @@ sudo docker compose logs --tail=100 -f image-hub
 curl --fail --show-error http://127.0.0.1:9000/api/health
 ```
 
-浏览器打开 `http://SERVER_IP:9000/` 即可使用前端，`/login`、`/register`、`/history` 支持刷新。前端接口使用同源 `/api`。
+后端端口不再返回前端页面；先确认健康接口正常，再启用下面的 Nginx 站点。
 
 期望 HTTP 请求成功，JSON 中 `code` 为 200、`data.status` 为 `UP`。该接口只代表 Web 应用可响应，不验证 MySQL、Redis、七牛云或 SMTP；上线前仍需按业务流程验证数据库操作、缓存、文件上传和邮件投递。本 Compose 没有内置健康检查，`ps` 显示 running 不能单独证明应用已就绪。
 
-若使用默认 `PUBLISH_HOST=0.0.0.0`，在云服务器安全组和主机防火墙中放行所选 TCP 端口，再访问 `http://SERVER_IP:9000/api/health`。Docker 发布端口可能绕过部分 UFW 规则，公网访问限制应结合云安全组或 Docker 防火墙链设置，见 [Docker 防火墙说明](https://docs.docker.com/engine/network/packet-filtering-firewalls/)。
+### 启用前端站点
 
-正式域名访问通常在宿主机配置 Nginx/Caddy 和 HTTPS，再把 PUBLISH_HOST 改为 `127.0.0.1`，反代到 `127.0.0.1:9000`。若反向代理本身也在容器内，应使用共享网络连接服务，不能用代理容器自己的 127.0.0.1。
+将域名指向服务器，在 `nginx/imghub.conf` 中替换 `imagehub.example.com`。Nginx 在宿主机运行，站点根目录只指向前端 dist，不能指向包含 app.env 的项目目录。模板包含页面刷新、静态资源缓存、11 MiB 请求体上限和 `/api` 代理；`proxy_pass` 不附加 `/`，保留后端的 `/api` 前缀。[Nginx 官方说明](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_pass)
 
-prod 下 `/doc.html`、`/v3/api-docs` 不开放，属于预期行为。
+```bash
+cd /opt/image-hub
+test -s frontend/releases/20260910-001/dist/index.html || exit 1
+chmod -R a+rX frontend/releases/20260910-001
+ln -s releases/20260910-001/dist frontend/current
+nano nginx/imghub.conf
+sudo install -m 644 nginx/imghub.conf /etc/nginx/conf.d/imghub.conf
+sudo nginx -t && sudo systemctl reload nginx
+
+curl --fail --show-error -H 'Host: imagehub.example.com' http://127.0.0.1/api/health
+curl -I -H 'Host: imagehub.example.com' http://127.0.0.1/history
+```
+
+`current` 链接只在首次创建；已有前端按第 6 节切换。若服务器已有同域名站点，将模板中的 root 和 location 合并到现有 server，避免重复 server_name。公网使用时在该站点配置有效 TLS 证书、443 监听和 HTTP 到 HTTPS 跳转，然后执行 `nginx -t` 并重载。云安全组及主机防火墙开放 80/443，后端 9000 保持仅本机访问。
+
+浏览器打开 `https://imagehub.example.com/`，确认 `/login`、`/register`、`/history`、`/profile` 可直接访问和刷新，JS/CSS 加载正常。`/api/auth/me` 未登录仍返回 JSON `code=401`；未知 API 由后端返回 JSON，缺失静态资源、未知页面及生产文档路径返回 404，不回退为首页。默认日志不包含请求认证头。
+
+模板按 Nginx 直接面对客户端配置转发头；若前面另有 CDN/网关，需要按真实代理链配置可信来源。后端目前不信任客户端自报的 IP 头，详见 [接口约定](backend-api.md)。
 
 ## 5. 日志、停止与修改配置
 
@@ -202,7 +237,9 @@ sudo docker compose up -d --force-recreate image-hub
 
 只执行 `restart` 不会重新注入修改后的环境变量。容器配置中可查看运行时环境，故不要公开 `docker inspect` 或 `docker compose config` 的完整输出。
 
-## 6. 发布新版本与回滚
+## 6. 独立发布与回滚
+
+### 只更新后端
 
 每次使用新的版本目录，例如 `20260910-002`。不要覆盖正在运行版本的 app.jar，避免运行中的类加载受到影响。
 
@@ -238,6 +275,38 @@ curl --fail --show-error http://127.0.0.1:9000/api/health
 
 JAVA_IMAGE 使用滚动的 Java 21 标签，首次验证后可记录镜像 digest 并填入 `.env`，例如 `eclipse-temurin@sha256:<实际摘要>`，使运行环境可复现。常规 JAR 更新不用 pull；更新 Java 镜像时再 pull 并验证。
 
+### 只更新前端
+
+本地执行 `npm --prefix frontend test`、`npm --prefix frontend run build`。服务器创建 `frontend/releases/20260910-002`，然后上传：
+
+```powershell
+scp -r ./frontend/dist deploy@SERVER_IP:/opt/image-hub/frontend/releases/20260910-002/
+```
+
+服务器切换前先确认产物完整，保留旧哈希资源以支持已经打开页面的懒加载，再原子替换链接：
+
+```bash
+cd /opt/image-hub
+test -s frontend/releases/20260910-002/dist/index.html || exit 1
+cp -an frontend/current/assets/. frontend/releases/20260910-002/dist/assets/
+chmod -R a+rX frontend/releases/20260910-002
+ln -s releases/20260910-002/dist frontend/current.next
+mv -Tf frontend/current.next frontend/current
+```
+
+不修改 `APP_VERSION`，不重启 Java，也无需重载 Nginx。首页使用 `no-cache`，浏览器重新验证；带哈希的资源长期缓存。旧资源按部署保留策略清理，至少覆盖仍需支持的旧页面和回滚窗口。
+
+前端回滚时将链接指回旧版本；同样先保留新版本页面可能仍请求的哈希资源：
+
+```bash
+cd /opt/image-hub
+cp -an frontend/current/assets/. frontend/releases/20260910-001/dist/assets/
+ln -s releases/20260910-001/dist frontend/current.next
+mv -Tf frontend/current.next frontend/current
+```
+
+涉及 API 不兼容变更时，仍需协调前后端发布顺序和版本，独立产物不意味着接口可以随意变更。
+
 ## 7. 常见错误
 
 | 现象 | 检查方式 |
@@ -251,9 +320,10 @@ JAVA_IMAGE 使用滚动的 Java 21 标签，首次验证后可记录镜像 diges
 | Could not resolve placeholder | 检查 app.env 是否存在、变量名是否与 YAML 一致；文件必须通过 env_file 注入 |
 | 应用端口不通 | 先看启动日志，再查 HTTP_PORT、端口占用、云安全组和防火墙 |
 | 容器退出 137 | 检查是否 OOM；APP_MEMORY 默认 1g，按实际负载增大或减少应用资源消耗 |
+| 页面 404 或返回后端 JSON | 访问 Nginx 域名而非 9000；检查 current 链接、dist/index.html 和站点是否加载 |
+| 页面正常但 API 502 | 检查后端健康接口及 Nginx proxy_pass 端口；本模板要求 Nginx 运行在宿主机 |
+| JS/CSS 请求 404 | 检查是否完整上传 dist，以及发布时是否保留旧哈希资源 |
 
-## 本次文件验证范围
+## 验证边界
 
-部署模板不包含实际密钥，也没有连接你的服务器。已使用官方 Compose v2.39.4 CLI（下载后核对发布的 SHA-256）及虚构参数通过 config 校验，检查 prod profile、端口 8080、JAR 只读挂载、密码特殊字符序列化及缺失 APP_VERSION 时拒绝加载。部署密钥/日志/JAR 的 Git 忽略规则及 IDEA 编译也已通过。
-
-本地机器没有 Docker Engine，未启动容器；实际镜像拉取、网络连通性和生产启动仍需在目标 Linux 服务器按本教程验证。
+仓库测试使用替身验证后端鉴权和路由边界，不连接生产存储或发送邮件。部署前分别执行后端 `mvn clean verify`、前端 `npm test` 和 `npm run build`；在目标服务器执行 `docker compose config --quiet`、`nginx -t` 及上述 HTTP 检查。实际证书、容器网络、数据库和云服务连通性仍需在目标环境验证。

@@ -29,7 +29,7 @@ services:
       - --spring.profiles.active=prod
       - --server.port=8080
     ports:
-      - "${PUBLISH_HOST:-0.0.0.0}:${HTTP_PORT:-9000}:8080"
+      - "${PUBLISH_HOST:-127.0.0.1}:${HTTP_PORT:-9000}:8080"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
