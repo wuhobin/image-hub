@@ -69,7 +69,8 @@ button, a { transition: color .2s, background .2s, border-color .2s, box-shadow 
 /* 填满头像和下拉框之间的间隙，鼠标移入菜单时不会提前收起。 */
 .user-dropdown::before { content: ''; position: absolute; inset: -9px 0 auto; height: 9px; }
 .user-menu-item { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 6px 10px; border: 0; border-radius: 5px; background: transparent; color: #cbd7e9; font-size: 12px; text-align: left; }
-.user-menu-item:hover, .user-menu-item:focus-visible, .user-menu-item[aria-current="page"] { background: #a8c9ff28; color: #fff; }
+.user-menu-item:hover { background: #a8c9ff28; color: #fff; }
+.user-menu-item:focus-visible { color: #fff; }
 .hero { position: relative; isolation: isolate; overflow: hidden; padding: 78px 24px 60px; min-height: 680px; }
 .starfield { position: absolute; inset: 0; z-index: -1; pointer-events: none; background: radial-gradient(ellipse at 50% 48%, #14213988, transparent 65%), var(--bg); overflow: hidden; }
 .starfield canvas { display: block; width: 100%; height: 100%; }

@@ -24,7 +24,7 @@ public class FrontendWebConfig implements WebMvcConfigurer {
     @Override
     public void addViewControllers(ViewControllerRegistry registry) {
         // 仅公开前端页面壳；登录态、图片归属等仍由 /api 业务接口校验。
-        for (String path : new String[]{"/", "/login", "/register", "/history"}) {
+        for (String path : new String[]{"/", "/login", "/register", "/history", "/profile"}) {
             registry.addViewController(path).setViewName("forward:/index.html");
         }
     }

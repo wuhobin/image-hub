@@ -127,7 +127,7 @@ APP_MEMORY=1g
 | SPRING_DATA_REDIS_SSL_ENABLED | Redis 是否使用 TLS，默认 false |
 | QINIU_ACCESS_KEY / QINIU_SECRET_KEY | 七牛云凭据 |
 | QINIU_BUCKET_NAME / QINIU_DOMAIN | 存储空间及已绑定的域名；域名带协议并以 `/` 结尾 |
-| QINIU_BASE_PATH | 文件前缀，例如 `base/` |
+| QINIU_BASE_PATH | 文件前缀，默认 `ImgHub/` |
 | MAIL_USERNAME / MAIL_PASSWORD | QQ 邮箱账号及 SMTP 授权码 |
 | MAIL_VERIFICATION_ENABLED | SMTP 参数准备好后设为 true，否则 false |
 

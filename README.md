@@ -151,7 +151,7 @@ Sa-Token 默认开启，单账号模式保护业务接口，请求头格式为 `
 
 ## 文件存储
 
-启动类已添加 `@EnableFileStorage`。唯一存储平台为 `qiniu-kodo-1`，使用 `dromara.x-file-storage.qiniu-kodo` 配置，文件前缀默认 `base/`，可通过 `QINIU_BASE_PATH` 覆盖；单文件上传限制为 10 MB。七牛云 SDK 版本由 `platform-dependencies-bom` 管理，采用当前 x-file-storage 2.3.0 适配器声明的 7.12.1。
+启动类已添加 `@EnableFileStorage`。唯一存储平台为 `qiniu-kodo-1`，使用 `dromara.x-file-storage.qiniu-kodo` 配置，文件前缀默认 `ImgHub/`，可通过 `QINIU_BASE_PATH` 覆盖；单文件上传限制为 10 MB。七牛云 SDK 版本由 `platform-dependencies-bom` 管理，采用当前 x-file-storage 2.3.0 适配器声明的 7.12.1。
 
 启动前必须配置：
 
