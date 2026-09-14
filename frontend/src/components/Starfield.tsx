@@ -131,15 +131,12 @@ const lensFragment = `
   }
 `
 
-export type StarfieldProps = { target?: RefObject<HTMLDivElement | null>; active?: boolean; paused: boolean }
+export type StarfieldProps = { target?: RefObject<HTMLDivElement | null>; active?: boolean }
 
-export default memo(function Starfield({ target, active = false, paused }: StarfieldProps) {
+export default memo(function Starfield({ target, active = false }: StarfieldProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const activeRef = useRef(active)
-  const pausedRef = useRef(paused)
   useEffect(() => { activeRef.current = active }, [active])
-  const wake = useRef(() => {})
-  useEffect(() => { pausedRef.current = paused; wake.current() }, [paused])
 
   useGSAP((_context, contextSafe) => {
     // 留出一次页面绘制，并让 StrictMode 的检查先完成，避免重复创建昂贵的 WebGL 上下文。
@@ -205,6 +202,7 @@ export default memo(function Starfield({ target, active = false, paused }: Starf
       let width = 1
       let height = 1
       let boxDirty = true
+      let boundsDirty = true
       let sizeDirty = true
       const resize = () => {
         const nextWidth = Math.max(host.clientWidth, 1)
@@ -226,6 +224,7 @@ export default memo(function Starfield({ target, active = false, paused }: Starf
         material.uniforms.uResolution.value.set(width, height)
         sizeDirty = false
         boxDirty = true
+        boundsDirty = true
       }
       const onResize = () => { sizeDirty = true; syncLoop() }
       const observer = new ResizeObserver(onResize)
@@ -249,7 +248,7 @@ export default memo(function Starfield({ target, active = false, paused }: Starf
         .to(material.uniforms.uArrival, { value: 1, duration: 1.7, ease: 'power2.inOut' }, 1.1)
         .from(renderer.domElement, { autoAlpha: 0, duration: 1.4, ease: 'sine.out' }, 0)
       if (uploadSurface) {
-        // 与画布共用时钟；减少动态效果或暂停时直接落到无扩散的最终状态。
+        // 与画布共用时钟；减少动态效果时直接落到无扩散的最终状态。
         introMotion
           .to(material.uniforms.uIntroBurst, { value: 1, duration: 1.55, ease: 'power2.inOut' }, 0.75)
           .to(material.uniforms.uIntroBurst, { value: 0, duration: 3.5, ease: 'power2.inOut' }, 2.3)
@@ -269,15 +268,16 @@ export default memo(function Starfield({ target, active = false, paused }: Starf
       let hostBounds = host.getBoundingClientRect()
       let pointerEvent: PointerEvent | null = null
       const onPointer = (event: PointerEvent) => {
-        if (event.pointerType !== 'mouse' || pausedRef.current || reducedMotion.matches) return
+        if (event.pointerType !== 'mouse' || reducedMotion.matches) return
         pointerEvent = event
       }
       const resetPointer = () => { pointerEvent = null; wanted.x = wanted.y = 0 }
-      const onScroll = () => { boxDirty = true; syncLoop() }
+      // 画布和上传框随页面一起滚动，相对坐标不变；仅在下次指针移动时刷新视口坐标。
+      const onScroll = () => { boundsDirty = true }
       surface.addEventListener('pointermove', onPointer, { passive: true })
       surface.addEventListener('pointerleave', resetPointer)
       window.addEventListener('blur', resetPointer)
-      window.addEventListener('scroll', onScroll, { passive: true, capture: true })
+      window.addEventListener('scroll', onScroll, { passive: true })
       let visible = false
       const visibility = new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; syncLoop() })
       visibility.observe(host)
@@ -290,7 +290,7 @@ export default memo(function Starfield({ target, active = false, paused }: Starf
       let sampleFrames = 0
       const render = (_time: number, deltaMs: number) => {
         if (!visible || document.hidden || failed) return
-        const still = reducedMotion.matches || pausedRef.current
+        const still = reducedMotion.matches
         accumulatedMs += deltaMs
         // 移动端背景最多 30 帧；只节流装饰，业务交互仍按浏览器正常帧率响应。
         const interval = width < 600 ? 1000 / 30 : 1000 / 60
@@ -315,6 +315,7 @@ export default memo(function Starfield({ target, active = false, paused }: Starf
         if (!still) elapsed += delta
         if (boxDirty) {
           hostBounds = host.getBoundingClientRect()
+          boundsDirty = false
           if (target?.current) {
             const rect = target.current.getBoundingClientRect()
             material.uniforms.uBox.value.set(
@@ -326,12 +327,16 @@ export default memo(function Starfield({ target, active = false, paused }: Starf
           }
           boxDirty = false
         }
-        // One clock drives rendering and GSAP, so offscreen/pause also freezes shader tweens.
+        // One clock drives rendering and GSAP, so offscreen also freezes shader tweens.
         introMotion.time(still ? introMotion.duration() : Math.max(introMotion.time(), Math.min(elapsed, introMotion.duration())))
         camera.position.z = 8 * (1 - entrance.progress)
         if (!still) {
           // Consume only the latest pointer event per frame, with cached bounds.
           if (pointerEvent) {
+            if (boundsDirty) {
+              hostBounds = host.getBoundingClientRect()
+              boundsDirty = false
+            }
             wanted.x = THREE.MathUtils.clamp((pointerEvent.clientX - hostBounds.left) / Math.max(hostBounds.width, 1) * 2 - 1, -1, 1)
             wanted.y = THREE.MathUtils.clamp(1 - (pointerEvent.clientY - hostBounds.top) / Math.max(hostBounds.height, 1) * 2, -1, 1)
             pointerEvent = null
@@ -344,7 +349,7 @@ export default memo(function Starfield({ target, active = false, paused }: Starf
               if (control.key === 'expansion') control.to.tween.duration(hovered ? 0.85 : 1.1)
               control.to(control.destination).pause()
             }
-            // Manually advance reusable tweens so pause/offscreen cannot run ahead.
+            // Manually advance reusable tweens so offscreen cannot run ahead.
             control.to.tween.time(control.to.tween.time() + delta)
           }
           camera.position.x = -motion.x * 1.4
@@ -372,14 +377,14 @@ export default memo(function Starfield({ target, active = false, paused }: Starf
         renderer.render(postScene, postCamera)
         renderedStatic = still
       }
-      // 暂停、离屏和后台标签不保留空转 ticker；恢复时先同步几何边界。
+      // 减少动态效果、离屏和后台标签不保留空转 ticker；恢复时先同步几何边界。
       let disposed = false
       let ready = false
       let failed = false
       let running = false
       const syncLoop = () => {
         const drawable = ready && !disposed && !failed && visible && !document.hidden
-        const animate = drawable && !pausedRef.current && !reducedMotion.matches
+        const animate = drawable && !reducedMotion.matches
         if (animate && !running) {
           accumulatedMs = 0
           boxDirty = true
@@ -391,7 +396,6 @@ export default memo(function Starfield({ target, active = false, paused }: Starf
         }
         if (drawable && !animate) render(0, 0)
       }
-      wake.current = () => { renderedStatic = false; syncLoop() }
       document.addEventListener('visibilitychange', syncLoop)
       // 着色器先并行准备，完成后再启动开场时钟，避免首次绘制同步等待编译。
       resize()
@@ -415,7 +419,6 @@ export default memo(function Starfield({ target, active = false, paused }: Starf
       renderer.domElement.addEventListener('webglcontextlost', onLost)
       return () => {
         disposed = true
-        wake.current = () => {}
         document.removeEventListener('visibilitychange', syncLoop)
         gsap.ticker.remove(render)
         observer.disconnect()
@@ -424,7 +427,7 @@ export default memo(function Starfield({ target, active = false, paused }: Starf
         surface.removeEventListener('pointermove', onPointer)
         surface.removeEventListener('pointerleave', resetPointer)
         window.removeEventListener('blur', resetPointer)
-        window.removeEventListener('scroll', onScroll, true)
+        window.removeEventListener('scroll', onScroll)
         uploadSurface?.removeEventListener('pointerenter', enterUpload)
         uploadSurface?.removeEventListener('pointerleave', leaveUpload)
         uploadSurface?.removeEventListener('pointercancel', leaveUpload)

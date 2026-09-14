@@ -99,7 +99,8 @@ class BusinessFlowTest {
         when(ossTemplate.getFileStorageService()).thenReturn(storage);
         stored = new FileInfo().setPlatform("qiniu-kodo-1").setBasePath("base/").setPath("images/test/")
                 .setFilename("stored.png").setUrl("https://cdn.example.test/base/images/test/stored.png")
-                .setSize(100L).setContentType("image/png");
+                .setSize(100L).setContentType("image/png")
+                .setCreateTime(java.util.Date.from(java.time.Instant.parse("2026-09-14T01:57:41.489Z")));
         when(storage.of(any(MultipartFile.class))).thenAnswer(call -> {
             UploadPretreatment upload = mock(UploadPretreatment.class, Answers.RETURNS_SELF);
             when(upload.upload()).thenReturn(stored);
@@ -107,6 +108,15 @@ class BusinessFlowTest {
         });
         when(storage.exists(any(FileInfo.class))).thenReturn(true);
         when(ossTemplate.delete(any(FileInfo.class))).thenReturn(true);
+    }
+
+    @Test
+    void responseDatesUseShanghaiTimeWithSecondPrecision() {
+        var image = new com.aurora.imagehub.model.vo.ImageVO();
+        image.setCreatedAt(java.util.Date.from(java.time.Instant.parse("2026-09-13T17:57:42.123Z")));
+        assertThat(objectMapper.valueToTree(image).path("createdAt").asText()).isEqualTo("2026-09-14 01:57:42");
+        assertThat(objectMapper.valueToTree(Map.of("time", image.getCreatedAt())).path("time").asText())
+                .isEqualTo("2026-09-14 01:57:42");
     }
 
     @Test
@@ -131,15 +141,22 @@ class BusinessFlowTest {
         assertThat(image.path("width").asInt()).isEqualTo(3);
         assertThat(image.path("height").asInt()).isEqualTo(2);
         assertThat(image.has("storageInfo")).isFalse();
+        assertThat(image.path("url").asText()).isEqualTo(stored.getUrl());
+        assertThat(image.path("preview").asText()).isEqualTo(stored.getUrl()
+                + "?imageView2/2/w/600/h/600/q/75/format/webp/ignore-error/1");
         ImageFile persisted = imageFileService.getById(image.path("id").asText());
         assertThat(persisted.getUserId()).isEqualTo(userMapper.findByUsername(username).getId());
         assertThat(persisted.getStorageInfo()).isNotBlank();
+        assertThat(java.time.OffsetDateTime.parse(objectMapper.readTree(persisted.getStorageInfo())
+                .path("createTime").asText()).toInstant()).isEqualTo(stored.getCreateTime().toInstant());
         assertThat(persisted.getDeleted()).isZero();
         assertThat(persisted.getCreateTime()).isNotNull();
         assertThat(persisted.getUpdateTime()).isNotNull();
         assertThat(persisted.getCreateTime().toInstant().getNano()).isZero();
         assertThat(persisted.getUpdateTime().toInstant().getNano()).isZero();
-        assertThat(java.time.Instant.parse(image.path("createdAt").asText())).isEqualTo(persisted.getCreateTime().toInstant());
+        assertThat(image.path("createdAt").asText()).isEqualTo(java.time.format.DateTimeFormatter
+                .ofPattern("yyyy-MM-dd HH:mm:ss").withZone(java.time.ZoneId.of("Asia/Shanghai"))
+                .format(persisted.getCreateTime().toInstant()));
         var createTime = persisted.getCreateTime();
         // 制造旧的数据库时间，确认更新时间来自数据库，而非传入实体。
         jdbcTemplate.update("UPDATE hub_image SET update_time = ? WHERE id = ?",
@@ -161,6 +178,9 @@ class BusinessFlowTest {
         assertThat(stats.path("totalCount").asInt()).isEqualTo(1);
         assertThat(stats.path("totalBytes").asInt()).isEqualTo(png().length);
         assertThat(page.path("records").get(0).path("id")).isEqualTo(image.path("id"));
+        assertThat(page.path("records").get(0).path("createdAt")).isEqualTo(image.path("createdAt"));
+        assertThat(page.path("records").get(0).path("url")).isEqualTo(image.path("url"));
+        assertThat(page.path("records").get(0).path("preview")).isEqualTo(image.path("preview"));
         assertThat(get("/api/images?search=absent", first).path("data").path("total").asInt()).isZero();
         assertThat(get("/api/images?pageSize=101", first).path("code").asInt()).isEqualTo(400);
 
@@ -213,6 +233,34 @@ class BusinessFlowTest {
         assertThat(upload(token, "fake.png", "<html>not an image</html>".getBytes()).path("code").asInt()).isEqualTo(400);
         assertThat(upload(token, "fake.jpg", png()).path("code").asInt()).isEqualTo(400);
         verify(storage, never()).of(any(MultipartFile.class));
+    }
+
+    @Test
+    void deletionSupportsBothStoredDateFormatsAndRejectsCorruptMetadata() throws Exception {
+        register("legacy", "legacy@example.test");
+        String token = login("legacy");
+        for (String time : new String[]{"2026-09-14T01:57:41.489+00:00", "2026-09-14T01:57:41.489Z", "2026-09-14 09:57:41"}) {
+            String id = upload(token, "legacy.png", png()).path("data").path("id").asText();
+            var metadata = objectMapper.createObjectNode();
+            metadata.setAll((com.fasterxml.jackson.databind.node.ObjectNode) objectMapper.valueToTree(stored));
+            metadata.put("createTime", time);
+            jdbcTemplate.update("UPDATE hub_image SET storage_info = ? WHERE id = ?", metadata.toString(), id);
+            clearInvocations(ossTemplate);
+            assertThat(delete(id, token).path("code").asInt()).isEqualTo(200);
+            var fileInfoCaptor = org.mockito.ArgumentCaptor.forClass(FileInfo.class);
+            verify(ossTemplate).delete(fileInfoCaptor.capture());
+            assertThat(fileInfoCaptor.getValue().getCreateTime().toInstant()).isEqualTo(java.time.Instant.parse(
+                    time.contains("T") ? "2026-09-14T01:57:41.489Z" : "2026-09-14T01:57:41Z"));
+            assertThat(fileInfoCaptor.getValue().getFilename()).isEqualTo(stored.getFilename());
+            assertThat(jdbcTemplate.queryForObject("SELECT deleted FROM hub_image WHERE id = ?", Integer.class, id)).isEqualTo(1);
+        }
+        String id = upload(token, "corrupt.png", png()).path("data").path("id").asText();
+        jdbcTemplate.update("UPDATE hub_image SET storage_info = ? WHERE id = ?", "{\"createTime\":\"invalid-date\"}", id);
+        clearInvocations(ossTemplate, storage);
+        assertThat(delete(id, token).path("code").asInt()).isEqualTo(500);
+        verify(storage, never()).exists(any(FileInfo.class));
+        verify(ossTemplate, never()).delete(any(FileInfo.class));
+        assertThat(jdbcTemplate.queryForObject("SELECT deleted FROM hub_image WHERE id = ?", Integer.class, id)).isZero();
     }
 
     @Test

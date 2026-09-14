@@ -8,8 +8,6 @@ import { CloudArrowUp } from '@phosphor-icons/react/dist/csr/CloudArrowUp'
 import { Copy } from '@phosphor-icons/react/dist/csr/Copy'
 import { ImageSquare } from '@phosphor-icons/react/dist/csr/ImageSquare'
 import { LinkSimple } from '@phosphor-icons/react/dist/csr/LinkSimple'
-import { Pause } from '@phosphor-icons/react/dist/csr/Pause'
-import { Play } from '@phosphor-icons/react/dist/csr/Play'
 import { Plus } from '@phosphor-icons/react/dist/csr/Plus'
 import { X } from '@phosphor-icons/react/dist/csr/X'
 import { Ambient } from '../components/Ambient'
@@ -29,26 +27,21 @@ export default function Home({ app }: { app: AppState }) {
   const completed = app.pending.filter(item => item.status === 'done')
   const progress = app.pending.length ? Math.floor(app.pending.reduce((total, item) => total + item.progress, 0) / app.pending.length) : 0
 
-  return <main id="main" className="home" data-paused={app.paused}>
+  return <main id="main" className="home">
     <section className="hero" aria-labelledby="hero-title">
-      <Ambient target={lensTarget} active={dragging || focused || app.busy} paused={app.paused} />
+      <Ambient target={lensTarget} active={dragging || focused || app.busy} />
       <div className="hero-content">
         <div className="hero-heading">
           <span className="eyebrow"><span className="tiny-line" />让分享，从一张图片开始<span className="tiny-line" /></span>
           <h1 id="hero-title">你的图片，<span>即刻分享。</span></h1>
           <p>拖入图片，获取链接。把值得分享的，送到任何地方。</p>
         </div>
-        <div className={`upload-shell ${dragging ? 'is-dragging' : ''} ${app.busy ? 'is-uploading' : ''}`} ref={lensTarget} data-paused={app.paused}
+        <div className={`upload-shell ${dragging ? 'is-dragging' : ''} ${app.busy ? 'is-uploading' : ''}`} ref={lensTarget}
           onFocusCapture={() => setFocused(true)} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false) }}
           onDragEnter={event => { event.preventDefault(); dragDepth.current++; if (!app.busy) setDragging(true) }}
           onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = app.busy ? 'none' : 'copy' }}
           onDragLeave={event => { event.preventDefault(); dragDepth.current--; if (dragDepth.current <= 0) setDragging(false) }}
           onDrop={event => { event.preventDefault(); dragDepth.current = 0; setDragging(false); void app.selectFiles(event.dataTransfer.files) }}>
-          <svg className="rim-filter" aria-hidden="true"><filter id="upload-rim-noise" x="-10%" y="-10%" width="120%" height="120%" colorInterpolationFilters="sRGB">
-            <feTurbulence type="fractalNoise" baseFrequency="0.06 0.45" numOctaves="2" seed="12" result="noise" />
-            <feDisplacementMap in="SourceGraphic" in2="noise" scale="1.8" xChannelSelector="R" yChannelSelector="G" result="ripple" />
-            <feComposite in="ripple" in2="noise" operator="arithmetic" k1="1.3" k2="0.5" k3="0" k4="0" />
-          </filter></svg>
           <span className="upload-rim" aria-hidden="true" />
           <input ref={input} className="visually-hidden" type="file" multiple accept={fileAccept} aria-label="选择要上传的图片" tabIndex={-1}
             onChange={event => { if (event.target.files) void app.selectFiles(event.target.files); event.target.value = '' }} disabled={app.busy || app.selecting} />
@@ -106,12 +99,6 @@ export default function Home({ app }: { app: AppState }) {
             label={app.busy ? `正在上传 ${app.pending.findIndex(item => item.status === 'uploading') + 1}/${app.pending.length}` : `上传完成 ${completed.length}/${app.pending.length}`} /></Suspense>}
         </div>}
 
-        <div className="hero-bottom">
-          <span><LinkSimple size={15} />一个链接，连接你的每次分享</span>
-          <button className="motion-button" onClick={() => app.setPaused(!app.paused)} aria-pressed={app.paused} aria-label={app.paused ? '播放背景动效' : '暂停背景动效'}>
-            {app.paused ? <Play size={13} weight="fill" /> : <Pause size={13} weight="fill" />}<span>{app.paused ? '播放动效' : '暂停动效'}</span>
-          </button>
-        </div>
       </div>
     </section>
     <section className="workflow" aria-label="使用步骤">

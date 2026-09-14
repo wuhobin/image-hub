@@ -6,6 +6,9 @@ spring:
     active: ${SPRING_PROFILES_ACTIVE:default}
   application:
     name: image-hub
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
   web:
     resources:
       # 前端由 FrontendWebConfig 显式托管；默认不暴露依赖 JAR 的文档页面。

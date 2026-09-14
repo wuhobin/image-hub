@@ -14,5 +14,11 @@ export function passwordError(password: string) {
 }
 
 export function formatSize(bytes: number) {
+  if (bytes === 0) return '0 KB'
   return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+// 新接口返回北京时间；补齐 ISO 时区以避免浏览器按本地时区猜测，兼容原有 ISO 返回值。
+export function toDateTime(value: string) {
+  return value.includes(' ') ? value.replace(' ', 'T') + '+08:00' : value
 }

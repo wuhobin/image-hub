@@ -1,23 +1,28 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useGSAP } from '@gsap/react'
+import gsap from 'gsap'
 import { Link } from 'react-router-dom'
 import { ArrowDown } from '@phosphor-icons/react/dist/csr/ArrowDown'
 import { ArrowUpRight } from '@phosphor-icons/react/dist/csr/ArrowUpRight'
 import { Copy } from '@phosphor-icons/react/dist/csr/Copy'
 import { ImageSquare } from '@phosphor-icons/react/dist/csr/ImageSquare'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass'
-import { Plus } from '@phosphor-icons/react/dist/csr/Plus'
 import { Trash } from '@phosphor-icons/react/dist/csr/Trash'
 import { Warning } from '@phosphor-icons/react/dist/csr/Warning'
 import { X } from '@phosphor-icons/react/dist/csr/X'
 import type { AppState } from '../App'
 import { Modal } from '../components/Modal'
-import { formatSize } from '../lib/rules'
+import HistoryLoading, { HistoryCardsSkeleton, HistoryHeading } from '../components/HistoryLoading'
+import { formatSize, toDateTime } from '../lib/rules'
 import type { ImageRecord, ImageStats, Page } from '../lib/types'
 import { api } from '../lib/api'
 
 const timeFormat = new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
+gsap.registerPlugin(useGSAP)
 
 export default function History({ app }: { app: AppState }) {
+  const pageRef = useRef<HTMLElement>(null)
+  const hasEntered = useRef(false)
   const [search, setSearch] = useState('')
   const [format, setFormat] = useState('全部格式')
   const [deleting, setDeleting] = useState<ImageRecord | null>(null)
@@ -58,6 +63,29 @@ export default function History({ app }: { app: AppState }) {
   const count = stats?.totalCount || 0
   const bytes = stats?.totalBytes || 0
 
+  useGSAP(() => {
+    if (loading || !pageRef.current) return
+    const firstEntry = !hasEntered.current
+    hasEntered.current = true
+    const media = gsap.matchMedia()
+    media.add('(prefers-reduced-motion: no-preference)', () => {
+      const timeline = gsap.timeline({ defaults: { duration: .5, ease: 'power2.out', clearProps: 'opacity,transform' } })
+      // 首批数据到达再入场，筛选和翻页只更新内容区，避免标题反复闪动。
+      if (firstEntry) timeline.from('.page-heading, .library-summary, .library-toolbar', {
+        opacity: .35, y: 14, stagger: .07,
+      }, 0)
+      const content = pageRef.current!.querySelectorAll('.library-card, .empty-state')
+      if (content.length) {
+        // 暂停 CSS hover 过渡，避免与 GSAP 同时插值 transform；结束后恢复。
+        gsap.set(content, { transition: 'none' })
+        timeline.from(content, {
+          opacity: 0, y: 18, stagger: { amount: .28 }, clearProps: 'opacity,transform,transition',
+        }, firstEntry ? .18 : 0)
+      }
+    })
+    return () => media.revert()
+  }, { scope: pageRef, dependencies: [loading], revertOnUpdate: true })
+
   async function confirmDelete() {
     if (!deleting || deletingBusy) return
     setDeletingBusy(true)
@@ -69,11 +97,10 @@ export default function History({ app }: { app: AppState }) {
     } finally { setDeletingBusy(false) }
   }
 
-  return <main id="main" className="history-page page-enter">
-    <div className="page-heading">
-      <div><span className="section-kicker">属于你的图片空间</span><h1>每次分享，都在这里。</h1><p>查看、复制和管理你上传的每一张图片。</p></div>
-      <Link className="button button-primary" to="/"><Plus size={17} />上传图片</Link>
-    </div>
+  if (loading && !data) return <HistoryLoading />
+
+  return <main ref={pageRef} id="main" className="history-page" aria-busy={loading}>
+    <HistoryHeading />
     <div className="library-summary">
       <div><strong>{count.toString().padStart(2, '0')}</strong><span>张图片</span></div>
       <span className="summary-divider" />
@@ -89,8 +116,8 @@ export default function History({ app }: { app: AppState }) {
         <span className="sort-label"><ArrowDown size={15} />最新上传</span>
       </div>
     </div>
-    {error ? <div className="empty-state" role="alert"><p>{error}</p><button className="button button-secondary" onClick={() => setReload(value => value + 1)}>重新加载</button></div> : loading ? <div className="empty-state" role="status">正在加载图片…</div> : filtered.length > 0 ? <div className="image-library">
-      {filtered.map((record, index) => <article className="library-card" key={record.id} style={{ '--card-index': Math.min(index, 7) } as React.CSSProperties}>
+    {error ? <div className="empty-state" role="alert"><p>{error}</p><button className="button button-secondary" onClick={() => setReload(value => value + 1)}>重新加载</button></div> : loading ? <HistoryCardsSkeleton /> : filtered.length > 0 ? <div className="image-library">
+      {filtered.map((record, index) => <article className="library-card" key={record.id}>
         <button className="library-preview" onClick={() => app.setPreview(record)} aria-label={`预览 ${record.name}`}>
           <img src={record.preview} alt={record.name} loading={index > 3 ? 'lazy' : 'eager'} />
           <span className="preview-hint">查看图片 <ArrowUpRight size={16} /></span>
@@ -98,7 +125,7 @@ export default function History({ app }: { app: AppState }) {
         <div className="library-card-body">
           <div className="image-title"><h2 title={record.name}>{record.name}</h2><span className="format-label">{record.type}</span></div>
           <div className="image-details"><span>{record.width} × {record.height}</span><span>{formatSize(record.size)}</span></div>
-          <div className="image-card-bottom"><time dateTime={record.createdAt}>{timeFormat.format(new Date(record.createdAt))}</time>
+          <div className="image-card-bottom"><time dateTime={toDateTime(record.createdAt)}>{timeFormat.format(new Date(toDateTime(record.createdAt)))}</time>
             <div className="image-actions">
               <button className="icon-button copy-action" aria-label={`复制 ${record.name} 的原始 URL`} title="复制原始 URL" onClick={() => app.copyUrl(record.url)}><Copy size={17} /></button>
               <button className="icon-button delete-action" aria-label={`删除 ${record.name}`} title="删除图片" onClick={() => setDeleting(record)}><Trash size={17} /></button>

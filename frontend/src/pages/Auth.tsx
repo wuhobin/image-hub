@@ -122,8 +122,8 @@ export default function Auth({ app, mode }: { app: AppState; mode: 'login' | 're
   const error = (name: string) => errors[name] ? <span id={`${name}-error`} className="field-error" role="alert">{errors[name]}</span> : null
 
   return <main id="main" className={`auth-page ${registering ? 'auth-register' : ''}`}>
-    <section className="auth-story" aria-label="Image Hub">
-      <Ambient paused={app.paused} />
+    <section className="auth-story" aria-label="ImgHub">
+      <Ambient />
       <div className="auth-story-content">
         <div className="auth-orbit" aria-hidden="true"><div className="orbit-ring ring-one" /><div className="orbit-ring ring-two" /><div className="orbit-ring ring-three" /><div className="orbit-core"><ImageSquare size={47} weight="light" /></div><span className="orbit-link"><LinkSimple size={22} /></span></div>
         <span className="section-kicker">图片不止于收藏</span>

@@ -6,6 +6,7 @@ import { SignOut } from '@phosphor-icons/react/dist/csr/SignOut'
 import Home from './pages/Home'
 import { Modal } from './components/Modal'
 import { NoticeToast } from './components/NoticeToast'
+import HistoryLoading from './components/HistoryLoading'
 import { formatSize } from './lib/rules'
 import { useImageHub } from './lib/useImageHub'
 
@@ -18,9 +19,9 @@ function Header({ app }: { app: AppState }) {
   const authPage = ['/login', '/register'].includes(location.pathname)
   return <header className="header">
     <div className="header-inner">
-      <Link className="brand" to="/" aria-label="Image Hub 首页">
+      <Link className="brand" to="/" aria-label="ImgHub 首页">
         <span className="brand-mark"><ImageSquare size={23} weight="duotone" /></span>
-        <span>image<span className="brand-light">hub</span><span className="brand-period">.</span></span>
+        <span>Img<span className="brand-light">Hub</span></span>
       </Link>
       {!authPage && <nav className="navigation" aria-label="主导航">
         <NavLink to="/" end>上传图片</NavLink>
@@ -47,29 +48,29 @@ export default function App() {
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'instant' })
     const titles: Record<string, string> = { '/': '你的图片，即刻分享', '/history': '上传记录', '/login': '登录', '/register': '注册' }
-    document.title = `${titles[location.pathname] || '页面未找到'} · Image Hub`
+    document.title = `ImgHub · ${titles[location.pathname] || '页面未找到'}`
   }, [location.pathname])
 
   return <>
     <a className="skip-link" href="#main">跳到主要内容</a>
     <Header app={app} />
-    <Suspense fallback={<main id="main" className="empty-state" role="status">正在加载页面…</main>}>
+    <Suspense fallback={location.pathname === '/history' ? <HistoryLoading /> : <main id="main" className="empty-state" role="status">正在加载页面…</main>}>
     <Routes>
       <Route path="/" element={<Home app={app} />} />
-      <Route path="/history" element={app.initializing ? <main id="main" className="empty-state" role="status">正在恢复登录状态…</main> : app.user ? <History app={app} /> : <Navigate to="/login" state={{ from: '/history' }} replace />} />
+      <Route path="/history" element={app.initializing ? <HistoryLoading /> : app.user ? <History app={app} /> : <Navigate to="/login" state={{ from: '/history' }} replace />} />
       <Route path="/login" element={<Auth app={app} mode="login" />} />
       <Route path="/register" element={<Auth app={app} mode="register" />} />
       <Route path="*" element={<main id="main" className="not-found"><h1>这里还没有图片。</h1><p>页面不存在，回首页开始一次新的分享。</p><Link to="/" className="button button-primary">返回首页</Link></main>} />
     </Routes>
     </Suspense>
     <footer className="footer">
-      <span className="footer-brand">imagehub.</span>
+      <span className="footer-brand">ImgHub</span>
       <span>每一张图片，都有自己的去处。</span>
       <span className="demo-label">图片托管 · 即刻分享</span>
     </footer>
     <NoticeToast notice={app.notice} onDismiss={() => app.setNotice(null)} />
     {app.preview && <Modal title={app.preview.name} onClose={() => app.setPreview(null)} className="preview-modal">
-      <div className="preview-image-wrap"><img src={app.preview.preview} alt={app.preview.name} /></div>
+      <div className="preview-image-wrap"><img src={app.preview.url ?? app.preview.preview} alt={app.preview.name} /></div>
       <div className="preview-caption"><span>{app.preview.width} × {app.preview.height}</span><span>{formatSize(app.preview.size)}</span></div>
     </Modal>}
   </>

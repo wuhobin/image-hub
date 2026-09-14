@@ -10,3 +10,4 @@
 !/.env.example
 /src/main/resources/application-local.yml
 /src/main/resources/static/
+/frontend/scripts/

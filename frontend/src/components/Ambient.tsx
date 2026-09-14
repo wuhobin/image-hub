@@ -8,7 +8,7 @@ export const Ambient = memo(function Ambient(props: StarfieldProps) {
   const [Starfield, setStarfield] = useState<ComponentType<StarfieldProps> | null>(null)
 
   useEffect(() => {
-    if (Starfield || props.paused) return
+    if (Starfield) return
     const element = host.current
     if (!element) return
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -59,7 +59,7 @@ export const Ambient = memo(function Ambient(props: StarfieldProps) {
       document.removeEventListener('visibilitychange', schedule)
       reducedMotion.removeEventListener('change', schedule)
     }
-  }, [Starfield, props.paused])
+  }, [Starfield])
 
   return <div ref={host} className="starfield ambient-layer" aria-hidden="true">
     {Starfield && <Starfield {...props} />}

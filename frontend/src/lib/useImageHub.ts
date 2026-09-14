@@ -3,7 +3,7 @@ import { api, getToken, SESSION_EXPIRED, TOKEN_KEY, uploadImage } from './api'
 import { fileError, MAX_FILES } from './rules'
 import type { ImageRecord, LoginResult, PendingImage, User } from './types'
 
-type Preview = Pick<ImageRecord, 'name' | 'preview' | 'size' | 'width' | 'height'>
+type Preview = Pick<ImageRecord, 'name' | 'preview' | 'size' | 'width' | 'height'> & Partial<Pick<ImageRecord, 'url'>>
 type Notice = { text: string; error: boolean }
 
 export function useImageHub(onUploadPage: boolean) {
@@ -14,7 +14,6 @@ export function useImageHub(onUploadPage: boolean) {
   const [notice, setNotice] = useState<Notice | null>(null)
   const [selecting, setSelecting] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [paused, setPaused] = useState(false)
   const [revision, setRevision] = useState(0)
   const ownedUrls = useRef(new Set<string>())
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -226,6 +225,6 @@ export function useImageHub(onUploadPage: boolean) {
     catch { notify('复制失败，请选中链接后手动复制', true) }
   }
 
-  return { user, initializing, pending, preview, setPreview, notice, setNotice, selecting, paused, setPaused,
+  return { user, initializing, pending, preview, setPreview, notice, setNotice, selecting,
     busy, revision, selectFiles, removePending, clearPending, upload, authenticate, logout, deleteRecord, copyUrl, notify }
 }

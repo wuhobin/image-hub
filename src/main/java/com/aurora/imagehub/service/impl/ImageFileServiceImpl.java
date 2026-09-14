@@ -12,10 +12,14 @@ import com.aurora.starter.oss.validation.FileUploadValidator;
 import com.aurora.starter.oss.exception.FileValidationException;
 import com.aurora.starter.webmvc.exception.BizException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.exc.InvalidFormatException;
+import com.fasterxml.jackson.databind.util.StdDateFormat;
 import com.aurora.starter.mybatisplus.mybatis.PageUtils;
 import java.io.IOException;
+import java.text.SimpleDateFormat;
 import java.util.Locale;
 import java.util.Map;
+import java.util.TimeZone;
 import java.util.UUID;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
@@ -68,7 +72,8 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
         image.setHeight(dimensions.getHeight());
         try {
             // 保存完整存储定位信息；若记录入库失败，补偿删除刚上传的云端文件。
-            image.setStorageInfo(objectMapper.writeValueAsString(stored));
+            // 持久化元数据固定使用 ISO 时间并保留毫秒，不受接口展示格式影响。
+            image.setStorageInfo(objectMapper.writer(new StdDateFormat()).writeValueAsString(stored));
             imageMapper.insert(image);
         } catch (Exception e) {
             try {
@@ -113,7 +118,7 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
         if (image == null) throw new BizException(404, "图片不存在或已删除");
         FileInfo stored;
         try {
-            stored = objectMapper.readValue(image.getStorageInfo(), FileInfo.class);
+            stored = readStorageInfo(image.getStorageInfo());
         } catch (IOException e) {
             throw new BizException(500, "文件存储信息异常，请联系管理员", e);
         }
@@ -123,6 +128,22 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
         }
         // 云端删除成功后仅标记记录，不再物理删除数据库行。
         imageMapper.deleteOwned(userId, id);
+    }
+
+    /** 兼容原有 ISO 元数据，以及统一接口格式期间保存的北京时间；不修改全局 Mapper。 */
+    private FileInfo readStorageInfo(String storageInfo) throws IOException {
+        try {
+            return objectMapper.readerFor(FileInfo.class)
+                    .with(objectMapper.getDeserializationConfig().with(new StdDateFormat()))
+                    .readValue(storageInfo);
+        } catch (InvalidFormatException e) {
+            var legacyDateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT);
+            legacyDateFormat.setTimeZone(TimeZone.getTimeZone("Asia/Shanghai"));
+            legacyDateFormat.setLenient(false);
+            return objectMapper.readerFor(FileInfo.class)
+                    .with(objectMapper.getDeserializationConfig().with(legacyDateFormat))
+                    .readValue(storageInfo);
+        }
     }
 
     /** 仅读取首帧尺寸，避免为校验尺寸解码完整图片。 */
