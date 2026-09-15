@@ -10,4 +10,5 @@
 !/.env.example
 /src/main/resources/application-local.yml
 /src/main/resources/static/
-/frontend/scripts/
+/frontend/scripts/*
+!/frontend/scripts/check-admin-layout.ps1

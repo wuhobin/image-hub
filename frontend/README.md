@@ -26,6 +26,8 @@ npm run preview
 
 ## 功能范围
 
+- 管理后台：同域名 `/admin`，独立管理员登录，搜索和分页查询用户，展示 Redis 剩余额度；账号初始化见 [管理后台说明](../docs/admin.md)。管理页面位于 `src/pages/admin/`，API 位于 `src/lib/admin/`，与普通用户登录态隔离。
+
 - 首页：选择、拖拽和本地预览图片；JPG / PNG / WebP / GIF，单张 10 MB，每批最多 9 张。
 - 未登录可选图，登录后保留待上传图片；逐张发送真实请求，显示进度、结果及单张失败原因。
 - 注册：用户名、邮箱验证码、密码及确认密码；成功后进入登录页，不自动登录。用户名和邮箱分别唯一。
@@ -36,6 +38,8 @@ npm run preview
 - 每日上传额度、总容量配额后续再实现。
 
 开发时将 `.env.example` 复制为 `.env.local`，设置 `IMAGE_HUB_API_TARGET` 为后端地址；所有页面调用同源 `/api`，由 Vite 转发。本机后端使用 9000，因此本地配置为 `http://127.0.0.1:9000`。示例默认 8080。配置修改后重启开发服务器。
+
+普通用户请求（含图片上传）使用 `/api/app/**`，管理员请求使用 `/api/admin/**`。两个前缀分别在 API 客户端的会话配置中定义，页面仍传入 `/auth/login`、`/images` 等业务路径。前端与后端需同步升级，旧 API 路径不再兼容。
 
 生产部署使用 [Nginx 配置](../deploy/nginx/imghub.conf)，静态文件与 `/api` 共用域名，API 反向代理到 Spring Boot，无需跨域配置。只更新前端时无需重启后端，发布和回滚步骤见 [部署教程](../docs/deploy-docker-compose.md)。服务配置和接口见 [后端接入说明](../docs/backend-api.md)。
 

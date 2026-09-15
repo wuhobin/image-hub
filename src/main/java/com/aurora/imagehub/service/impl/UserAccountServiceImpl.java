@@ -6,6 +6,7 @@ import cn.hutool.crypto.digest.BCrypt;
 import com.aurora.imagehub.mapper.UserMapper;
 import com.aurora.imagehub.service.UserAccountService;
 import com.aurora.imagehub.ratelimit.AttemptLimiter;
+import com.aurora.imagehub.cache.UploadQuotaCache;
 import com.aurora.imagehub.model.vo.LoginVO;
 import com.aurora.imagehub.model.vo.UserVO;
 import com.aurora.imagehub.model.entity.UserAccount;
@@ -32,6 +33,7 @@ public class UserAccountServiceImpl extends ServiceImpl<UserMapper, UserAccount>
     private final UserMapper userMapper;
     private final ObjectProvider<MailVerificationService> mailVerificationServiceProvider;
     private final AttemptLimiter attemptLimiter;
+    private final UploadQuotaCache uploadQuotaCache;
 
     @Override
     public void sendCode(String email) {
@@ -63,6 +65,7 @@ public class UserAccountServiceImpl extends ServiceImpl<UserMapper, UserAccount>
         } catch (DuplicateKeyException e) {
             throw new BizException(409, "用户名或邮箱已被注册");
         }
+        uploadQuotaCache.initialize(user.getId());
     }
 
     @Override

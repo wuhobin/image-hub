@@ -93,6 +93,7 @@ class BusinessFlowTest {
             String key = call.getArgument(0);
             org.redisson.api.RBucket<String> bucket = mock(org.redisson.api.RBucket.class);
             when(bucket.get()).thenAnswer(ignored -> quotaState.get(key));
+            when(bucket.setIfAbsent(anyString())).thenAnswer(write -> quotaState.putIfAbsent(key, write.getArgument(0)) == null);
             doAnswer(write -> { quotaState.put(key, write.getArgument(0)); return null; }).when(bucket).set(anyString());
             return bucket;
         });
@@ -139,19 +140,19 @@ class BusinessFlowTest {
 
     @Test
     void registrationSessionsAndOwnershipWorkEndToEnd() throws Exception {
-        assertThat(get("/api/images", null).path("code").asInt()).isEqualTo(401);
+        assertThat(get("/api/app/images", null).path("code").asInt()).isEqualTo(401);
         String username = "alice";
         register(username, "Alice@example.test");
-        assertThat(get("/api/auth/me", null).path("code").asInt()).isEqualTo(401);
+        assertThat(get("/api/app/auth/me", null).path("code").asInt()).isEqualTo(401);
         assertThat(userMapper.findByUsername(username).getPasswordHash()).startsWith("$2");
         assertThat(BCrypt.checkpw("secret123", userMapper.findByUsername(username).getPasswordHash())).isTrue();
-        assertThat(post("/api/auth/login", Map.of("username", username, "password", "wrong123"), null).path("code").asInt()).isEqualTo(400);
+        assertThat(post("/api/app/auth/login", Map.of("username", username, "password", "wrong123"), null).path("code").asInt()).isEqualTo(400);
         // 校验继承的通用查询正确映射 hub_user，而非按类名推导表名。
         assertThat(userAccountService.getById(userMapper.findByUsername(username).getId()).getUsername()).isEqualTo(username);
         String first = login(username);
         String second = login(username);
         assertThat(first).isNotEqualTo(second);
-        assertThat(get("/api/auth/me", first).path("data").path("username").asText()).isEqualTo(username);
+        assertThat(get("/api/app/auth/me", first).path("data").path("username").asText()).isEqualTo(username);
 
         JsonNode upload = upload(first, "photo.png", png());
         assertThat(upload.path("code").asInt()).isEqualTo(200);
@@ -187,33 +188,33 @@ class BusinessFlowTest {
         assertThat(updated.getCreateTime()).isEqualTo(createTime);
         assertThat(updated.getUpdateTime()).isAfter(java.sql.Timestamp.valueOf("2001-01-01 00:00:00"));
         assertThat(updated.getUpdateTime().toInstant().getNano()).isZero();
-        JsonNode page = get("/api/images?search=photo&type=PNG&page=1&pageSize=1", first).path("data").path("page");
+        JsonNode page = get("/api/app/images?search=photo&type=PNG&page=1&pageSize=1", first).path("data").path("page");
         assertThat(page.path("total").asInt()).isEqualTo(1);
         assertThat(page.path("current").asInt()).isEqualTo(1);
         assertThat(page.path("size").asInt()).isEqualTo(1);
         assertThat(page.path("pages").asInt()).isEqualTo(1);
-        JsonNode stats = get("/api/images", first).path("data");
+        JsonNode stats = get("/api/app/images", first).path("data");
         assertThat(stats.path("page").path("total").asInt()).isEqualTo(1);
         assertThat(stats.path("totalBytes").asInt()).isEqualTo(png().length);
         assertThat(page.path("records").get(0).path("id")).isEqualTo(image.path("id"));
         assertThat(page.path("records").get(0).path("createdAt")).isEqualTo(image.path("createdAt"));
         assertThat(page.path("records").get(0).path("url")).isEqualTo(image.path("url"));
         assertThat(page.path("records").get(0).path("preview")).isEqualTo(image.path("preview"));
-        assertThat(get("/api/images?search=absent", first).path("data").path("page").path("total").asInt()).isZero();
-        assertThat(get("/api/images?pageSize=101", first).path("code").asInt()).isEqualTo(400);
+        assertThat(get("/api/app/images?search=absent", first).path("data").path("page").path("total").asInt()).isZero();
+        assertThat(get("/api/app/images?pageSize=101", first).path("code").asInt()).isEqualTo(400);
 
         register("bob", "bob@example.test");
         String bob = login("bob");
-        assertThat(get("/api/images", null).path("code").asInt()).isEqualTo(401);
-        assertThat(get("/api/images", bob).path("data").path("page").path("total").asInt()).isZero();
-        assertThat(get("/api/images", bob).path("data").path("totalBytes").asInt()).isZero();
-        assertThat(get("/api/images", bob).path("data").path("page").path("total").asInt()).isZero();
+        assertThat(get("/api/app/images", null).path("code").asInt()).isEqualTo(401);
+        assertThat(get("/api/app/images", bob).path("data").path("page").path("total").asInt()).isZero();
+        assertThat(get("/api/app/images", bob).path("data").path("totalBytes").asInt()).isZero();
+        assertThat(get("/api/app/images", bob).path("data").path("page").path("total").asInt()).isZero();
         assertThat(delete(image.path("id").asText(), bob).path("code").asInt()).isEqualTo(404);
         verify(ossTemplate, never()).delete(any(FileInfo.class));
 
-        assertThat(post("/api/auth/logout", Map.of(), first).path("code").asInt()).isEqualTo(200);
-        assertThat(get("/api/auth/me", first).path("code").asInt()).isEqualTo(401);
-        assertThat(get("/api/auth/me", second).path("code").asInt()).isEqualTo(200);
+        assertThat(post("/api/app/auth/logout", Map.of(), first).path("code").asInt()).isEqualTo(200);
+        assertThat(get("/api/app/auth/me", first).path("code").asInt()).isEqualTo(401);
+        assertThat(get("/api/app/auth/me", second).path("code").asInt()).isEqualTo(200);
         assertThat(delete(image.path("id").asText(), second).path("code").asInt()).isEqualTo(200);
         var key = org.mockito.ArgumentCaptor.forClass(FileInfo.class);
         assertThat(jdbcTemplate.queryForObject("SELECT deleted FROM hub_image WHERE id = ?", Integer.class, persisted.getId())).isEqualTo(1);
@@ -226,8 +227,8 @@ class BusinessFlowTest {
         assertThat(key.getValue().getBasePath()).isEqualTo("base/");
         assertThat(key.getValue().getPath()).isEqualTo("images/test/");
         assertThat(key.getValue().getFilename()).isEqualTo("stored.png");
-        assertThat(get("/api/images", second).path("data").path("page").path("total").asInt()).isZero();
-        assertThat(get("/api/images", second).path("data").path("totalBytes").asInt()).isZero();
+        assertThat(get("/api/app/images", second).path("data").path("page").path("total").asInt()).isZero();
+        assertThat(get("/api/app/images", second).path("data").path("totalBytes").asInt()).isZero();
     }
 
     @Test
@@ -248,7 +249,7 @@ class BusinessFlowTest {
         for (String sort : new String[]{"asc", "desc"}) {
             var actual = new java.util.ArrayList<String>();
             for (int page = 1; page <= 2; page++) {
-                JsonNode response = get("/api/images?search=sort&type=PNG&pageSize=2&page=" + page + "&sort=" + sort, token);
+                JsonNode response = get("/api/app/images?search=sort&type=PNG&pageSize=2&page=" + page + "&sort=" + sort, token);
                 assertThat(response.path("code").asInt()).isEqualTo(200);
                 assertThat(response.path("data").path("page").path("total").asInt()).isEqualTo(4);
                 response.path("data").path("page").path("records").forEach(record -> actual.add(record.path("id").asText()));
@@ -257,10 +258,10 @@ class BusinessFlowTest {
             if (sort.equals("desc")) java.util.Collections.reverse(expected);
             assertThat(actual).containsExactlyElementsOf(expected);
         }
-        assertThat(get("/api/images?pageSize=1", token).path("data").path("page").path("records").get(0).path("id").asText()).isEqualTo(ids.get(0));
-        assertThat(get("/api/images?sort=asc&type=JPG", token).path("data").path("page").path("total").asInt()).isZero();
-        assertThat(get("/api/images?sort=asc&search=missing", token).path("data").path("page").path("total").asInt()).isZero();
-        assertThat(get("/api/images?sort=invalid", token).path("code").asInt()).isEqualTo(400);
+        assertThat(get("/api/app/images?pageSize=1", token).path("data").path("page").path("records").get(0).path("id").asText()).isEqualTo(ids.get(0));
+        assertThat(get("/api/app/images?sort=asc&type=JPG", token).path("data").path("page").path("total").asInt()).isZero();
+        assertThat(get("/api/app/images?sort=asc&search=missing", token).path("data").path("page").path("total").asInt()).isZero();
+        assertThat(get("/api/app/images?sort=invalid", token).path("code").asInt()).isEqualTo(400);
     }
 
     @Test
@@ -279,34 +280,34 @@ class BusinessFlowTest {
         upload(otherToken, "other.png", png());
 
         for (var entry : sizes.entrySet()) {
-            JsonNode response = get("/api/images?type=" + entry.getKey().toLowerCase(java.util.Locale.ROOT), token);
+            JsonNode response = get("/api/app/images?type=" + entry.getKey().toLowerCase(java.util.Locale.ROOT), token);
             assertThat(response.path("code").asInt()).isEqualTo(200);
             assertThat(response.path("data").path("page").path("total").asInt()).isEqualTo(1);
             assertThat(response.path("data").path("totalBytes").asLong()).isEqualTo(entry.getValue());
-            JsonNode list = get("/api/images?search=stats&type=" + entry.getKey() + "&pageSize=1&page=2", token).path("data");
+            JsonNode list = get("/api/app/images?search=stats&type=" + entry.getKey() + "&pageSize=1&page=2", token).path("data");
             assertThat(list.path("page").path("total").asInt()).isEqualTo(1);
             assertThat(list.path("page").path("records").size()).isZero();
             assertThat(list.path("totalBytes").asLong()).isEqualTo(entry.getValue());
         }
-        for (String path : new String[]{"/api/images", "/api/images?type="}) {
+        for (String path : new String[]{"/api/app/images", "/api/app/images?type="}) {
             JsonNode stats = get(path, token).path("data");
             assertThat(stats.path("page").path("total").asInt()).isEqualTo(4);
             assertThat(stats.path("totalBytes").asLong()).isEqualTo(15360);
         }
-        JsonNode empty = get("/api/images?type=GIF", otherToken).path("data");
+        JsonNode empty = get("/api/app/images?type=GIF", otherToken).path("data");
         assertThat(empty.path("page").path("total").asInt()).isZero();
         assertThat(empty.path("totalBytes").asLong()).isZero();
-        assertThat(get("/api/images?type=invalid", token).path("code").asInt()).isEqualTo(400);
-        assertThat(get("/api/images?type=PNG", null).path("code").asInt()).isEqualTo(401);
-        JsonNode combined = get("/api/images?search=stats-PNG&type=png", token).path("data");
+        assertThat(get("/api/app/images?type=invalid", token).path("code").asInt()).isEqualTo(400);
+        assertThat(get("/api/app/images?type=PNG", null).path("code").asInt()).isEqualTo(401);
+        JsonNode combined = get("/api/app/images?search=stats-PNG&type=png", token).path("data");
         assertThat(combined.path("page").path("total").asInt()).isEqualTo(1);
         assertThat(combined.path("page").path("records").get(0).path("name").asText()).isEqualTo("stats-PNG.png");
         assertThat(combined.path("totalBytes").asLong()).isEqualTo(1024);
-        JsonNode noMatch = get("/api/images?search=stats-PNG&type=JPG", token).path("data");
+        JsonNode noMatch = get("/api/app/images?search=stats-PNG&type=JPG", token).path("data");
         assertThat(noMatch.path("page").path("total").asInt()).isZero();
         assertThat(noMatch.path("totalBytes").asLong()).isZero();
         for (int page = 1; page <= 2; page++) {
-            JsonNode list = get("/api/images?pageSize=2&page=" + page, token).path("data");
+            JsonNode list = get("/api/app/images?pageSize=2&page=" + page, token).path("data");
             assertThat(list.path("page").path("total").asInt()).isEqualTo(4);
             assertThat(list.path("page").path("records").size()).isEqualTo(2);
             assertThat(list.path("totalBytes").asLong()).isEqualTo(15360);
@@ -316,19 +317,19 @@ class BusinessFlowTest {
     @Test
     void invalidCodesDuplicatesAndFakeImagesAreRejected() throws Exception {
         // 普通 Param 类通过 setter 绑定 JSON，字段上的 Bean Validation 约束仍须生效。
-        assertThat(post("/api/auth/email-code", Map.of("email", "invalid"), null).path("code").asInt()).isEqualTo(400);
-        assertThat(post("/api/auth/register", Map.of("username", "bad name", "email", "carol@example.test",
+        assertThat(post("/api/app/auth/email-code", Map.of("email", "invalid"), null).path("code").asInt()).isEqualTo(400);
+        assertThat(post("/api/app/auth/register", Map.of("username", "bad name", "email", "carol@example.test",
                 "password", "secret123", "code", "654321"), null).path("code").asInt()).isEqualTo(400);
-        assertThat(post("/api/auth/login", Map.of("username", "carol", "password", "123"), null)
+        assertThat(post("/api/app/auth/login", Map.of("username", "carol", "password", "123"), null)
                 .path("code").asInt()).isEqualTo(400);
         verify(mailVerificationService, never()).send(any());
         verify(mailVerificationService, never()).verifyAndConsume(any());
         var input = Map.of("username", "carol", "email", "carol@example.test", "password", "secret123", "code", "654321");
-        assertThat(post("/api/auth/register", input, null).path("code").asInt()).isEqualTo(400);
-        post("/api/auth/email-code", Map.of("email", "carol@example.test"), null);
-        assertThat(post("/api/auth/register", input, null).path("code").asInt()).isEqualTo(200);
-        assertThat(post("/api/auth/register", input, null).path("code").asInt()).isEqualTo(409);
-        assertThat(post("/api/auth/register", Map.of("username", "other", "email", "CAROL@example.test",
+        assertThat(post("/api/app/auth/register", input, null).path("code").asInt()).isEqualTo(400);
+        post("/api/app/auth/email-code", Map.of("email", "carol@example.test"), null);
+        assertThat(post("/api/app/auth/register", input, null).path("code").asInt()).isEqualTo(200);
+        assertThat(post("/api/app/auth/register", input, null).path("code").asInt()).isEqualTo(409);
+        assertThat(post("/api/app/auth/register", Map.of("username", "other", "email", "CAROL@example.test",
                 "password", "secret123", "code", "654321"), null).path("code").asInt()).isEqualTo(409);
         String token = login("carol");
         assertThat(upload(token, "fake.png", "<html>not an image</html>".getBytes()).path("code").asInt()).isEqualTo(400);
@@ -371,11 +372,11 @@ class BusinessFlowTest {
         String id = upload(token, "retry.png", png()).path("data").path("id").asText();
         when(ossTemplate.delete(any(FileInfo.class))).thenReturn(false);
         assertThat(delete(id, token).path("code").asInt()).isEqualTo(502);
-        assertThat(get("/api/images", token).path("data").path("page").path("total").asInt()).isEqualTo(1);
+        assertThat(get("/api/app/images", token).path("data").path("page").path("total").asInt()).isEqualTo(1);
         when(storage.exists(any(FileInfo.class))).thenReturn(false);
         assertThat(jdbcTemplate.queryForObject("SELECT deleted FROM hub_image WHERE id = ?", Integer.class, id)).isZero();
         assertThat(delete(id, token).path("code").asInt()).isEqualTo(200);
-        assertThat(get("/api/images", token).path("data").path("page").path("total").asInt()).isZero();
+        assertThat(get("/api/app/images", token).path("data").path("page").path("total").asInt()).isZero();
     }
 
     @Test
@@ -396,8 +397,8 @@ class BusinessFlowTest {
         assertThat(response.path("code").asInt()).isEqualTo(200);
         assertThat(response.path("data").path("width").asInt()).isEqualTo(3);
         assertThat(response.path("data").path("height").asInt()).isEqualTo(2);
-        JsonNode firstPage = get("/api/images?page=1&pageSize=2", token).path("data").path("page");
-        JsonNode secondPage = get("/api/images?page=2&pageSize=2", token).path("data").path("page");
+        JsonNode firstPage = get("/api/app/images?page=1&pageSize=2", token).path("data").path("page");
+        JsonNode secondPage = get("/api/app/images?page=2&pageSize=2", token).path("data").path("page");
         assertThat(firstPage.path("total").asInt()).isEqualTo(4);
         assertThat(firstPage.path("pages").asInt()).isEqualTo(2);
         assertThat(firstPage.path("records").size()).isEqualTo(2);
@@ -409,19 +410,19 @@ class BusinessFlowTest {
             assertThat(firstIds).doesNotContain(record.path("id").asText());
             assertThat(record.has("storageInfo")).isFalse();
         });
-        JsonNode beyond = get("/api/images?page=3&pageSize=2", token).path("data").path("page");
+        JsonNode beyond = get("/api/app/images?page=3&pageSize=2", token).path("data").path("page");
         assertThat(beyond.path("records").size()).isZero();
         assertThat(beyond.path("total").asInt()).isEqualTo(4);
-        assertThat(get("/api/images?type=WEBP&pageSize=1", token).path("data").path("page").path("total").asInt()).isEqualTo(1);
-        assertThat(get("/api/images?search=absent", token).path("data").path("page").path("records").size()).isZero();
-        assertThat(get("/api/images", token).path("data").path("page").path("total").asInt()).isEqualTo(4);
-        assertThat(get("/api/images?page=0", token).path("code").asInt()).isEqualTo(400);
+        assertThat(get("/api/app/images?type=WEBP&pageSize=1", token).path("data").path("page").path("total").asInt()).isEqualTo(1);
+        assertThat(get("/api/app/images?search=absent", token).path("data").path("page").path("records").size()).isZero();
+        assertThat(get("/api/app/images", token).path("data").path("page").path("total").asInt()).isEqualTo(4);
+        assertThat(get("/api/app/images?page=0", token).path("code").asInt()).isEqualTo(400);
         assertThat(upload(token, "too-large.png", new byte[10 * 1024 * 1024 + 1]).path("code").asInt()).isEqualTo(413);
         doThrow(new org.springframework.dao.DataIntegrityViolationException("simulated database failure"))
                 .when(imageMapper).insert(any(ImageFile.class));
         assertThat(upload(token, "rollback.png", png()).path("code").asInt()).isEqualTo(500);
         verify(ossTemplate).delete(stored);
-        assertThat(get("/api/images", token).path("data").path("page").path("total").asInt()).isEqualTo(4);
+        assertThat(get("/api/app/images", token).path("data").path("page").path("total").asInt()).isEqualTo(4);
     }
 
     @Test
@@ -455,11 +456,11 @@ class BusinessFlowTest {
         assertThat(userAccountService.getById(user.getId())).isNull();
         assertThat(userMapper.findById(user.getId())).isNull();
         assertThat(userMapper.findByUsername("archived")).isNull();
-        assertThat(post("/api/auth/login", Map.of("username", "archived", "password", "secret123"), null).path("code").asInt()).isEqualTo(400);
-        assertThat(get("/api/auth/me", token).path("code").asInt()).isEqualTo(401);
-        assertThat(post("/api/auth/register", Map.of("username", "archived", "email", "new@example.test",
+        assertThat(post("/api/app/auth/login", Map.of("username", "archived", "password", "secret123"), null).path("code").asInt()).isEqualTo(400);
+        assertThat(get("/api/app/auth/me", token).path("code").asInt()).isEqualTo(401);
+        assertThat(post("/api/app/auth/register", Map.of("username", "archived", "email", "new@example.test",
                 "password", "secret123", "code", "654321"), null).path("code").asInt()).isEqualTo(409);
-        assertThat(post("/api/auth/email-code", Map.of("email", "archived-updated@example.test"), null).path("code").asInt()).isEqualTo(409);
+        assertThat(post("/api/app/auth/email-code", Map.of("email", "archived-updated@example.test"), null).path("code").asInt()).isEqualTo(409);
     }
 
     @Test
@@ -508,36 +509,36 @@ class BusinessFlowTest {
         assertThat(response.path("code").asInt()).isEqualTo(500);
         assertThat(response.path("message").asText()).contains("图片已保存");
         verify(ossTemplate, never()).delete(any(FileInfo.class));
-        assertThat(get("/api/images", token).path("data").path("page").path("total").asInt()).isEqualTo(1);
+        assertThat(get("/api/app/images", token).path("data").path("page").path("total").asInt()).isEqualTo(1);
     }
 
     @Test
     void quotaIgnoresLegacyUploadsAndSurvivesDeletionAndRedisLoss() throws Exception {
         register("quota", "quota@example.test");
         String token = login("quota");
-        assertThat(get("/api/images/quota", null).path("code").asInt()).isEqualTo(401);
-        assertThat(get("/api/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(100);
+        assertThat(get("/api/app/images/quota", null).path("code").asInt()).isEqualTo(401);
+        assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(100);
         String legacyId = upload(token, "legacy.png", png()).path("data").path("id").asText();
         jdbcTemplate.update("UPDATE hub_image SET quota_charged = 0 WHERE id = ?", legacyId);
         quotaState.clear();
-        assertThat(get("/api/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(100);
+        assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(100);
         // 种入 99 条新版成功记录，其中包含已删除图片；历史记录始终不计费。
         for (int i = 0; i < 99; i++) jdbcTemplate.update("""
                 INSERT INTO hub_image (id,user_id,name,url,type,size,width,height,storage_info,quota_charged,deleted)
                 SELECT ?,user_id,name,url,type,size,width,height,storage_info,1,1 FROM hub_image WHERE id = ?
                 """, java.util.UUID.randomUUID().toString(), legacyId);
         quotaState.clear();
-        assertThat(get("/api/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(1);
+        assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(1);
         String lastId = upload(token, "last.png", png()).path("data").path("id").asText();
         assertThat(lastId).isNotBlank();
         assertThat(delete(lastId, token).path("code").asInt()).isEqualTo(200);
         quotaState.clear();
-        assertThat(get("/api/images/quota", token).path("data").path("remaining").asInt()).isZero();
+        assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isZero();
         clearInvocations(storage);
         assertThat(upload(token, "over.png", png()).path("code").asInt()).isEqualTo(40301);
         verify(storage, never()).of(any(MultipartFile.class));
         register("fresh", "fresh@example.test");
-        assertThat(get("/api/images/quota", login("fresh")).path("data").path("remaining").asInt()).isEqualTo(100);
+        assertThat(get("/api/app/images/quota", login("fresh")).path("data").path("remaining").asInt()).isEqualTo(100);
     }
 
     @Test
@@ -547,23 +548,23 @@ class BusinessFlowTest {
         long userId = userMapper.findByUsername("refund").getId();
         String key = "image-hub:quota:v1:{" + userId + "}";
         quotaState.put(key, "99:interrupted-upload");
-        assertThat(get("/api/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(100);
+        assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(100);
         UploadPretreatment uploadPretreatment = mock(UploadPretreatment.class, Answers.RETURNS_SELF);
         when(storage.of(any(MultipartFile.class))).thenReturn(uploadPretreatment);
         assertThat(upload(token, "cloud-failed.png", png()).path("code").asInt()).isEqualTo(502);
-        assertThat(get("/api/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(100);
+        assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(100);
         when(uploadPretreatment.upload()).thenReturn(stored);
         doThrow(new org.springframework.dao.DataIntegrityViolationException("simulated failure"))
                 .when(imageMapper).insert(any(ImageFile.class));
         assertThat(upload(token, "database-failed.png", png()).path("code").asInt()).isEqualTo(500);
-        assertThat(get("/api/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(100);
+        assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(100);
         reset(imageMapper);
         doThrow(new org.springframework.dao.DataAccessResourceFailureException("readback failed"))
                 .when(imageMapper).findOwned(anyLong(), anyString());
         assertThat(upload(token, "saved.png", png()).path("code").asInt()).isEqualTo(500);
-        assertThat(get("/api/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(99);
+        assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(99);
         quotaState.put(key, "98:another-interrupted-upload");
-        assertThat(get("/api/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(99);
+        assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(99);
         when(redissonClient.getBucket(anyString(), eq(org.redisson.client.codec.StringCodec.INSTANCE)))
                 .thenThrow(new IllegalStateException("Redis unavailable"));
         clearInvocations(storage);
@@ -591,24 +592,41 @@ class BusinessFlowTest {
         try {
             var first = executor.submit(() -> upload(token, "first.png", bytes));
             assertThat(entered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-            assertThat(get("/api/images/quota", token).path("data").path("remaining").asInt()).isZero();
+            assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isZero();
             assertThat(upload(token, "second.png", bytes).path("code").asInt()).isEqualTo(409);
             finish.countDown();
             assertThat(first.get(5, java.util.concurrent.TimeUnit.SECONDS).path("code").asInt()).isEqualTo(200);
-            assertThat(get("/api/images/quota", token).path("data").path("remaining").asInt()).isZero();
+            assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isZero();
             assertThat(upload(token, "third.png", bytes).path("code").asInt()).isEqualTo(40301);
             verify(uploadPretreatment).upload();
         } finally { finish.countDown(); executor.shutdownNow(); }
     }
 
     private void register(String username, String email) {
-        assertThat(post("/api/auth/email-code", Map.of("email", email), null).path("code").asInt()).isEqualTo(200);
-        assertThat(post("/api/auth/register", Map.of("username", username, "email", email, "password", "secret123", "code", "654321"), null)
+        assertThat(post("/api/app/auth/email-code", Map.of("email", email), null).path("code").asInt()).isEqualTo(200);
+        assertThat(post("/api/app/auth/register", Map.of("username", username, "email", email, "password", "secret123", "code", "654321"), null)
                 .path("code").asInt()).isEqualTo(200);
     }
 
+    @Test
+    void registrationInitializesQuotaWithoutOverwritingItAndSurvivesRedisFailure() {
+        register("new-quota", "new-quota@example.test");
+        long id = userMapper.findByUsername("new-quota").getId();
+        String key = "image-hub:quota:v1:{" + id + "}";
+        assertThat(quotaState.get(key)).isEqualTo("100");
+        quotaState.put(key, "87");
+        assertThat(post("/api/app/auth/register", Map.of("username", "new-quota", "email", "new-quota@example.test",
+                "password", "secret123", "code", "654321"), null).path("code").asInt()).isEqualTo(409);
+        assertThat(quotaState.get(key)).isEqualTo("87");
+        when(redissonClient.getBucket(anyString(), eq(org.redisson.client.codec.StringCodec.INSTANCE)))
+                .thenThrow(new IllegalStateException("Redis unavailable"));
+        register("redis-down", "redis-down@example.test");
+        assertThat(userMapper.findByUsername("redis-down")).isNotNull();
+        assertThat(login("redis-down")).isNotBlank();
+    }
+
     private String login(String username) {
-        JsonNode result = post("/api/auth/login", Map.of("username", username, "password", "secret123"), null);
+        JsonNode result = post("/api/app/auth/login", Map.of("username", username, "password", "secret123"), null);
         assertThat(result.path("code").asInt()).isEqualTo(200);
         assertThat(result.path("data").path("expiresIn").asLong()).isBetween(259190L, 259200L);
         return result.path("data").path("token").asText();
@@ -629,7 +647,7 @@ class BusinessFlowTest {
     }
 
     private JsonNode delete(String id, String token) {
-        return testRestTemplate.exchange("/api/images/" + id, HttpMethod.DELETE, new HttpEntity<>(headers(token)), JsonNode.class).getBody();
+        return testRestTemplate.exchange("/api/app/images/" + id, HttpMethod.DELETE, new HttpEntity<>(headers(token)), JsonNode.class).getBody();
     }
 
     private JsonNode upload(String token, String filename, byte[] bytes) {
@@ -639,7 +657,7 @@ class BusinessFlowTest {
         });
         var headers = headers(token);
         headers.setContentType(MediaType.MULTIPART_FORM_DATA);
-        return testRestTemplate.postForObject("/api/images", new HttpEntity<>(body, headers), JsonNode.class);
+        return testRestTemplate.postForObject("/api/app/images", new HttpEntity<>(body, headers), JsonNode.class);
     }
 
     private byte[] png() throws Exception {

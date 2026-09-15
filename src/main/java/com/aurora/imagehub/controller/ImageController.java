@@ -15,7 +15,7 @@ import org.springframework.web.multipart.MultipartHttpServletRequest;
 
 /** 图片 HTTP 入口；从登录态取得用户 ID，避免客户端指定其他用户的图片归属。 */
 @RestController
-@RequestMapping("/api/images")
+@RequestMapping("/api/app/images")
 @RequiredArgsConstructor
 @Tag(name = "图片管理")
 public class ImageController {

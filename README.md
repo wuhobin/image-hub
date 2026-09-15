@@ -8,7 +8,7 @@
 
 ## 平台模块
 
-继承 `io.github.wuhobin:platform-parent:1.0.0-SNAPSHOT`，统一复用平台 BOM、Java 版本、Lombok 和 Maven 插件配置。
+继承 `io.github.wuhobin:platform-parent:1.0.5`，统一复用平台 BOM、Java 版本、Lombok 和 Maven 插件配置。安全模块暂时使用本地平台源码的 `1.0.0-SNAPSHOT`，包含多账号未匹配路由的默认拒绝规则；发布新版平台后再恢复为 BOM 管理，见 [管理后台说明](docs/admin.md)。
 
 | 模块 | 接入能力 |
 | --- | --- |
@@ -53,7 +53,7 @@ mvn -s C:/personal-program/Maven/conf/settings.xml "-Dmaven.repo.local=C:/person
 
 ## MySQL 与 Redis
 
-正常运行需要可用的 MySQL 和 Redis。先创建 `image_hub` 数据库（字符集 `utf8mb4`），为应用账号授予该库所需权限。业务表脚本为 `deploy/db/schema.sql`，包含用户表和图片表。应用不会自动建库或建表，首次运行需在配置的数据库执行该脚本。本机 `.env` 使用 `image-hub` 数据库（已初始化），与默认名 `image_hub` 不同。
+正常运行需要可用的 MySQL 和 Redis。先创建 `image_hub` 数据库（字符集 `utf8mb4`），为应用账号授予该库所需权限。业务表脚本为 `deploy/db/schema.sql`，包含管理员表、用户表和图片表。应用不会自动建库或建表，首次运行需在配置的数据库执行该脚本。本机 `.env` 使用 `image-hub` 数据库（已初始化），与默认名 `image_hub` 不同。
 
 连接参数在 `src/main/resources/application.yml` 中通过占位符注入，配置参考见 `.env.example`。本项目已使用 `spring.config.import` 显式导入进程工作目录下的 `.env`，无需另装 dotenv 依赖或 IDEA EnvFile 插件。
 
@@ -124,11 +124,15 @@ java -jar target/image-hub-0.0.1-SNAPSHOT.jar --spring.profiles.active=prod
 
 ## 鉴权
 
-Sa-Token 默认开启，单账号模式保护业务接口，请求头格式为 `Authorization: Bearer <token>`。`/api/health` 已放行，文档和 `/error` 等路径由平台白名单处理。
+Sa-Token 默认开启，普通用户和管理员使用独立账号类型保护对应业务接口，请求头格式为 `Authorization: Bearer <token>`。`/api/health` 已放行，文档和 `/error` 等路径由平台白名单处理。
 
 已实现邮箱验证码注册、用户名密码登录、当前用户查询和退出登录；注册后不自动登录。登录时独立生成 Token，3 天有效、无额外空闲超时，退出仅注销当前 Token。登录、注册和发送验证码路径精确放行，其余业务接口鉴权；图片记录按当前用户隔离。密码使用 BCrypt 存储。
 
 平台异常处理使用 HTTP 200 搭配业务码，例如未登录 `code=401`、路由不存在 `code=404`。
+
+管理入口为同域名 `/admin`，接口统一 `/api/admin/**`；本期提供用户搜索、分页和 Redis 剩余额度展示。升级建表、首次管理员初始化及接口约定见 [管理后台说明](docs/admin.md)。
+
+普通用户接口统一 `/api/app/**`（认证 `/api/app/auth/**`、图片 `/api/app/images/**`），公共健康检查保持 `/api/health`。前后端需同步更新，旧 `/api/auth/**` 和 `/api/images/**` 不再提供接口。
 
 ## 验证码
 
@@ -145,7 +149,7 @@ Sa-Token 默认开启，单账号模式保护业务接口，请求头格式为 `
 
 验证码为 6 位数字，有效期 5 分钟、发送冷却 60 秒；按邮箱和业务场景存储在 Redis，校验成功后消费。邮件内容由调用方传入，须包含 `{code}`，可使用 `{expireMinutes}`。SMTP 参数以邮箱服务商要求为准；邮件与七牛云使用独立凭据。平台邮件实现会记录验证码，本应用关闭该业务包日志，并将 Sa-Token 日志限制为 WARN，避免记录 Token。当前工程尚未实现数据库 `email.enabled` 开关，启停由上述环境变量控制。
 
-验证码 Starter 提供服务 Bean，不自动提供 HTTP 接口。本应用提供 `/api/auth/email-code` 发送注册验证码，注册接口原子消费验证码；已添加认证接口频率限制和精确白名单。
+验证码 Starter 提供服务 Bean，不自动提供 HTTP 接口。本应用提供 `/api/app/auth/email-code` 发送注册验证码，注册接口原子消费验证码；已添加认证接口频率限制和精确白名单。
 
 开发联调（`dev`）和测试（`test`）环境的邮件验证码固定为 `123456`，由 `DevelopmentVerificationConfig` 替换平台生成器；仍需先发送验证码，保留实际邮件投递、5 分钟有效期、60 秒冷却和成功后消费。邮件开关仍需启用，SMTP 和 Redis 仍需可用。启用 `prod` 时（包括同时启用 `dev/test`），或未指定这些环境时，继续使用平台随机验证码；不提供通用验证码绕过校验。切换环境后需要重启后端，再重新发送验证码。
 
@@ -166,7 +170,9 @@ Sa-Token 默认开启，单账号模式保护业务接口，请求头格式为 `
 
 ## 累计上传额度
 
-每个账号免费额度为 100 张，成功上传扣一次，失败不扣，删除不返还。前端在整批发送前查询 `GET /api/images/quota`；超过余额时整批不发送。后端对每张图片独立校验，耗尽返回业务码 `40301`。多个设备竞争时可能在批次中途停止，已成功的图片保留。
+每个账号免费额度为 100 张，成功上传扣一次，失败不扣，删除不返还。前端在整批发送前查询 `GET /api/app/images/quota`；超过余额时整批不发送。后端对每张图片独立校验，耗尽返回业务码 `40301`。多个设备竞争时可能在批次中途停止，已成功的图片保留。
+
+注册成功后尝试在 Redis 初始化 100 次额度，不覆盖已有记录；Redis 初始化失败仍返回注册成功，后续普通额度查询沿用恢复逻辑。
 
 旧数据库在部署新版应用前执行一次 `deploy/db/migrations/20260914_upload_quota.sql`。旧图片的 `quota_charged` 为 0，上线后成功上传的图片为 1；首次建库直接使用最新 `schema.sql`。该标记仅用于恢复，不是前端显示字段；已删除记录不能物理清理，否则会影响消耗历史。
 

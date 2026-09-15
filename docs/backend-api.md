@@ -17,7 +17,7 @@
 
 ## 接口约定
 
-前缀 `/api`。响应沿用平台格式：
+普通用户端前缀 `/api/app`，下表路径均相对于该前缀。管理端使用 `/api/admin`，健康检查使用公共路径 `/api/health`。响应沿用平台格式：
 
 ```json
 {"code":200,"message":"success","data":{},"traceId":"...","extra":{}}
@@ -34,6 +34,7 @@
 | POST | /auth/logout | 注销当前 Token |
 | POST | /images | multipart 字段 `file`，每个请求一张；返回图片记录 |
 | GET | /images | `page=1&pageSize=24&search=&type=&sort=desc`，返回 `ImageListVO {page,totalBytes}`；type 为 JPG/PNG/WEBP/GIF 或空 |
+| GET | /images/quota | 查询当前用户的上传额度 |
 | DELETE | /images/{id} | 仅限拥有者，删除文件并逻辑删除记录 |
 
 图片结构：`{id,name,url,preview,type,size,width,height,createdAt}`，ID 为字符串，大小单位字节，时间为 ISO UTC，preview 使用同一公开原始 URL。`createdAt` 继续映射实体的 `createTime`，保持前端兼容。
@@ -60,6 +61,8 @@
 - 每日上传额度和总容量配额尚未实现。
 
 ## 生产代理
+
+本次路径调整需要前后端一起发布：旧 `/api/auth/**`、`/api/images/**` 已迁移到 `/api/app/auth/**`、`/api/app/images/**`，旧路径不再提供接口。Vite/Nginx 继续原样代理 `/api`，无需新增路径重写；Token 名称及登录态保持不变。
 
 使用仓库中的 [Nginx 配置](../deploy/nginx/imghub.conf) 和 [部署教程](deploy-docker-compose.md)：前端 `dist/` 独立托管，`/api` 原路径转发到后端。模板对应宿主机后端端口 `9000`；直接以默认端口启动 JAR 时改为 `8080`。
 

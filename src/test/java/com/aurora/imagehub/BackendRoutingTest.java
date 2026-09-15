@@ -20,18 +20,20 @@ class BackendRoutingTest extends InfrastructureTestSupport {
 
     @Test
     void protectsApiWithoutServingFrontendOrDocumentation() {
-        for (String path : new String[]{"/api/images", "/api/auth/me"}) {
+        for (String path : new String[]{"/api/app/images", "/api/app/auth/me", "/api/admin/users"}) {
             assertThat(testRestTemplate.getForObject(path, JsonNode.class).path("code").asInt()).isEqualTo(401);
         }
         for (String path : new String[]{"/", "/index.html", "/login", "/register", "/history", "/profile",
                 "/favicon.svg", "/assets/missing.js", "/doc.html", "/v3/api-docs",
-                "/swagger-ui/index.html", "/api/nonexistent"}) {
+                "/swagger-ui/index.html", "/api/nonexistent", "/api/auth/me", "/api/images"}) {
             var response = testRestTemplate.getForEntity(path, JsonNode.class);
             assertThat(response.getHeaders().getContentType()).isNotNull();
             assertThat(response.getHeaders().getContentType().isCompatibleWith(MediaType.APPLICATION_JSON)).isTrue();
             assertThat(response.getBody().path("code").asInt()).isEqualTo(404);
         }
-        assertThat(testRestTemplate.postForObject("/api/auth/login",
+        assertThat(testRestTemplate.postForObject("/api/app/auth/login",
                 java.util.Map.of("username", "", "password", ""), JsonNode.class).path("code").asInt()).isEqualTo(400);
+        assertThat(testRestTemplate.postForObject("/api/auth/login",
+                java.util.Map.of("username", "", "password", ""), JsonNode.class).path("code").asInt()).isEqualTo(404);
     }
 }

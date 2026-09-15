@@ -16,7 +16,7 @@ import org.springframework.web.bind.annotation.*;
 
 /** 认证 HTTP 入口，负责参数校验和 IP 限流，账户业务交给 Service 接口。 */
 @RestController
-@RequestMapping("/api/auth")
+@RequestMapping("/api/app/auth")
 @RequiredArgsConstructor
 @Tag(name = "用户认证")
 public class AuthController {

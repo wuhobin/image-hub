@@ -80,10 +80,11 @@ platform:
     token-style: uuid
     is-log: true
     exclude-paths:
+      - /api/admin/auth/login
       - /api/health
-      - /api/auth/login
-      - /api/auth/register
-      - /api/auth/email-code
+      - /api/app/auth/login
+      - /api/app/auth/register
+      - /api/app/auth/email-code
   verification:
     key-prefix: image-hub:verification
     mail:

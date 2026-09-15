@@ -22,6 +22,36 @@ public class UploadQuotaCache {
     private final RedissonClient redissonClient;
     private final ImageMapper imageMapper;
 
+    /** 注册已持久化后尽力初始化，失败不回滚账号；不覆盖已被使用的额度。 */
+    public void initialize(long userId) {
+        try {
+            bucket(userId).setIfAbsent(Integer.toString(LIMIT));
+        } catch (RuntimeException e) {
+            log.warn("Registration quota initialization deferred: userId={}", userId);
+        }
+    }
+
+    /** 只读本页 Redis 余额，缺失或无效值返回空，不加锁、不触发数据库恢复。 */
+    public java.util.Map<Long, Integer> readRemaining(java.util.List<Long> userIds) {
+        var result = new java.util.HashMap<Long, Integer>();
+        if (userIds.isEmpty()) return result;
+        try {
+            String[] keys = userIds.stream().map(id -> "image-hub:quota:v1:{" + id + "}").toArray(String[]::new);
+            java.util.Map<String, String> values = redissonClient.getBuckets(StringCodec.INSTANCE).get(keys);
+            for (int i = 0; i < keys.length; i++) {
+                String state = values.get(keys[i]);
+                if (state == null) continue;
+                try {
+                    int remaining = Integer.parseInt(state.split(":", 2)[0]);
+                    if (remaining >= 0) result.put(userIds.get(i), remaining);
+                } catch (NumberFormatException ignored) { /* 无效记录不伪装成可用额度。 */ }
+            }
+            return result;
+        } catch (RuntimeException e) {
+            throw new BizException(503, "剩余额度读取失败，请稍后重试", e);
+        }
+    }
+
     private RBucket<String> bucket(long userId) {
         return redissonClient.getBucket("image-hub:quota:v1:{" + userId + "}", StringCodec.INSTANCE);
     }

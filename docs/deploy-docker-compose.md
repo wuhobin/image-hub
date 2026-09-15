@@ -2,6 +2,8 @@
 
 适用场景：本地 Windows 分别构建后端 JAR 和前端 dist，Linux 服务器运行，复用已有 MySQL 和 Redis。Compose 只管理后端应用，宿主机 Nginx 托管前端并将同域名 `/api` 转发到后端。图片仍由浏览器直接访问七牛云。
 
+管理后台使用同一域名的 `/admin`。已有部署升级时，先执行管理员表迁移，再发布前后端并更新 Nginx 路由；首次管理员需手动初始化，步骤见 [管理后台说明](admin.md)。
+
 采用 Java 21 官方运行镜像挂载 JAR，服务器无需 Maven、JDK、Node.js 或项目源码，也无需自己构建镜像。后端切换 JAR 版本后重建容器；前端切换静态目录即可，无需重启后端。挂载 JAR 是 [Eclipse Temurin 官方镜像支持的用法](https://hub.docker.com/_/eclipse-temurin)。
 
 ## 1. 准备服务器
@@ -212,7 +214,7 @@ curl -I -H 'Host: imagehub.example.com' http://127.0.0.1/history
 
 `current` 链接只在首次创建；已有前端按第 6 节切换。若服务器已有同域名站点，将模板中的 root 和 location 合并到现有 server，避免重复 server_name。公网使用时在该站点配置有效 TLS 证书、443 监听和 HTTP 到 HTTPS 跳转，然后执行 `nginx -t` 并重载。云安全组及主机防火墙开放 80/443，后端 9000 保持仅本机访问。
 
-浏览器打开 `https://imagehub.example.com/`，确认 `/login`、`/register`、`/history`、`/profile` 可直接访问和刷新，JS/CSS 加载正常。`/api/auth/me` 未登录仍返回 JSON `code=401`；未知 API 由后端返回 JSON，缺失静态资源、未知页面及生产文档路径返回 404，不回退为首页。默认日志不包含请求认证头。
+浏览器打开 `https://imagehub.example.com/`，确认 `/login`、`/register`、`/history`、`/profile` 可直接访问和刷新，JS/CSS 加载正常。`/api/app/auth/me` 未登录仍返回 JSON `code=401`；未知 API 由后端返回 JSON，缺失静态资源、未知页面及生产文档路径返回 404，不回退为首页。默认日志不包含请求认证头。
 
 模板按 Nginx 直接面对客户端配置转发头；若前面另有 CDN/网关，需要按真实代理链配置可信来源。后端目前不信任客户端自报的 IP 头，详见 [接口约定](backend-api.md)。
 

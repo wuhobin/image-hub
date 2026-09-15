@@ -2,7 +2,9 @@ import type { ImageRecord } from './types'
 
 export const TOKEN_KEY = 'imagehub.token'
 export const SESSION_EXPIRED = 'imagehub:session-expired'
-export const getToken = () => localStorage.getItem(TOKEN_KEY)
+export type ApiSession = { basePath: string; tokenKey: string; expiredEvent: string }
+const USER_SESSION: ApiSession = { basePath: '/api/app', tokenKey: TOKEN_KEY, expiredEvent: SESSION_EXPIRED }
+export const getToken = (session: ApiSession = USER_SESSION) => localStorage.getItem(session.tokenKey)
 
 export class ApiError extends Error {
   code: number
@@ -12,38 +14,38 @@ export class ApiError extends Error {
   }
 }
 
-export function unwrap<T>(status: number, body: unknown, token: string | null): T {
+export function unwrap<T>(status: number, body: unknown, token: string | null, session: ApiSession = USER_SESSION): T {
   const result = body as { code?: number; message?: string; data?: T } | null
   const code = status >= 200 && status < 300 ? result?.code : status
-  if (code === 401 && token && getToken() === token) {
-    localStorage.removeItem(TOKEN_KEY)
-    window.dispatchEvent(new Event(SESSION_EXPIRED))
+  if (code === 401 && token && getToken(session) === token) {
+    localStorage.removeItem(session.tokenKey)
+    window.dispatchEvent(new Event(session.expiredEvent))
   }
   if (code !== 200) throw new ApiError(code || 502, result?.message || '服务暂不可用，请稍后重试')
   return result?.data as T
 }
 
-export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const token = getToken()
+export async function api<T>(path: string, init: RequestInit = {}, session: ApiSession = USER_SESSION): Promise<T> {
+  const token = getToken(session)
   const headers = new Headers(init.headers)
   if (token) headers.set('Authorization', `Bearer ${token}`)
   if (init.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
   let response: Response
   try {
-    response = await fetch('/api' + path, { ...init, headers })
+    response = await fetch(session.basePath + path, { ...init, headers })
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error
     throw new ApiError(0, '无法连接服务器，请检查网络后重试')
   }
   const body: unknown = await response.json().catch(() => null)
-  return unwrap<T>(response.status, body, token)
+  return unwrap<T>(response.status, body, token, session)
 }
 
 export function uploadImage(file: File, progress: (value: number) => void, signal: AbortSignal): Promise<ImageRecord> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     const token = getToken()
-    xhr.open('POST', '/api/images')
+    xhr.open('POST', USER_SESSION.basePath + '/images')
     xhr.timeout = 120000
     if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
     const abort = () => xhr.abort()
