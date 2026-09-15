@@ -17,7 +17,8 @@ export default function Auth({ app, mode }: { app: AppState; mode: 'login' | 're
   const navigate = useNavigate()
   const location = useLocation()
   const registering = mode === 'register'
-  const destination = ['/history', '/profile'].includes(location.state?.from) ? location.state.from : '/'
+  const destination = ['/', '/upload', '/history', '/profile', '/create'].includes(location.state?.from) ? location.state.from : '/'
+  const creationPrompt = typeof location.state?.creationPrompt === 'string' ? location.state.creationPrompt.slice(0, 4000) : ''
   const [showPassword, setShowPassword] = useState(false)
   const [email, setEmail] = useState('')
   const [sentEmail, setSentEmail] = useState('')
@@ -49,7 +50,7 @@ export default function Auth({ app, mode }: { app: AppState; mode: 'login' | 're
     return () => clearTimeout(timer)
   }, [countdown])
 
-  if (app.user) return <Navigate to={destination} replace />
+  if (app.user) return <Navigate to={destination} state={{ creationPrompt }} replace />
 
   async function sendCode() {
     if (sendingCode.current || countdown > 0) return
@@ -105,12 +106,12 @@ export default function Auth({ app, mode }: { app: AppState; mode: 'login' | 're
         await api<void>('/auth/register', { method: 'POST', body: JSON.stringify({ username, email: email.trim(), password, code: String(data.get('code')) }) })
         if (version !== requestVersion.current) return
         app.notify('注册成功，请输入用户名和密码登录')
-        navigate('/login', { replace: true, state: { from: destination, username } })
+        navigate('/login', { replace: true, state: { from: destination, username, creationPrompt } })
       } else {
         await app.authenticate(username, password)
         if (version !== requestVersion.current) return
-        app.notify('登录成功，继续你的分享')
-        navigate(destination, { replace: true })
+        app.notify(destination === '/upload' ? '登录成功，继续上传图片' : '登录成功，继续你的创作')
+        navigate(destination, { replace: true, state: { creationPrompt } })
       }
     } catch (error) {
       if (version === requestVersion.current) setErrors(current => ({ ...current, form: error instanceof Error ? error.message : '请求失败，请重试' }))
@@ -126,15 +127,15 @@ export default function Auth({ app, mode }: { app: AppState; mode: 'login' | 're
       <Ambient />
       <div className="auth-story-content">
         <div className="auth-orbit" aria-hidden="true"><div className="orbit-ring ring-one" /><div className="orbit-ring ring-two" /><div className="orbit-ring ring-three" /><div className="orbit-core"><ImageSquare size={47} weight="light" /></div><span className="orbit-link"><LinkSimple size={22} /></span></div>
-        <span className="section-kicker">图片不止于收藏</span>
-        <h1>让好图片，<br />抵达更多地方。</h1>
-        <p>留住一瞬间，分享一整个世界。<br />你的下一次分享，从这里开始。</p>
-        <div className="auth-benefits"><span><Check size={15} />轻松上传</span><span><Check size={15} />一键外链</span><span><Check size={15} />有序管理</span></div>
+        <span className="section-kicker">从灵感到作品</span>
+        <h1>让你的想象，<br />有一个形状。</h1>
+        <p>用文字描绘画面，让 AI 帮你实现。<br />创作、保存、分享，都在这里。</p>
+        <div className="auth-benefits"><span><Check size={15} />AI 生图</span><span><Check size={15} />上传分享</span><span><Check size={15} />有序管理</span></div>
       </div>
     </section>
     <section className="auth-form-section page-enter">
       <div className="auth-form-wrap">
-        <span className="section-kicker">{registering ? '开始你的第一次分享' : '很高兴再次见到你'}</span>
+        <span className="section-kicker">{registering ? '开始你的第一次创作' : '很高兴再次见到你'}</span>
         <h2>{registering ? '创建你的账号' : '欢迎回来。'}</h2>
         <p className="auth-switch">{registering ? '已经有账号？' : '还没有账号？'} <Link to={registering ? '/login' : '/register'} state={location.state}>{registering ? '去登录' : '免费注册'} <ArrowUpRight size={13} /></Link></p>
         {app.pending.length > 0 && <p className="pending-notice"><ImageSquare size={16} />已为你保留 {app.pending.length} 张待上传图片</p>}

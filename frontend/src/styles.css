@@ -79,7 +79,7 @@ button, a { transition: color .2s, background .2s, border-color .2s, box-shadow 
 .hero > .ambient-layer { bottom: auto; height: min(100%, max(760px, 100svh)); }
 .ambient-layer > .starfield { z-index: 0; }
 /* 文案始终可见，轻微位移动画不会把上传入口藏在入场时间线后面。 */
-.home .hero-heading { animation: hero-arrive .45s ease-out; }
+.hero-heading { animation: hero-arrive .45s ease-out; }
 @keyframes hero-arrive { from { transform: translateY(8px); } to { transform: translateY(0); } }
 .hero-content { max-width: 960px; margin: auto; position: relative; }
 .hero-heading { text-align: center; }
@@ -113,6 +113,8 @@ button, a { transition: color .2s, background .2s, border-color .2s, box-shadow 
 .quota-placeholder { display: inline-block; width: 138px; max-width: 100%; height: 10px; border-radius: 4px; background: #a8c9ff14; }
 .quota-content { animation: quota-reveal .2s ease-out both; }
 .quota-number { display: inline-block; min-width: 3ch; text-align: center; font-variant-numeric: tabular-nums; }
+.quota-reserved { color: var(--muted); }
+.quota-content > .text-button { margin-left: 6px; }
 @keyframes quota-reveal { from { opacity: 0; } to { opacity: 1; } }
 .upload-quota .text-button { padding: 0; color: var(--danger); font: inherit; text-align: left; }
 .quota-exhausted { color: var(--danger); }
@@ -516,4 +518,10 @@ input::placeholder { color: #8c97aa; opacity: 1; }
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
 .library-pagination { display: flex; justify-content: center; align-items: center; gap: 20px; margin: 32px 0; color: var(--muted); font-size: 13px; }
+.source-label { color: #bcd6fc; font-size: 10px; white-space: nowrap; }
+@media (max-width: 480px) {
+  .header-inner { gap: 12px; padding-inline: 12px; }
+  .navigation { gap: 12px; }
+  .brand-mark { display: none; }
+}
 .selected-image .field-error { font-size: 11px; line-height: 1.7; overflow-wrap: anywhere; }

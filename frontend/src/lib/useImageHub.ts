@@ -23,6 +23,7 @@ export function useImageHub(onUploadPage: boolean, onProfilePage: boolean) {
   const uploadLock = useRef(false)
   const activeUpload = useRef<AbortController | null>(null)
   const generation = useRef(0)
+  const quotaRequest = useRef(0)
 
   useEffect(() => {
     if (!user || !(onUploadPage || onProfilePage) || busy) return
@@ -35,13 +36,15 @@ export function useImageHub(onUploadPage: boolean, onProfilePage: boolean) {
 
   async function refreshQuota(signal?: AbortSignal) {
     const version = generation.current
+    const request = ++quotaRequest.current
     try {
       const result = await api<UploadQuota>('/images/quota', { signal })
-      if (version === generation.current && !signal?.aborted) { setQuota(result); setQuotaError('') }
+      // 焦点刷新、任务轮询和上传预检可能重叠；较早的响应不能覆盖新额度。
+      if (version === generation.current && request === quotaRequest.current && !signal?.aborted) { setQuota(result); setQuotaError('') }
       return result
     } catch (error) {
-      if (version === generation.current && !signal?.aborted) {
-        setQuota(null)
+      if (version === generation.current && request === quotaRequest.current && !signal?.aborted) {
+        // 保留上次数字避免闪动；错误标记阻止用过期额度发起新的提交。
         setQuotaError('额度读取失败，点击重试')
       }
       throw error
@@ -49,7 +52,7 @@ export function useImageHub(onUploadPage: boolean, onProfilePage: boolean) {
   }
 
   useEffect(() => {
-    // 结果仅供本次首页查看；批次进行中保留完整队列，避免影响总进度。
+    // 结果仅供本次上传页面查看；批次进行中保留完整队列，避免影响总进度。
     if (onUploadPage || busy) return
     const completed = pending.filter(item => item.status === 'done')
     if (!completed.length) return

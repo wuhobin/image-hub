@@ -22,6 +22,12 @@
     </properties>
 
     <dependencies>
+        <!-- 仅使用模型客户端，按数据库配置创建实例，不启用全局 OpenAI 自动配置。 -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-openai</artifactId>
+            <version>1.1.8</version>
+        </dependency>
         <!-- JDK ImageIO does not include a WebP reader. -->
         <dependency>
             <groupId>com.twelvemonkeys.imageio</groupId>

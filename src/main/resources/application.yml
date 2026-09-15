@@ -128,8 +128,16 @@ dromara:
         base-path: ${QINIU_BASE_PATH:ImgHub/}
 
 # 平台邮件实现会输出验证码，隐藏该业务包的敏感日志。
+image-hub:
+  ai:
+    encryption-key: ${AI_MODEL_ENCRYPTION_KEY:}
+    timeout-seconds: 180
+    concurrency: 2
+    worker-enabled: ${AI_WORKER_ENABLED:true}
+
 logging:
   level:
+    "org.springframework.ai": "OFF"
     "com.aurora.starter.verification.mail": "OFF"
     # The platform Sa-Token logger writes token values at INFO regardless of is-log.
     "com.aurora.starter.security.log": "WARN"

@@ -1,6 +1,50 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { fileError, formatSize, MAX_BYTES, passwordError, toDateTime } from './rules.ts'
+import { calculateGenerationSize, fileError, formatSize, GENERATION_PRESETS, GENERATION_SIZES, generationResolution, generationSizeForRatio, imageAspectRatio, MAX_BYTES, passwordError, toDateTime } from './rules.ts'
+
+test('resolution presets retain exact aspect ratios and stay inside GPT Image 2 limits', () => {
+  assert.deepEqual(GENERATION_PRESETS.map(item => item.ratio), ['1:1', '3:2', '2:3', '16:9', '9:16', '4:3', '3:4', '21:9'])
+  assert.equal(new Set(GENERATION_SIZES).size, 24)
+  assert.deepEqual(['1K', '2K', '4K'].map(tier => calculateGenerationSize('1:1', tier as '1K' | '2K' | '4K')), ['1024x1024', '2048x2048', '2880x2880'])
+  assert.deepEqual(['1K', '2K', '4K'].map(tier => calculateGenerationSize('4:3', tier as '1K' | '2K' | '4K')), ['1024x768', '2048x1536', '3200x2400'])
+  const expected = [
+    ['1:1', '1024x1024', '2048x2048', '2880x2880'],
+    ['3:2', '1536x1024', '2160x1440', '3456x2304'],
+    ['2:3', '1024x1536', '1440x2160', '2304x3456'],
+    ['16:9', '1280x720', '2560x1440', '3840x2160'],
+    ['9:16', '720x1280', '1440x2560', '2160x3840'],
+    ['4:3', '1024x768', '2048x1536', '3200x2400'],
+    ['3:4', '768x1024', '1536x2048', '2400x3200'],
+    ['21:9', '1344x576', '2016x864', '3808x1632'],
+  ]
+  assert.deepEqual(GENERATION_PRESETS.map(preset => [preset.ratio, preset['1K'], preset['2K'], preset['4K']]), expected)
+  for (const preset of GENERATION_PRESETS) {
+    const [rw, rh] = preset.ratio.split(':').map(Number)
+    for (const tier of ['1K', '2K', '4K'] as const) {
+      const size = preset[tier]
+      if (!size) continue
+      const [width, height] = size.split('x').map(Number)
+      assert.equal(width * rh, height * rw)
+      assert.equal(imageAspectRatio(size), preset.ratio)
+      assert.equal(generationResolution(size), tier)
+      assert.equal(width % 16, 0)
+      assert.equal(height % 16, 0)
+      assert.ok(Math.max(width, height) <= 3840)
+      assert.ok(Math.max(width, height) <= 3 * Math.min(width, height))
+      assert.ok(width * height >= 655360 && width * height <= 8294400)
+    }
+  }
+  assert.equal(generationSizeForRatio(GENERATION_SIZES, '16:9', '1024x1024'), '1280x720')
+  assert.equal(generationSizeForRatio(GENERATION_SIZES, '16:9', '2048x2048'), '2560x1440')
+  assert.equal(generationSizeForRatio(GENERATION_SIZES, '9:16', '3840x2160'), '2160x3840')
+  assert.equal(generationSizeForRatio(GENERATION_SIZES, '1:1', '3840x2160'), '2880x2880')
+  assert.equal(generationSizeForRatio(['1280x720'], '16:9', '2048x2048'), '1280x720')
+  assert.equal(generationSizeForRatio(['1536x864'], '16:9', '2048x2048'), '1536x864')
+  assert.equal(generationSizeForRatio([], '1:1', '2048x2048'), '')
+  assert.equal(generationResolution('1536x864'), '')
+  assert.equal(imageAspectRatio('2560x1080'), '64:27')
+  for (const size of ['', 'auto', '0x0', '1024x', 'bad']) assert.equal(imageAspectRatio(size), size)
+})
 
 test('empty storage displays zero while nonempty files retain their size formatting', () => {
   assert.equal(formatSize(0), '0 KB')

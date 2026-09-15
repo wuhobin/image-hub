@@ -59,8 +59,8 @@ export function uploadImage(file: File, progress: (value: number) => void, signa
       try { body = JSON.parse(xhr.responseText) } catch { /* Handled by unwrap. */ }
       try { resolve(unwrap<ImageRecord>(xhr.status, body, token)) } catch (error) { reject(error) }
     }
-    xhr.onerror = () => reject(new ApiError(0, '上传连接中断，请检查上传记录后重试'))
-    xhr.ontimeout = () => reject(new ApiError(0, '上传超时，请检查上传记录后重试'))
+    xhr.onerror = () => reject(new ApiError(0, '上传连接中断，请检查“我的图片”后重试'))
+    xhr.ontimeout = () => reject(new ApiError(0, '上传超时，请检查“我的图片”后重试'))
     xhr.onabort = () => reject(new DOMException('上传已取消', 'AbortError'))
     if (signal.aborted) {
       signal.removeEventListener('abort', abort)

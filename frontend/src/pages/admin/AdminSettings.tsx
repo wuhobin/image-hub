@@ -140,7 +140,7 @@ function UploadSettings({ tabs }: { tabs: ReactNode }) {
         : !settings ? <div className="admin-settings-state"><p role="alert">{error}</p><button className="button button-secondary" onClick={() => setRetry(count => count + 1)}>重新加载</button></div>
           : <form id="upload-settings-form" onSubmit={save} aria-busy={saving}>
             <section className="admin-settings-section" aria-labelledby="quota-settings-title">
-              <div className="admin-settings-section-heading"><h2 id="quota-settings-title">上传额度</h2><p>统一设置每位用户可使用的免费累计上传次数。</p></div>
+              <div className="admin-settings-section-heading"><h2 id="quota-settings-title">共享额度</h2><p>统一设置每位用户上传与 AI 创作可共用的免费累计次数。</p></div>
               <div className="admin-settings-fields">
                 <label htmlFor="free-upload-quota">免费总额度</label>
                 <div className="admin-settings-input">
@@ -162,7 +162,7 @@ function UploadSettings({ tabs }: { tabs: ReactNode }) {
             <section className="admin-settings-section" aria-labelledby="quota-rules-title">
               <div className="admin-settings-section-heading"><h2 id="quota-rules-title">生效规则</h2><p>调整总额，保留已有消耗。</p></div>
               <div className="admin-settings-rules">
-                <p>对新用户和已有用户统一生效，不按天重置。每成功上传一张图片消耗一次，删除图片不返还次数。</p>
+                <p>对新用户和已有用户统一生效，不按天重置。上传或 AI 创作每成功保存一张图片消耗一次，删除图片不返还次数。AI 任务先预留一次额度，失败或放弃后释放。</p>
                 <div className="admin-settings-example"><span>例如，用户已上传 30 次</span><p>总额设为 <b>200</b><ArrowRight size={14} aria-hidden="true" />剩余 <b>170</b></p><p>总额设为 <b>20</b><ArrowRight size={14} aria-hidden="true" />剩余 <b>0</b></p></div>
                 <p>调高额度后可继续使用新增额度；已经开始的上传会继续完成。</p>
               </div>

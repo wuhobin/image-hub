@@ -17,12 +17,22 @@ import lombok.Setter;
 public class ImageFile {
     @TableId(type = IdType.INPUT)
     private String id;
+
     private Long userId;
+
     private String name;
+
     private String url;
+
     private String type;
+
+    /** 图片来源独立于文件格式；历史图片默认用户上传。 */
+    private String sourceType = "UPLOAD";
+
     private long size;
+
     private int width;
+
     private int height;
     /** 完整的存储平台和对象定位信息，用于重启后删除云端文件；不对外返回。 */
     private String storageInfo;

@@ -3,6 +3,8 @@ package com.aurora.imagehub.admin;
 import cn.dev33.satoken.SaManager;
 import cn.dev33.satoken.dao.*;
 import cn.hutool.crypto.digest.BCrypt;
+import com.aurora.imagehub.config.aigenerate.AiEndpointPolicy;
+import com.aurora.imagehub.config.aigenerate.ModelKeyCipher;
 import com.aurora.imagehub.ratelimit.AttemptLimiter;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.*;
@@ -254,6 +256,71 @@ class AdminFlowTest {
         }
         assertThat(quotaState).isEqualTo(original);
         verify(redissonClient, never()).getLock(anyString());
+    }
+
+
+    @Autowired
+    private ModelKeyCipher modelKeyCipher;
+
+    @MockitoBean
+    private AiEndpointPolicy aiEndpointPolicy;
+
+    @Test
+    void modelConfigurationProtectsKeysAndValidatesDefaultsAndAdminAccess() {
+        user(1, "model-user", "model-user@example.test", 0);
+        String ordinary = login("/api/app/auth/login", "model-user");
+        String admin = login("/api/admin/auth/login", "operator");
+        var body = new HashMap<String, Object>();
+        body.put("name", "Test model");
+        body.put("modelCode", "gpt-image-2");
+        body.put("baseUrl", "https://api.openai.com");
+        body.put("imagesPath", "/v1/images/generations");
+        body.put("apiKey", "test-only-admin-key");
+        var sizes = List.of("1024x1024", "2048x2048", "2880x2880", "1536x1024", "2160x1440", "3456x2304", "1024x1536", "1440x2160", "2304x3456", "1280x720", "2560x1440", "3840x2160", "720x1280", "1440x2560", "2160x3840", "1024x768", "2048x1536", "3200x2400", "768x1024", "1536x2048", "2400x3200", "1344x576", "2016x864", "3808x1632");
+        body.put("sizes", sizes);
+        body.put("defaultSize", "1024x1024");
+        body.put("qualities", List.of("low", "medium", "high"));
+        body.put("defaultQuality", "medium");
+        body.put("enabled", true);
+        body.put("sortOrder", 10);
+        assertThat(post("/api/admin/ai-models", body, ordinary).path("code").asInt()).isEqualTo(401);
+        var result = post("/api/admin/ai-models", body, admin);
+        assertThat(result.path("code").asInt()).isEqualTo(200);
+        String id = result.path("data").path("id").asText();
+        assertThat(result.path("data").path("keyConfigured").asBoolean()).isTrue();
+        assertThat(result.toString()).doesNotContain("test-only-admin-key", "apiKeyCiphertext");
+        String cipher = jdbcTemplate.queryForObject("SELECT api_key_ciphertext FROM hub_ai_model WHERE id=?", String.class, id);
+        assertThat(cipher).doesNotContain("test-only-admin-key");
+        assertThat(modelKeyCipher.decrypt(cipher)).isEqualTo("test-only-admin-key");
+        var available = get("/api/app/generations/models", ordinary);
+        assertThat(available.path("data").size()).isEqualTo(1);
+        assertThat(available.path("data").get(0).path("sizes").size()).isEqualTo(sizes.size());
+        for (int i = 0; i < sizes.size(); i++) {
+            assertThat(available.path("data").get(0).path("sizes").get(i).asText()).isEqualTo(sizes.get(i));
+        }
+        assertThat(available.toString()).doesNotContain("baseUrl", "imagesPath", "apiKey", "test-only");
+        assertThat(get("/api/admin/ai-models", admin).path("data").path("records").size()).isEqualTo(2);
+
+        body.put("apiKey", "");
+        assertThat(request("/api/admin/ai-models/" + id, HttpMethod.PUT, body, admin).path("code").asInt()).isEqualTo(200);
+        assertThat(jdbcTemplate.queryForObject("SELECT api_key_ciphertext FROM hub_ai_model WHERE id=?", String.class, id)).isEqualTo(cipher);
+        body.put("defaultSize", "512x512");
+        assertThat(request("/api/admin/ai-models/" + id, HttpMethod.PUT, body, admin).path("code").asInt()).isEqualTo(400);
+        body.put("defaultSize", "1024x1024");
+        for (String invalid : List.of("1537x1024", "2048x512", "512x512", "3840x3840", "4096x1024")) {
+            body.put("sizes", List.of("1024x1024", invalid));
+            assertThat(request("/api/admin/ai-models/" + id, HttpMethod.PUT, body, admin).path("code").asInt()).isEqualTo(400);
+        }
+        body.put("sizes", sizes);
+        body.put("qualities", List.of("unsupported"));
+        assertThat(request("/api/admin/ai-models/" + id, HttpMethod.PUT, body, admin).path("code").asInt()).isEqualTo(400);
+        body.put("qualities", List.of("low", "medium", "high"));
+        body.put("enabled", false);
+        assertThat(request("/api/admin/ai-models/" + id, HttpMethod.PUT, body, admin).path("code").asInt()).isEqualTo(200);
+        assertThat(get("/api/app/generations/models", ordinary).path("data").size()).isZero();
+        assertThat(request("/api/admin/ai-models/" + id, HttpMethod.DELETE, null, admin).path("code").asInt()).isEqualTo(200);
+        assertThat(post("/api/admin/ai-models", body, admin).path("code").asInt()).isEqualTo(409);
+        assertThat(jdbcTemplate.queryForObject("SELECT deleted FROM hub_ai_model WHERE id=?", Integer.class, id)).isEqualTo(1);
     }
 
     private void user(long id, String username, String email, int deleted) {

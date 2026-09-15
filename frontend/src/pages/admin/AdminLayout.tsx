@@ -7,6 +7,7 @@ import { SignOut } from '@phosphor-icons/react/dist/csr/SignOut'
 import { Users } from '@phosphor-icons/react/dist/csr/Users'
 import { SlidersHorizontal } from '@phosphor-icons/react/dist/csr/SlidersHorizontal'
 import { List } from '@phosphor-icons/react/dist/csr/List'
+import { Sparkle } from '@phosphor-icons/react/dist/csr/Sparkle'
 import { X } from '@phosphor-icons/react/dist/csr/X'
 import type { Admin } from '../../lib/admin/api'
 
@@ -14,6 +15,7 @@ import type { Admin } from '../../lib/admin/api'
 const navigation = [
   { to: '/admin/users', label: '用户管理', icon: Users },
   { to: '/admin/settings', label: '配置管理', icon: SlidersHorizontal },
+  { to: '/admin/models', label: '模型管理', icon: Sparkle },
 ]
 
 type LayoutProps = { admin: Admin; loggingOut: boolean; logout: () => void; error: string }

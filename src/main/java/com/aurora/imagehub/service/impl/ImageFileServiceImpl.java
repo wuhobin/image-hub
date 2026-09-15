@@ -5,6 +5,7 @@ import com.aurora.imagehub.service.ImageFileService;
 import com.aurora.imagehub.cache.UploadQuotaCache;
 import com.aurora.imagehub.model.vo.UploadQuotaVO;
 import com.aurora.imagehub.model.bo.ImageDimensionsBO;
+import com.aurora.imagehub.config.aigenerate.GeneratedImageFile;
 import com.aurora.imagehub.model.vo.ImageListVO;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.aurora.imagehub.model.entity.ImageFile;
@@ -40,10 +41,15 @@ import org.springframework.web.multipart.MultipartFile;
 public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> implements ImageFileService {
     private static final Map<String, String> TYPES = Map.of(
             "image/jpeg", "JPG", "image/png", "PNG", "image/webp", "WEBP", "image/gif", "GIF");
+
     private final ImageMapper imageMapper;
+
     private final OssTemplate ossTemplate;
+
     private final FileUploadValidator fileUploadValidator;
+
     private final ObjectMapper objectMapper;
+
     private final UploadQuotaCache uploadQuotaCache;
 
     @Override
@@ -65,60 +71,95 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
         return uploadQuotaCache.consume(userId, id, () -> uploadValidated(userId, file, mime, dimensions, id));
     }
 
+    /** 普通上传先保存云文件，再写库；回读失败不撤销已经成功保存的图片。 */
     private ImageVO uploadValidated(long userId, MultipartFile file, String mime, ImageDimensionsBO dimensions, String id) {
-        String path = "images/" + userId + "/";
-        String filename = id + "." + TYPES.get(mime).toLowerCase(Locale.ROOT);
-        FileInfo stored = ossTemplate.getFileStorageService().of(file).setPath(path)
-                .setSaveFilename(filename).setContentType(mime).upload();
-        if (stored == null) throw new BizException(502, "图片上传失败，请重试");
-
-        ImageFile image = new ImageFile();
-        image.setId(id);
-        image.setUserId(userId);
-        String original = file.getOriginalFilename().replace('\\', '/');
-        image.setName(original.substring(original.lastIndexOf('/') + 1));
-        image.setUrl(stored.getUrl());
-        image.setType(TYPES.get(mime));
-        image.setSize(file.getSize());
-        image.setWidth(dimensions.getWidth());
-        image.setHeight(dimensions.getHeight());
-        image.setQuotaCharged(1);
+        ImageFile image = storeValidated(userId, file, mime, dimensions, id, "UPLOAD");
         try {
-            // 保存完整存储定位信息；若记录入库失败，补偿删除刚上传的云端文件。
-            // 持久化元数据固定使用 ISO 时间并保留毫秒，不受接口展示格式影响。
-            image.setStorageInfo(objectMapper.writer(new StdDateFormat()).writeValueAsString(stored));
             uploadQuotaCache.checkOwnership(userId);
             imageMapper.insert(image);
         } catch (Exception e) {
-            try {
-                if (!ossTemplate.delete(stored)) log.error("Upload rollback requires cleanup: imageId={}", id);
-            } catch (Exception cleanup) {
-                log.error("Upload rollback requires cleanup: imageId={}", id, cleanup);
-            }
-            throw new BizException(500, "上传记录保存失败，请稍后重试", e);
+            discardUncommitted(image);
+            throw new BizException(500, "上传记录保存失败，请稍后重试");
         }
-        // 时间由数据库生成，重新读取后再返回；入库已成功，回读失败不能触发云端补偿删除。
         ImageFile saved;
         try {
             saved = imageMapper.findOwned(userId, id);
         } catch (RuntimeException e) {
-            throw new BizException(500, "图片已保存，但读取记录失败，请刷新上传记录", e);
+            throw new BizException(500, "图片已保存，但读取记录失败，请刷新上传记录");
         }
         if (saved == null) throw new BizException(500, "图片已保存，但读取记录失败，请刷新上传记录");
         return ImageVO.from(saved);
     }
 
+    /** AI图片复用内容检测及元数据构建，事务与额度结算由任务服务统一完成。 */
     @Override
-    public ImageListVO list(long userId, String search, String type, int page, int pageSize, String sort) {
+    public ImageFile storeGenerated(long userId, String imageId, byte[] bytes) {
+        MultipartFile file = new GeneratedImageFile(bytes);
+        String mime;
+        try {
+            mime = fileUploadValidator.validate(file);
+        } catch (FileValidationException e) {
+            throw new BizException(400, "生成图片无效或超过10MB");
+        }
+        if (!TYPES.containsKey(mime)) throw new BizException(400, "生成图片格式不支持");
+        return storeValidated(userId, file, mime, dimensions(file), imageId, "AI");
+    }
+
+    /** 使用独立对象名，重试补偿仅删除本次上传，不能误删另一保存尝试的文件。 */
+    private ImageFile storeValidated(long userId, MultipartFile file, String mime, ImageDimensionsBO dimensions,
+                                    String id, String sourceType) {
+        String filename = UUID.randomUUID() + "." + TYPES.get(mime).toLowerCase(Locale.ROOT);
+        FileInfo stored = ossTemplate.getFileStorageService().of(file).setPath("images/" + userId + "/")
+                .setSaveFilename(filename).setContentType(mime).upload();
+        if (stored == null) throw new BizException(502, "图片上传失败，请重试");
+        ImageFile image = new ImageFile();
+        image.setId(id);
+        image.setUserId(userId);
+        String original = java.util.Objects.toString(file.getOriginalFilename(), filename).replace('\\', '/');
+        image.setName(original.substring(original.lastIndexOf('/') + 1));
+        image.setUrl(stored.getUrl());
+        image.setType(TYPES.get(mime));
+        image.setSourceType(sourceType);
+        image.setSize(file.getSize());
+        image.setWidth(dimensions.getWidth());
+        image.setHeight(dimensions.getHeight());
+        image.setQuotaCharged(1);
+        try {
+            // 存储定位保留ISO毫秒精度，与对外时间格式解耦。
+            image.setStorageInfo(objectMapper.writer(new StdDateFormat()).writeValueAsString(stored));
+        } catch (IOException e) {
+            try { if (!ossTemplate.delete(stored)) log.warn("Cloud cleanup required: imageId={}", id); }
+            catch (RuntimeException cleanup) { log.warn("Cloud cleanup required: imageId={}", id); }
+            throw new BizException(500, "图片存储信息保存失败");
+        }
+        return image;
+    }
+
+    /** 入库确认回滚后才能调用；补偿失败保留日志中的图片ID供排查，不输出敏感元数据。 */
+    @Override
+    public void discardUncommitted(ImageFile image) {
+        try {
+            if (!ossTemplate.delete(readStorageInfo(image.getStorageInfo()))) {
+                log.warn("Cloud cleanup required: imageId={}", image.getId());
+            }
+        } catch (Exception e) {
+            log.warn("Cloud cleanup required: imageId={}", image.getId());
+        }
+    }
+
+    @Override
+    public ImageListVO list(long userId, String search, String type, String sourceType, int page, int pageSize, String sort) {
         search = normalizeSearch(search);
         type = normalizeType(type);
+        if (sourceType == null) sourceType = "";
+        if (!java.util.Set.of("", "UPLOAD", "AI").contains(sourceType)) throw new BizException(400, "图片来源无效");
         if (page < 1 || pageSize < 1 || pageSize > 100
                 || (!"asc".equals(sort) && !"desc".equals(sort))) {
             throw new BizException(400, "查询参数无效");
         }
         // 平台分页拦截器自动执行 count 和分页 SQL，转换时保留原生分页元信息。
-        Page<ImageFile> result = imageMapper.list(PageUtils.buildPage(page, pageSize), userId, search, type, "asc".equals(sort));
-        return new ImageListVO(PageUtils.convert(result, ImageVO::from), imageMapper.sumBytes(userId, search, type));
+        Page<ImageFile> result = imageMapper.list(PageUtils.buildPage(page, pageSize), userId, search, type, sourceType, "asc".equals(sort));
+        return new ImageListVO(PageUtils.convert(result, ImageVO::from), imageMapper.sumBytes(userId, search, type, sourceType));
     }
 
     private String normalizeSearch(String search) {

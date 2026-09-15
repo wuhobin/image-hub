@@ -30,7 +30,7 @@ export default function Profile({ app }: { app: AppState }) {
             : value == null ? '—' : <>{value}<span className="profile-quota-unit">次</span></>}</dd>
         </div>)}
       </dl>
-      <p className="profile-quota-note">额度为累计上传次数，不按天重置；删除图片不会返还额度。</p>
+      <p className="profile-quota-note">上传与 AI 创作共用累计额度，不按天重置；删除图片不会返还额度。{quota && quota.reserved > 0 && <>当前 AI 任务已预留 {quota.reserved} 次，剩余额度已扣除该预留。</>}</p>
     </section>
     <div className="profile-quota-status" role="status">
       {loading ? '正在读取额度…' : quotaError ? <button type="button" className="text-button" onClick={retry}>{quotaError}</button>

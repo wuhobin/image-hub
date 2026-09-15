@@ -1,0 +1,23 @@
+.model-intro { color: #9baac0; font-size: 12px; line-height: 1.9; margin: 22px 0; }
+.model-saved { color: #9cdbb9; font-size: 12px; margin-bottom: 16px; }
+.models-list { border: 1px solid #2b374a; border-radius: 12px; background: #101620; overflow: hidden; }
+.model-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, .65fr) auto; gap: 24px; align-items: center; padding: 25px; }
+.model-row + .model-row { border-top: 1px solid #2a3545; }
+.model-row-main { min-width: 0; }
+.model-row h2 { display: inline; margin-left: 12px; font-weight: 500; font-size: 16px; }
+.model-enabled { padding: 4px 7px; background: #29303e; border-radius: 4px; color: #b0bdd1; font-size: 10px; }
+.model-enabled.is-enabled { color: #b3e0c5; background: #193a2e; }
+.model-row code { display: block; margin-top: 14px; color: #c3d3eb; font-size: 12px; overflow-wrap: anywhere; }
+.model-row p { margin-top: 8px; color: #95a7c0; font-size: 11px; overflow-wrap: anywhere; }
+.model-row-options { display: flex; flex-direction: column; gap: 10px; color: #a4b6ce; font-size: 11px; }
+.model-row-actions { display: flex; align-items: center; gap: 16px; }
+.model-modal { width: min(720px, 94vw); }
+.model-form fieldset { border: 0; padding: 0; min-width: 0; }
+.model-form label { margin-top: 18px; }
+.model-form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
+.model-form-grid > div { min-width: 0; }
+.model-form label > span { font-size: 10px; color: #9cacbf; }
+.model-form .model-check { display: flex; align-items: center; gap: 9px; padding-top: 16px; line-height: 1.6; }
+.model-check input { accent-color: #a8c9ff; width: 17px; height: 17px; }
+@media (max-width: 900px) { .model-row { grid-template-columns: minmax(0, 1fr) auto; } .model-row-options { grid-column: 1; } .model-row-actions { grid-column: 2; grid-row: 1 / 3; } }
+@media (max-width: 520px) { .model-row { padding: 18px; gap: 18px; grid-template-columns: minmax(0, 1fr); } .model-row-actions { grid-column: auto; grid-row: auto; } .model-form-grid { grid-template-columns: minmax(0, 1fr); gap: 0; } .model-form :is(input:not([type=checkbox]), select) { font-size: 16px; } }

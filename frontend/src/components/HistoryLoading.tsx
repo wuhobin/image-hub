@@ -1,17 +1,17 @@
 import { Link } from 'react-router-dom'
-import { Plus } from '@phosphor-icons/react/dist/csr/Plus'
+import { Sparkle } from '@phosphor-icons/react/dist/csr/Sparkle'
 import { getHistoryView, type HistoryView } from './HistoryViewToggle'
 
 export function HistoryHeading() {
   return <div className="page-heading">
-    <div><span className="section-kicker">属于你的图片空间</span><h1>每次分享，都在这里。</h1><p>查看、复制和管理你上传的每一张图片。</p></div>
-    <Link className="button button-primary" to="/"><Plus size={17} />上传图片</Link>
+    <div><span className="section-kicker">属于你的图片空间</span><h1>我的图片</h1><p>AI 创作与本地上传，统一保存、查看和分享。</p></div>
+    <Link className="button button-primary" to="/"><Sparkle size={17} />开始创作</Link>
   </div>
 }
 
 export function HistoryCardsSkeleton({ view = getHistoryView() }: { view?: HistoryView }) {
-  return <div role="status" aria-label="正在加载上传记录">
-    <span className="visually-hidden">正在加载上传记录…</span>
+  return <div role="status" aria-label="正在加载图片">
+    <span className="visually-hidden">正在加载图片…</span>
     <div className={`image-library history-skeleton-grid ${view === 'list' ? 'is-list' : ''}`} aria-hidden="true">
       {Array.from({ length: 8 }, (_, index) => <div className="history-skeleton-card" key={index}>
         <div className="library-preview skeleton-block" />
@@ -33,7 +33,7 @@ export default function HistoryLoading({ view = getHistoryView() }: { view?: His
       <div><strong className="skeleton-block skeleton-count">&nbsp;</strong><span>张图片</span></div>
       <span className="summary-divider" />
       <div><strong className="skeleton-block skeleton-total">&nbsp;</strong><span>已上传大小</span></div>
-      <span className="sample-note">仅显示你上传的图片</span>
+      <span className="sample-note">你的 AI 创作与上传</span>
     </div>
     <div className="library-toolbar" aria-hidden="true">
       <div className="search-field"><span className="skeleton-block skeleton-search" /></div>

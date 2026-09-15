@@ -4,6 +4,8 @@ import cn.dev33.satoken.SaManager;
 import cn.dev33.satoken.dao.SaTokenDao;
 import cn.dev33.satoken.dao.SaTokenDaoDefaultImpl;
 import cn.hutool.crypto.digest.BCrypt;
+import com.aurora.imagehub.config.aigenerate.AiImageClient;
+import com.aurora.imagehub.config.aigenerate.ModelKeyCipher;
 import com.aurora.imagehub.mapper.UserMapper;
 import com.aurora.imagehub.model.entity.ImageFile;
 import com.aurora.imagehub.service.UserAccountService;
@@ -89,6 +91,7 @@ class BusinessFlowTest {
         SettingsCacheTestConfiguration.resetCache(twoLevelCache);
         jdbcTemplate.update("UPDATE hub_settings SET config_value='100', deleted=0 WHERE config_key='upload.free-total'");
         jdbcTemplate.update("DELETE FROM hub_image");
+        jdbcTemplate.update("DELETE FROM hub_ai_generation");
         jdbcTemplate.update("DELETE FROM hub_user");
         codes.clear();
         quotaState.clear();
@@ -652,6 +655,161 @@ class BusinessFlowTest {
             assertThat(get("/api/app/images/quota", token).path("data").path("used").asLong()).isEqualTo(81);
             assertThat(quotaState.get(key)).isEqualTo("u:81");
         }
+    }
+
+
+    @Autowired
+    com.aurora.imagehub.service.AiGenerationService aiGenerationService;
+
+    @Autowired
+    ModelKeyCipher modelKeyCipher;
+
+    @MockitoBean
+    AiImageClient aiImageClient;
+
+    @Test
+    void aiReservationSharesQuotaAndSuccessfulImageIsChargedOnce() throws Exception {
+        register("creator", "creator@example.test");
+        String token = login("creator");
+        long userId = userMapper.findByUsername("creator").getId();
+        long modelId = enableAiModel();
+        jdbcTemplate.update("UPDATE hub_settings SET config_value='2' WHERE config_key='upload.free-total'");
+        var request = generationRequest(modelId);
+        var submitted = post("/api/app/generations", request, token);
+        assertThat(submitted.path("code").asInt()).isEqualTo(200);
+        String id = submitted.path("data").path("id").asText();
+        assertThat(post("/api/app/generations", request, token).path("data").path("id").asText()).isEqualTo(id);
+        assertThat(post("/api/app/generations", generationRequest(modelId), token).path("code").asInt()).isEqualTo(409);
+        assertThat(get("/api/app/images/quota", token).path("data").path("reserved").asInt()).isEqualTo(1);
+        assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(1);
+        assertThat(upload(token, "normal.png", png()).path("code").asInt()).isEqualTo(200);
+        assertThat(upload(token, "over.png", png()).path("code").asInt()).isEqualTo(40301);
+        register("other-creator", "other-creator@example.test");
+        String other = login("other-creator");
+        assertThat(get("/api/app/generations/" + id, other).path("code").asInt()).isEqualTo(404);
+        assertThat(post("/api/app/generations/" + id + "/retry-save", Map.of(), other).path("code").asInt()).isEqualTo(404);
+        assertThat(post("/api/app/generations/" + id + "/abandon", Map.of(), other).path("code").asInt()).isEqualTo(404);
+        assertThat(get("/api/app/generations", other).path("data").path("total").asInt()).isZero();
+
+        // 已接收任务使用快照；管理员之后停用模型不会取消该任务。
+        jdbcTemplate.update("UPDATE hub_ai_model SET enabled=0 WHERE id=?", modelId);
+        when(aiImageClient.generate(any())).thenReturn(png());
+        aiGenerationService.runTask(userId, id);
+        assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("SAVING");
+        aiGenerationService.runTask(userId, id);
+        aiGenerationService.runTask(userId, id);
+        assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("SUCCEEDED");
+        verify(aiImageClient, times(1)).generate(argThat(task -> task.getModelCode().equals("gpt-image-2")));
+        var result = get("/api/app/generations/" + id, token);
+        assertThat(result.path("data").path("image").path("sourceType").asText()).isEqualTo("AI");
+        assertThat(result.toString()).doesNotContain("apiKey", "baseUrl", "resultData", "workToken");
+        assertThat(get("/api/app/images?sourceType=AI", token).path("data").path("page").path("total").asInt()).isEqualTo(1);
+        assertThat(get("/api/app/images?sourceType=UPLOAD", token).path("data").path("page").path("total").asInt()).isEqualTo(1);
+        assertThat(get("/api/app/images?sourceType=bogus", token).path("code").asInt()).isEqualTo(400);
+        assertThat(get("/api/app/images/quota", token).path("data").path("used").asInt()).isEqualTo(2);
+        assertThat(get("/api/app/images/quota", token).path("data").path("reserved").asInt()).isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT result_data FROM hub_ai_generation WHERE id=?", byte[].class, id)).isNull();
+        assertThat(jdbcTemplate.queryForObject("SELECT api_key_ciphertext FROM hub_ai_generation WHERE id=?", String.class, id)).isNull();
+        assertThat(delete(id, token).path("code").asInt()).isEqualTo(200);
+        quotaState.clear();
+        assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isZero();
+        assertThat(post("/api/app/generations", request, token).path("data").path("id").asText()).isEqualTo(id);
+    }
+
+    @Test
+    void aiSaveFailureRetriesSameBytesAndRollsBackFailedDatabaseCommit() throws Exception {
+        register("retry-ai", "retry-ai@example.test");
+        String token = login("retry-ai");
+        long userId = userMapper.findByUsername("retry-ai").getId();
+        String id = post("/api/app/generations", generationRequest(enableAiModel()), token).path("data").path("id").asText();
+        when(aiImageClient.generate(any())).thenReturn(png());
+        aiGenerationService.runTask(userId, id);
+        doThrow(new org.springframework.dao.DataIntegrityViolationException("simulated insert failure")).when(imageMapper).insert(any(ImageFile.class));
+        aiGenerationService.runTask(userId, id);
+        assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("SAVE_FAILED");
+        assertThat(jdbcTemplate.queryForObject("SELECT result_data FROM hub_ai_generation WHERE id=?", byte[].class, id)).isEqualTo(png());
+        assertThat(get("/api/app/images/quota", token).path("data").path("used").asInt()).isZero();
+        assertThat(get("/api/app/images/quota", token).path("data").path("reserved").asInt()).isEqualTo(1);
+        verify(ossTemplate).delete(any(FileInfo.class));
+        reset(imageMapper);
+        assertThat(post("/api/app/generations/" + id + "/retry-save", Map.of(), token).path("code").asInt()).isEqualTo(200);
+        assertThat(post("/api/app/generations/" + id + "/retry-save", Map.of(), token).path("code").asInt()).isEqualTo(409);
+        aiGenerationService.runTask(userId, id);
+        assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("SUCCEEDED");
+        verify(aiImageClient, times(1)).generate(any());
+        assertThat(get("/api/app/images/quota", token).path("data").path("used").asInt()).isEqualTo(1);
+    }
+
+    @Test
+    void aiExpiryAbandonAndInterruptedGenerationReleaseReservationWithoutRegeneration() throws Exception {
+        register("recover-ai", "recover-ai@example.test");
+        String token = login("recover-ai");
+        long userId = userMapper.findByUsername("recover-ai").getId();
+        long modelId = enableAiModel();
+        when(aiImageClient.generate(any())).thenReturn(png());
+        for (String outcome : List.of("EXPIRED", "ABANDONED", "FAILED")) {
+            String id = post("/api/app/generations", generationRequest(modelId), token).path("data").path("id").asText();
+            if (outcome.equals("FAILED")) {
+                jdbcTemplate.update("UPDATE hub_ai_generation SET status='GENERATING', work_token='stale', work_deadline=TIMESTAMPADD(SECOND,-1,CURRENT_TIMESTAMP) WHERE id=?", id);
+            } else {
+                aiGenerationService.runTask(userId, id);
+                // 模拟保存线程退出；恢复只能进入可重试保存，不再次生成。
+                jdbcTemplate.update("UPDATE hub_ai_generation SET work_token='stale', work_deadline=TIMESTAMPADD(SECOND,-1,CURRENT_TIMESTAMP) WHERE id=?", id);
+                aiGenerationService.recoverTasks();
+                assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("SAVE_FAILED");
+                if (outcome.equals("EXPIRED")) {
+                    jdbcTemplate.update("UPDATE hub_ai_generation SET result_expires_at=TIMESTAMPADD(SECOND,-1,CURRENT_TIMESTAMP) WHERE id=?", id);
+                    assertThat(post("/api/app/generations/" + id + "/retry-save", Map.of(), token).path("code").asInt()).isEqualTo(409);
+                } else {
+                    assertThat(post("/api/app/generations/" + id + "/abandon", Map.of(), token).path("code").asInt()).isEqualTo(200);
+                }
+            }
+            aiGenerationService.recoverTasks();
+            assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo(outcome);
+            assertThat(get("/api/app/images/quota", token).path("data").path("reserved").asInt()).isZero();
+            assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(100);
+            assertThat(jdbcTemplate.queryForObject("SELECT result_data FROM hub_ai_generation WHERE id=?", byte[].class, id)).isNull();
+        }
+        verify(aiImageClient, times(2)).generate(any());
+        String failed = post("/api/app/generations", generationRequest(modelId), token).path("data").path("id").asText();
+        when(aiImageClient.generate(any())).thenThrow(new IllegalStateException("provider-secret-should-not-escape"));
+        aiGenerationService.runTask(userId, failed);
+        assertThat(aiGenerationService.task(userId, failed).getStatus()).isEqualTo("FAILED");
+        assertThat(get("/api/app/generations/" + failed, token).toString()).doesNotContain("provider-secret");
+        assertThat(get("/api/app/images/quota", token).path("data").path("reserved").asInt()).isZero();
+    }
+
+    @Test
+    void aiConcurrentSubmissionCannotReserveTheSameLastQuota() throws Exception {
+        register("last-ai", "last-ai@example.test");
+        String token = login("last-ai");
+        long userId = userMapper.findByUsername("last-ai").getId();
+        long modelId = enableAiModel();
+        jdbcTemplate.update("UPDATE hub_settings SET config_value='1' WHERE config_key='upload.free-total'");
+        var executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var start = new java.util.concurrent.CountDownLatch(1);
+            var first = executor.submit(() -> { start.await(); return post("/api/app/generations", generationRequest(modelId), token); });
+            var second = executor.submit(() -> { start.await(); return post("/api/app/generations", generationRequest(modelId), token); });
+            start.countDown();
+            var results = List.of(first.get(5, java.util.concurrent.TimeUnit.SECONDS), second.get(5, java.util.concurrent.TimeUnit.SECONDS));
+            assertThat(results.stream().filter(result -> result.path("code").asInt() == 200)).hasSize(1);
+            assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_ai_generation WHERE active_user_id=?", Long.class, userId)).isEqualTo(1);
+            assertThat(upload(token, "last.png", png()).path("code").asInt()).isEqualTo(40301);
+        } finally { executor.shutdownNow(); }
+    }
+
+    /** 测试模型使用虚构Key，不触发真实供应商请求。 */
+    private long enableAiModel() {
+        long id = jdbcTemplate.queryForObject("SELECT id FROM hub_ai_model WHERE name='GPT-Image-2'", Long.class);
+        jdbcTemplate.update("UPDATE hub_ai_model SET enabled=1, deleted=0, api_key_ciphertext=? WHERE id=?",
+                modelKeyCipher.encrypt("test-ai-key"), id);
+        return id;
+    }
+
+    private Map<String, Object> generationRequest(long modelId) {
+        return Map.of("requestId", java.util.UUID.randomUUID().toString(), "modelId", modelId,
+                "prompt", "海边书店", "size", "1024x1024", "quality", "medium");
     }
 
     private void register(String username, String email) {

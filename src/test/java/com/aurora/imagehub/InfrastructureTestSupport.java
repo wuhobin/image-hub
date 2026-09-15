@@ -10,6 +10,12 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 abstract class InfrastructureTestSupport {
 
     @MockitoBean
+    protected com.aurora.imagehub.mapper.AiGenerationMapper aiGenerationMapper;
+
+    @MockitoBean
+    protected com.aurora.imagehub.mapper.AiModelConfigMapper aiModelConfigMapper;
+
+    @MockitoBean
     protected com.aurora.imagehub.mapper.admin.SystemSettingsMapper systemSettingsMapper;
 
     @MockitoBean

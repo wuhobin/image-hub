@@ -26,6 +26,8 @@ public class ImageVO {
 
     private String type;
 
+    private String sourceType;
+
     private long size;
 
     private int width;
@@ -39,6 +41,6 @@ public class ImageVO {
         // 同时限制宽高，避免长图预览仍下载大量像素；超出七牛处理限制时回退原图。
         String preview = image.getUrl() + "?imageView2/2/w/600/h/600/q/75/format/webp/ignore-error/1";
         return new ImageVO(image.getId(), image.getName(), image.getUrl(), preview,
-                image.getType(), image.getSize(), image.getWidth(), image.getHeight(), image.getCreateTime());
+                image.getType(), image.getSourceType(), image.getSize(), image.getWidth(), image.getHeight(), image.getCreateTime());
     }
 }

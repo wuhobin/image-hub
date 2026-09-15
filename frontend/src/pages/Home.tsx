@@ -11,6 +11,7 @@ import { LinkSimple } from '@phosphor-icons/react/dist/csr/LinkSimple'
 import { Plus } from '@phosphor-icons/react/dist/csr/Plus'
 import { X } from '@phosphor-icons/react/dist/csr/X'
 import { Ambient } from '../components/Ambient'
+import { QuotaStatus } from '../components/QuotaStatus'
 import type { AppState } from '../App'
 import { ACCEPTED_TYPES, formatSize, MAX_FILES } from '../lib/rules'
 
@@ -23,7 +24,6 @@ export default function Home({ app }: { app: AppState }) {
   const dragDepth = useRef(0)
   const [dragging, setDragging] = useState(false)
   const [focused, setFocused] = useState(false)
-  const quotaLoading = app.initializing || (!!app.user && !app.quota && !app.quotaError)
   const ready = app.pending.filter(item => item.status === 'ready' || item.status === 'error')
   const completed = app.pending.filter(item => item.status === 'done')
   const progress = app.pending.length ? Math.floor(app.pending.reduce((total, item) => total + item.progress, 0) / app.pending.length) : 0
@@ -33,7 +33,7 @@ export default function Home({ app }: { app: AppState }) {
       <Ambient target={lensTarget} active={dragging || focused || app.busy} />
       <div className="hero-content">
         <div className="hero-heading">
-          <span className="eyebrow"><span className="tiny-line" />让分享，从一张图片开始<span className="tiny-line" /></span>
+          <span className="eyebrow"><span className="tiny-line" />上传已有图片<span className="tiny-line" /></span>
           <h1 id="hero-title">你的图片，<span>即刻分享。</span></h1>
           <p>拖入图片，获取链接。把值得分享的，送到任何地方。</p>
         </div>
@@ -55,22 +55,15 @@ export default function Home({ app }: { app: AppState }) {
           <div className="upload-toolbar">
             <div className="upload-info">
               <span className="upload-limit"><ImageSquare size={16} />{app.pending.length ? `已选择 ${app.pending.length} / ${MAX_FILES} 张` : `支持批量上传，最多 ${MAX_FILES} 张`}</span>
-              <span className={`upload-quota ${app.quota?.remaining === 0 ? 'quota-exhausted' : ''}`} role="status" aria-live="polite" aria-busy={quotaLoading}>
-                {quotaLoading ? <><span className="quota-placeholder" aria-hidden="true" /><span className="visually-hidden">正在读取上传额度</span></>
-                  : app.user && <span className="quota-content">
-                    {app.quotaError ? <button className="text-button" onClick={() => { void app.refreshQuota().catch(() => {}) }}>{app.quotaError}</button>
-                      : app.quota && (app.quota.remaining === 0 ? '免费上传额度已用完'
-                        : <>剩余上传额度：<span className="quota-number">{app.quota.remaining}</span> / <span className="quota-number">{app.quota.total}</span></>)}
-                  </span>}
-              </span>
+              <QuotaStatus app={app} />
             </div>
             {app.initializing
               ? <button className="button button-primary button-upload" disabled aria-label="正在恢复登录"><span className="quota-placeholder" aria-hidden="true" /><ArrowUp size={17} /></button>
               : app.user
-              ? <button className="button button-primary button-upload" disabled={!ready.length || app.busy || app.selecting || !app.quota || app.quota.remaining === 0} onClick={app.upload}>
-                  {app.busy ? '上传中…' : app.quota?.remaining === 0 ? '额度已用完' : app.pending.some(item => item.status === 'error') ? '重试失败图片' : '开始上传'}<ArrowUp size={17} weight="bold" />
+              ? <button className="button button-primary button-upload" disabled={!ready.length || app.busy || app.selecting || !app.quota || !!app.quotaError || app.quota.remaining === 0} onClick={app.upload}>
+                  {app.busy ? '上传中…' : app.quotaError ? '额度待更新' : app.quota?.remaining === 0 ? '额度已用完' : app.pending.some(item => item.status === 'error') ? '重试失败图片' : '开始上传'}<ArrowUp size={17} weight="bold" />
                 </button>
-              : <Link to="/login" state={{ from: '/' }} className="button button-primary button-upload">登录后开始上传 <ArrowUpRight size={17} /></Link>}
+              : <Link to="/login" state={{ from: '/upload' }} className="button button-primary button-upload">登录后开始上传 <ArrowUpRight size={17} /></Link>}
           </div>
         </div>
 
@@ -104,7 +97,7 @@ export default function Home({ app }: { app: AppState }) {
           </div>
           <div className="selection-footer">
             {app.pending.length < MAX_FILES && <button className="add-image" aria-label="继续添加图片" disabled={app.busy || app.selecting} onClick={() => input.current?.click()}><Plus size={16} /><span>继续添加</span></button>}
-            {completed.length > 0 && <Link className="quiet-link" to="/history">查看上传记录 <ArrowUpRight size={14} /></Link>}
+            {completed.length > 0 && <Link className="quiet-link" to="/history">查看我的图片 <ArrowUpRight size={14} /></Link>}
           </div>
           {(app.busy || completed.length === app.pending.length) && <Suspense fallback={<progress className="upload-progress" value={progress} max={100} aria-label="图片上传总进度" />}><UploadProgress value={progress}
             label={app.busy ? `正在上传 ${app.pending.findIndex(item => item.status === 'uploading') + 1}/${app.pending.length}` : `上传完成 ${completed.length}/${app.pending.length}`} /></Suspense>}

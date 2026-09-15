@@ -240,7 +240,7 @@ export default memo(function Starfield({ target, active = false }: StarfieldProp
         destination: Number.NaN,
         to: gsap.quickTo(motion, key, { duration: 0.85, ease: 'power3.out', paused: true }),
       }))
-      const surface = host.closest<HTMLElement>('.hero, .auth-story') ?? host.parentElement ?? host
+      const surface = host.closest<HTMLElement>('.hero, .creation-page, .auth-story') ?? host.parentElement ?? host
       const uploadSurface = target?.current
       const entrance = { progress: 0 }
       const introMotion = gsap.timeline({ paused: true })

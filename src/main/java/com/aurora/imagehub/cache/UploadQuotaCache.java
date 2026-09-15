@@ -1,6 +1,7 @@
 package com.aurora.imagehub.cache;
 
 import com.aurora.imagehub.mapper.ImageMapper;
+import com.aurora.imagehub.mapper.AiGenerationMapper;
 import com.aurora.imagehub.service.admin.SystemSettingsService;
 import com.aurora.imagehub.model.vo.UploadQuotaVO;
 import com.aurora.starter.webmvc.exception.BizException;
@@ -25,6 +26,8 @@ public class UploadQuotaCache {
 
     private final ImageMapper imageMapper;
 
+    private final AiGenerationMapper aiGenerationMapper;
+
     private final SystemSettingsService systemSettingsService;
 
     /** 注册已持久化后尽力初始化，失败不回滚账号；不覆盖已被使用的额度。 */
@@ -48,7 +51,8 @@ public class UploadQuotaCache {
                 String state = values.get(keys[i]);
                 if (state == null) continue;
                 Long used = readUsed(state);
-                if (used != null) result.put(userIds.get(i), remaining(total, used));
+                // ponytail: 管理分页最多100人，按人查询活动预占；规模扩大时改成一次分组查询。
+                if (used != null) result.put(userIds.get(i), remaining(total, used + aiGenerationMapper.reserved(userIds.get(i))));
             }
             return result;
         } catch (RuntimeException e) {
@@ -71,14 +75,14 @@ public class UploadQuotaCache {
             RBucket<String> bucket = bucket(userId);
             String state = bucket.get();
             Long used = readUsed(state);
-            if (used != null && !inFlight(state)) return response(total, used);
+            if (used != null && !inFlight(state)) return response(userId, total, used);
             RLock lock = lock(userId);
             if (!lock.tryLock()) {
                 // 进行中的上传已预占一次，展示可用余额；不等待网络上传完成。
-                if (used != null) return response(total, used);
+                if (used != null) return response(userId, total, used);
                 throw new BizException(503, "上传额度正在恢复，请稍后重试");
             }
-            try { return response(total, recover(userId, bucket)); }
+            try { return response(userId, total, recover(userId, bucket)); }
             finally { unlock(lock); }
         } catch (BizException e) {
             throw e;
@@ -104,7 +108,9 @@ public class UploadQuotaCache {
             try {
                 bucket = bucket(userId);
                 used = recover(userId, bucket);
-                if (used >= systemSettingsService.freeUploadQuota()) throw new BizException(EXHAUSTED, "免费上传额度已用完");
+                if (used + aiGenerationMapper.reserved(userId) >= systemSettingsService.freeUploadQuota()) {
+                    throw new BizException(EXHAUSTED, "共享额度已用完");
+                }
                 // 以预占时的配置判断准入，已准入上传可完成；配置变化不能覆盖累计消耗。
                 bucket.set("u:" + (used + 1) + ":" + imageId);
             } catch (BizException e) {
@@ -176,8 +182,45 @@ public class UploadQuotaCache {
         return (int) Math.max(0L, total - used);
     }
 
-    private UploadQuotaVO response(int total, long used) {
-        return new UploadQuotaVO(total, remaining(total, used), used);
+    private UploadQuotaVO response(long userId, int total, long used) {
+        long reserved = aiGenerationMapper.reserved(userId);
+        return new UploadQuotaVO(total, remaining(total, used + reserved), used, reserved);
+    }
+
+    /** 只在创建持久化任务时短暂持锁，模型网络调用不占用普通上传锁。 */
+    public <T> T reserveGeneration(long userId, Supplier<T> createTask) {
+        RLock lock = lock(userId);
+        if (!lock.tryLock()) throw new BizException(409, "当前账号正在保存图片，请稍后重试");
+        try {
+            long used = recover(userId, bucket(userId));
+            if (used + aiGenerationMapper.reserved(userId) >= systemSettingsService.freeUploadQuota()) {
+                throw new BizException(EXHAUSTED, "共享额度已用完");
+            }
+            return createTask.get();
+        } finally {
+            unlock(lock);
+        }
+    }
+
+    /** 已预占的任务保存不再检查总额；提交前标记缓存待恢复，防止崩溃留下旧余额。 */
+    public <T> T completeGeneration(long userId, Supplier<T> persist) {
+        RLock lock = lock(userId);
+        if (!lock.tryLock()) throw new BizException(409, "当前账号正在保存图片，请重试保存");
+        try {
+            RBucket<String> bucket = bucket(userId);
+            long used = recover(userId, bucket);
+            // 保存期间读者仍能看到正确的已用次数；标记用于中断后按数据库恢复。
+            bucket.set("u:" + used + ":ai-save");
+            T result = persist.get();
+            try {
+                if (lock.isHeldByCurrentThread()) rebuild(userId, bucket);
+            } catch (RuntimeException e) {
+                log.warn("AI quota refresh deferred: userId={}", userId);
+            }
+            return result;
+        } finally {
+            unlock(lock);
+        }
     }
 
     private void unlock(RLock lock) {

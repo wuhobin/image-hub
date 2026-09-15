@@ -21,6 +21,7 @@
 | xlock-spring-boot-starter | 注解及编程式分布式锁 |
 | sa-token-spring-boot-starter | Bearer Token 登录态、鉴权，Redis 持久化 |
 | oss-spring-boot-starter + qiniu-java-sdk | 七牛云 Kodo 对象存储、上传内容校验 |
+| spring-ai-openai 1.1.8 | 动态模型配置、OpenAI Images 兼容生图 |
 | verification-spring-boot-starter | 仅使用邮件验证码，排除短信 SDK 与图片依赖 |
 
 不引入 Quartz 定时任务模块。依赖版本由平台 BOM 管理；应用版本 `0.0.1-SNAPSHOT` 与平台版本独立，不要覆盖父工程的 `revision` 属性。
@@ -181,6 +182,10 @@ Redis Key 为 `image-hub:quota:{用户ID}`，不设置过期时间；值为 `u:�
 配置使用通用键值表 `hub_settings` 和父项目二级缓存（各配置键独立缓存 3 天），配置项由代码预置，管理员修改值；新增配置无需增加表字段。部署迁移及修改缓存流程见 [管理后台](docs/admin.md#配置管理)。额度接口保留 `total`、`remaining` 并增加 `used`；总额调低后，`used` 可以大于 `total`。
 
 部署 Redis 时启用 AOF（`appendonly yes`、`appendfsync everysec`），持久化目录挂载到可靠磁盘并备份，额度实例避免使用会淘汰这些 Key 的缓存策略（建议 `noeviction`）。不要单独清理正在上传的额度/锁 Key；需要恢复 Redis 时暂停上传、停止旧实例后恢复，再启动服务。AOF 故障恢复可能丢失少量最近写入，本期接受这种极端情况的少量额度误差。
+
+## AI 创作
+
+网站首页 `/` 为 AI 创作主入口，上传图片位于 `/upload`，旧 `/create` 自动跳转首页；管理员模型配置 `/admin/models`。本期支持 GPT-Image-2 单张文生图，与上传共用额度，生成结果自动保存七牛，保存失败保留结果 24 小时供重试。升级迁移、加密主密钥和接口说明见 [AI 创作接入](docs/ai-creation.md)。
 
 ## 测试
 

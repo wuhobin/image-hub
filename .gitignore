@@ -12,3 +12,5 @@
 /src/main/resources/static/
 /frontend/scripts/*
 !/frontend/scripts/check-admin-layout.ps1
+!/frontend/scripts/check-creation-home.ps1
+!/frontend/scripts/check-quota.ps1

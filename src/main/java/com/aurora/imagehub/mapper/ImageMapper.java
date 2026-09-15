@@ -12,6 +12,7 @@ public interface ImageMapper extends BaseMapper<ImageFile> {
         FROM hub_image WHERE user_id = #{userId} AND deleted = 0
         <if test="search != null and search != ''">AND LOCATE(LOWER(#{search}), LOWER(name)) > 0</if>
         <if test="type != null and type != ''">AND type = #{type}</if>
+        <if test="sourceType != null and sourceType != ''">AND source_type = #{sourceType}</if>
         """;
 
 
@@ -23,11 +24,12 @@ public interface ImageMapper extends BaseMapper<ImageFile> {
             + "<when test='oldestFirst'>create_time ASC, id ASC</when>"
             + "<otherwise>create_time DESC, id DESC</otherwise></choose></script>")
     Page<ImageFile> list(Page<ImageFile> page, @Param("userId") long userId,
-                         @Param("search") String search, @Param("type") String type,
+                         @Param("search") String search, @Param("type") String type, @Param("sourceType") String sourceType,
                          @Param("oldestFirst") boolean oldestFirst);
 
     @Select("<script>SELECT COALESCE(SUM(size),0) " + FILTER + "</script>")
-    long sumBytes(@Param("userId") long userId, @Param("search") String search, @Param("type") String type);
+    long sumBytes(@Param("userId") long userId, @Param("search") String search, @Param("type") String type,
+                  @Param("sourceType") String sourceType);
 
     // 消耗历史必须包含已逻辑删除图片；普通列表的 deleted = 0 过滤不适用于额度恢复。
     @Select("SELECT COUNT(*) FROM hub_image WHERE user_id = #{userId} AND quota_charged = 1")

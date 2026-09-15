@@ -27,6 +27,7 @@ export default function History({ app }: { app: AppState }) {
   const hasEntered = useRef(false)
   const [search, setSearch] = useState('')
   const [format, setFormat] = useState('全部格式')
+  const [sourceType, setSourceType] = useState('')
   const [sort, setSort] = useState<'desc' | 'asc'>('desc')
   const [view, setView] = useState(getHistoryView)
   const [deleting, setDeleting] = useState<ImageRecord | null>(null)
@@ -46,7 +47,7 @@ export default function History({ app }: { app: AppState }) {
     const controller = new AbortController()
     setLoading(true)
     setError('')
-    const params = new URLSearchParams({ search: query, type: format === '全部格式' ? '' : format, sort, page: String(page), pageSize: '24' })
+    const params = new URLSearchParams({ search: query, type: format === '全部格式' ? '' : format, sourceType, sort, page: String(page), pageSize: '24' })
     api<ImageList>('/images?' + params, { signal: controller.signal }).then(result => {
       if (controller.signal.aborted) return
       if (!result.page.records.length && page > 1 && result.page.total <= (page - 1) * result.page.size) {
@@ -58,11 +59,11 @@ export default function History({ app }: { app: AppState }) {
       if (!controller.signal.aborted) setError(error instanceof Error ? error.message : '记录读取失败')
     }).finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [query, format, sort, page, app.revision, reload])
+  }, [query, format, sourceType, sort, page, app.revision, reload])
   const filtered = data?.records || []
   const count = data?.total || 0
   const bytes = images?.totalBytes || 0
-  const hasFilters = !!query || format !== '全部格式'
+  const hasFilters = !!query || format !== '全部格式' || !!sourceType
 
   useGSAP(() => {
     if (loading || !pageRef.current) return
@@ -106,11 +107,14 @@ export default function History({ app }: { app: AppState }) {
       <div><strong>{count.toString().padStart(2, '0')}</strong><span>张图片</span></div>
       <span className="summary-divider" />
       <div><strong>{formatSize(bytes)}</strong><span>已上传大小</span></div>
-      <span className="sample-note">仅显示你上传的图片</span>
+      <span className="sample-note">你的上传与 AI 创作</span>
     </div>
     <div className="library-toolbar">
       <label className="search-field"><MagnifyingGlass size={18} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索图片名称" aria-label="搜索图片名称" />{search && <button className="icon-button" aria-label="清空搜索" onClick={() => setSearch('')}><X size={15} /></button>}</label>
       <div className="filter-group">
+        <select className="format-select" aria-label="按图片来源筛选" value={sourceType} onChange={event => { setSourceType(event.target.value); setPage(1) }}>
+          <option value="">全部来源</option><option value="UPLOAD">用户上传</option><option value="AI">AI 创作</option>
+        </select>
         <select className="format-select" aria-label="按图片格式筛选" value={format} onChange={event => { setFormat(event.target.value); setPage(1) }}>
           {['全部格式', 'JPG', 'PNG', 'WEBP', 'GIF'].map(value => <option key={value}>{value}</option>)}
         </select>
@@ -128,7 +132,7 @@ export default function History({ app }: { app: AppState }) {
           <span className="preview-hint">查看图片 <ArrowUpRight size={16} /></span>
         </button>
         <div className="library-card-body">
-          <div className="image-title"><h2 title={record.name}>{record.name}</h2><span className="format-label">{record.type}</span></div>
+          <div className="image-title"><h2 title={record.name}>{record.name}</h2>{record.sourceType === 'AI' && <span className="source-label">AI</span>}<span className="format-label">{record.type}</span></div>
           <div className="image-details"><span>{record.width} × {record.height}</span><span>{formatSize(record.size)}</span></div>
           <div className="image-card-bottom"><time dateTime={toDateTime(record.createdAt)}>{timeFormat.format(new Date(toDateTime(record.createdAt)))}</time>
             <div className="image-actions">
@@ -140,8 +144,8 @@ export default function History({ app }: { app: AppState }) {
       </article>)}
     </div> : <div className="empty-state"><span className="empty-icon"><ImageSquare size={36} weight="light" /></span>
       <h2>{hasFilters || count ? '没有找到这张图片' : '给这里添一点精彩'}</h2>
-      <p>{hasFilters || count ? '换个关键词或图片格式，再试一次。' : '上传第一张图片，让分享从这里开始。'}</p>
-      {hasFilters || count ? <button className="button button-secondary" onClick={() => { setSearch(''); setFormat('全部格式') }}>重置筛选</button> : <Link className="button button-primary" to="/">上传图片 <ArrowUpRight size={17} /></Link>}
+      <p>{hasFilters || count ? '换个关键词、格式或来源，再试一次。' : '生成第一张 AI 作品，或上传你已有的图片。'}</p>
+      {hasFilters || count ? <button className="button button-secondary" onClick={() => { setSearch(''); setFormat('全部格式'); setSourceType('') }}>重置筛选</button> : <div className="creation-result-actions"><Link className="button button-primary" to="/">开始创作 <ArrowUpRight size={17} /></Link><Link className="button button-secondary" to="/upload">上传图片</Link></div>}
     </div>}
     {!loading && !error && data && data.total > 0 && <div className="library-pagination">
       <button className="button button-secondary" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>上一页</button>
