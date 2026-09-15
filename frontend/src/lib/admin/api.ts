@@ -5,5 +5,6 @@ export const getAdminToken = () => getToken(ADMIN_SESSION)
 export const adminApi = <T>(path: string, init: RequestInit = {}) => api<T>(path, init, ADMIN_SESSION)
 
 export type Admin = { id: string; username: string }
+export type AdminSettings = { freeUploadQuota: number; updateTime: string | null }
 export type AdminUser = { id: string; username: string; email: string; createTime: string | null; remaining: number | null }
 export type UserPage = { records: AdminUser[]; total: number; current: number; size: number; pages: number }

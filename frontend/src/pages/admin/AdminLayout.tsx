@@ -5,12 +5,16 @@ import { ArrowUpRight } from '@phosphor-icons/react/dist/csr/ArrowUpRight'
 import { CaretRight } from '@phosphor-icons/react/dist/csr/CaretRight'
 import { SignOut } from '@phosphor-icons/react/dist/csr/SignOut'
 import { Users } from '@phosphor-icons/react/dist/csr/Users'
+import { SlidersHorizontal } from '@phosphor-icons/react/dist/csr/SlidersHorizontal'
 import { List } from '@phosphor-icons/react/dist/csr/List'
 import { X } from '@phosphor-icons/react/dist/csr/X'
 import type { Admin } from '../../lib/admin/api'
 
 // 这里只列出已上线的页面；新增模块与 AdminApp 中的子路由一同接入。
-const navigation = [{ to: '/admin/users', label: '用户管理', icon: Users }]
+const navigation = [
+  { to: '/admin/users', label: '用户管理', icon: Users },
+  { to: '/admin/settings', label: '配置管理', icon: SlidersHorizontal },
+]
 
 type LayoutProps = { admin: Admin; loggingOut: boolean; logout: () => void; error: string }
 

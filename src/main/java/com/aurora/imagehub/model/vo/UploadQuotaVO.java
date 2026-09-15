@@ -13,4 +13,5 @@ import lombok.Setter;
 public class UploadQuotaVO {
     private int total;
     private int remaining;
+    private long used;
 }

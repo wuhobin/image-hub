@@ -1,6 +1,7 @@
 package com.aurora.imagehub.cache;
 
 import com.aurora.imagehub.mapper.ImageMapper;
+import com.aurora.imagehub.service.admin.SystemSettingsService;
 import com.aurora.imagehub.model.vo.UploadQuotaVO;
 import com.aurora.starter.webmvc.exception.BizException;
 import java.util.function.Supplier;
@@ -12,20 +13,24 @@ import org.redisson.api.RedissonClient;
 import org.redisson.client.codec.StringCodec;
 import org.springframework.stereotype.Component;
 
-/** Redis 保存永久额度；中断的预占按成功图片恢复，删除图片不返还。 */
+/** Redis 保存累计消耗；配置决定总额，中断预占按成功图片恢复，删除图片不返还。 */
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class UploadQuotaCache {
-    public static final int LIMIT = 100;
+
     public static final int EXHAUSTED = 40301;
+
     private final RedissonClient redissonClient;
+
     private final ImageMapper imageMapper;
+
+    private final SystemSettingsService systemSettingsService;
 
     /** 注册已持久化后尽力初始化，失败不回滚账号；不覆盖已被使用的额度。 */
     public void initialize(long userId) {
         try {
-            bucket(userId).setIfAbsent(Integer.toString(LIMIT));
+            bucket(userId).setIfAbsent("u:0");
         } catch (RuntimeException e) {
             log.warn("Registration quota initialization deferred: userId={}", userId);
         }
@@ -36,15 +41,14 @@ public class UploadQuotaCache {
         var result = new java.util.HashMap<Long, Integer>();
         if (userIds.isEmpty()) return result;
         try {
-            String[] keys = userIds.stream().map(id -> "image-hub:quota:v1:{" + id + "}").toArray(String[]::new);
+            int total = systemSettingsService.freeUploadQuota();
+            String[] keys = userIds.stream().map(id -> "image-hub:quota:{" + id + "}").toArray(String[]::new);
             java.util.Map<String, String> values = redissonClient.getBuckets(StringCodec.INSTANCE).get(keys);
             for (int i = 0; i < keys.length; i++) {
                 String state = values.get(keys[i]);
                 if (state == null) continue;
-                try {
-                    int remaining = Integer.parseInt(state.split(":", 2)[0]);
-                    if (remaining >= 0) result.put(userIds.get(i), remaining);
-                } catch (NumberFormatException ignored) { /* 无效记录不伪装成可用额度。 */ }
+                Long used = readUsed(state);
+                if (used != null) result.put(userIds.get(i), remaining(total, used));
             }
             return result;
         } catch (RuntimeException e) {
@@ -53,25 +57,28 @@ public class UploadQuotaCache {
     }
 
     private RBucket<String> bucket(long userId) {
-        return redissonClient.getBucket("image-hub:quota:v1:{" + userId + "}", StringCodec.INSTANCE);
+        return redissonClient.getBucket("image-hub:quota:{" + userId + "}", StringCodec.INSTANCE);
     }
 
     private RLock lock(long userId) {
-        return redissonClient.getLock("image-hub:quota:v1:{" + userId + "}:lock");
+        return redissonClient.getLock("image-hub:quota:{" + userId + "}:lock");
     }
 
+    /** 查询当前额度；缓存缺失、格式无效或上传中断时，持锁按成功图片记录恢复消耗。 */
     public UploadQuotaVO get(long userId) {
         try {
+            int total = systemSettingsService.freeUploadQuota();
             RBucket<String> bucket = bucket(userId);
             String state = bucket.get();
-            if (state != null && !state.contains(":")) return new UploadQuotaVO(LIMIT, Integer.parseInt(state));
+            Long used = readUsed(state);
+            if (used != null && !inFlight(state)) return response(total, used);
             RLock lock = lock(userId);
             if (!lock.tryLock()) {
                 // 进行中的上传已预占一次，展示可用余额；不等待网络上传完成。
-                if (state != null) return new UploadQuotaVO(LIMIT, Integer.parseInt(state.split(":", 2)[0]));
+                if (used != null) return response(total, used);
                 throw new BizException(503, "上传额度正在恢复，请稍后重试");
             }
-            try { return new UploadQuotaVO(LIMIT, recover(userId, bucket)); }
+            try { return response(total, recover(userId, bucket)); }
             finally { unlock(lock); }
         } catch (BizException e) {
             throw e;
@@ -84,7 +91,7 @@ public class UploadQuotaCache {
     public <T> T consume(long userId, String imageId, Supplier<T> upload) {
         RLock lock;
         RBucket<String> bucket;
-        int remaining;
+        long used;
         try {
             lock = lock(userId);
             if (!lock.tryLock()) throw new BizException(409, "当前账号有图片正在上传，请稍后重试");
@@ -96,10 +103,10 @@ public class UploadQuotaCache {
         try {
             try {
                 bucket = bucket(userId);
-                remaining = recover(userId, bucket);
-                if (remaining <= 0) throw new BizException(EXHAUSTED, "免费上传额度已用完");
-                // 单个 SET 同时记录余额与在途标记；崩溃后由下一次请求恢复，绝不直接重赠 100 次。
-                bucket.set((remaining - 1) + ":" + imageId);
+                used = recover(userId, bucket);
+                if (used >= systemSettingsService.freeUploadQuota()) throw new BizException(EXHAUSTED, "免费上传额度已用完");
+                // 以预占时的配置判断准入，已准入上传可完成；配置变化不能覆盖累计消耗。
+                bucket.set("u:" + (used + 1) + ":" + imageId);
             } catch (BizException e) {
                 throw e;
             } catch (RuntimeException e) {
@@ -115,7 +122,7 @@ public class UploadQuotaCache {
                 throw e;
             }
             try {
-                if (lock.isHeldByCurrentThread()) bucket.set(Integer.toString(remaining - 1));
+                if (lock.isHeldByCurrentThread()) bucket.set("u:" + (used + 1));
             } catch (RuntimeException e) {
                 // 图片已入库，保留预占标记等待恢复；不能将成功响应改为失败诱发重复上传。
                 log.warn("Quota confirmation deferred: userId={}", userId, e);
@@ -131,16 +138,46 @@ public class UploadQuotaCache {
         if (!lock(userId).isHeldByCurrentThread()) throw new BizException(503, "上传额度校验已失效，请重试");
     }
 
-    private int recover(long userId, RBucket<String> bucket) {
+    /** 调用方持有用户锁后恢复消耗，避免覆盖正在进行的上传预占。 */
+    private long recover(long userId, RBucket<String> bucket) {
         String state = bucket.get();
-        if (state != null && !state.contains(":")) return Integer.parseInt(state);
+        Long used = readUsed(state);
+        if (used != null && !inFlight(state)) return used;
         return rebuild(userId, bucket);
     }
 
-    private int rebuild(long userId, RBucket<String> bucket) {
-        int remaining = (int) Math.max(0, LIMIT - imageMapper.countQuotaUploads(userId));
-        bucket.set(Integer.toString(remaining));
-        return remaining;
+    /** 依据已计费图片重建累计消耗，统计包含已删除图片，防止删除后返还额度。 */
+    private long rebuild(long userId, RBucket<String> bucket) {
+        long used = imageMapper.countQuotaUploads(userId);
+        bucket.set("u:" + used);
+        return used;
+    }
+
+    /** 仅解析 u:累计消耗[:预占图片ID]；缺失、其他格式或非法数值返回空，由调用方决定恢复。 */
+    private Long readUsed(String state) {
+        if (state == null || !state.startsWith("u:")) {
+            return null;
+        }
+        try {
+            String[] parts = state.split(":", 3);
+            long used = Long.parseLong(parts[1]);
+            return used >= 0 ? used : null;
+        } catch (NumberFormatException | ArrayIndexOutOfBoundsException ignored) {
+            return null;
+        }
+    }
+
+    /** 在已解析有效的 u: 状态中检查预占标记，用于识别需要确认或恢复的上传。 */
+    private boolean inFlight(String state) {
+        return state.indexOf(':', 2) >= 0;
+    }
+
+    private int remaining(int total, long used) {
+        return (int) Math.max(0L, total - used);
+    }
+
+    private UploadQuotaVO response(int total, long used) {
+        return new UploadQuotaVO(total, remaining(total, used), used);
     }
 
     private void unlock(RLock lock) {

@@ -6,7 +6,7 @@ export default function Profile({ app }: { app: AppState }) {
   const { quota, quotaError } = app
   const loading = app.initializing || (!quota && !quotaError) || retrying
   const metrics = [
-    { label: '已用额度', value: quota ? quota.total - quota.remaining : null },
+    { label: '已用额度', value: quota?.used },
     { label: '总额度', value: quota?.total },
     { label: '剩余额度', value: quota?.remaining },
   ]

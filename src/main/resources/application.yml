@@ -72,6 +72,13 @@ mybatis-plus:
     map-underscore-to-camel-case: true
 
 platform:
+  redis:
+    two-level-cache:
+      enabled: true
+      instances:
+        - name: imageHubSettings
+          max-size: 16
+          default-ttl: 3d
   security:
     enabled: true
     token-name: Authorization

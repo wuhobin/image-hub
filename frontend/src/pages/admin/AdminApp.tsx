@@ -12,6 +12,7 @@ import { ADMIN_SESSION, adminApi, getAdminToken } from '../../lib/admin/api'
 import type { Admin } from '../../lib/admin/api'
 import AdminLayout from './AdminLayout'
 import AdminUsers from './AdminUsers'
+import AdminSettings from './AdminSettings'
 import './admin.css'
 
 const message = (error: unknown) => error instanceof Error ? error.message : '请求失败，请稍后重试'
@@ -69,6 +70,7 @@ export default function AdminApp() {
     <Route path="/admin" element={admin ? <AdminLayout admin={admin} loggingOut={loggingOut} logout={() => void logout()} error={sessionError} /> : <Navigate to="/admin/login" replace />}>
       <Route index element={<Navigate to={'users' + location.search} replace />} />
       <Route path="users" element={<AdminUsers />} />
+      <Route path="settings" element={<AdminSettings />} />
       <Route path="*" element={<div className="admin-state"><h1>页面未找到</h1><p>这个管理页面不存在。</p><Link className="button button-primary" to="/admin/users">返回用户管理</Link></div>} />
     </Route>
   </Routes>

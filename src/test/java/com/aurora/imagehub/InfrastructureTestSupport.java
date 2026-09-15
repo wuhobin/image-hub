@@ -6,7 +6,11 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @TestPropertySource(locations = "classpath:infrastructure-test.properties")
+@org.springframework.context.annotation.Import(SettingsCacheTestConfiguration.class)
 abstract class InfrastructureTestSupport {
+
+    @MockitoBean
+    protected com.aurora.imagehub.mapper.admin.SystemSettingsMapper systemSettingsMapper;
 
     @MockitoBean
     protected com.aurora.imagehub.mapper.admin.AdminAccountMapper adminAccountMapper;

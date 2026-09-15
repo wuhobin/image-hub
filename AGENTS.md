@@ -27,9 +27,11 @@
 
 ## 注释与行为约束
 
+后续新增或修改代码时，相邻字段声明之间、相邻方法之间，以及字段与方法之间，均保留一个空行；字段或方法的注释、注解与对应声明保持紧邻，不在其间插入空行。
+
 所有依赖注入字段使用所注入类型的完整名称，并采用 lowerCamelCase，禁止缩写或泛称。例如 `ImageMapper imageMapper`、`UserAccountService userAccountService`、`OssTemplate ossTemplate`、`FileUploadValidator fileUploadValidator`、`ObjectMapper objectMapper`。`ObjectProvider<T>` 使用目标类型名称加 `Provider`，如 `mailVerificationServiceProvider`。构造器参数及测试中的注入、Mock/Spy 字段遵循同一规则。
 
-重要类补充中文 Javadoc，说明职责和边界；Service 接口说明关键业务约定。权限校验、密码处理、会话隔离、上传补偿和删除重试等重要逻辑应解释原因，避免仅复述代码。
+重要类补充中文 Javadoc，说明职责和边界；Service 接口说明关键业务约定。关键方法必须补充中文方法注释，说明职责、重要约束及必要的异常或副作用；Java 方法使用 Javadoc。权限校验、密码处理、会话隔离、额度计算、缓存更新、上传补偿和删除重试等重要逻辑应解释原因，避免仅复述代码。
 
 密码、验证码及 Token 不得写入日志；接口不直接暴露实体。注册成功不自动登录，退出仅注销当前 Token。图片操作的用户 ID 必须来自可信登录态；删除图片时先删除存储文件，再将数据库记录标记为已删除，云端删除失败保留记录以便重试。
 

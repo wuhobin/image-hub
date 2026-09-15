@@ -128,6 +128,58 @@
 .admin-drawer-panel { height: 100%; background: #0e131c; border-right: 1px solid #2b3545; }
 .admin-drawer-close { position: absolute; top: 28px; right: 14px; }
 .admin-scroll-hint { display: none; }
+
+/* 配置分组采用顶部 Tab 和分区表单，操作区与当前分组保持在同一个容器中。 */
+.admin-settings-canvas { border: 1px solid #293241; border-radius: 14px; background: #11151de6; overflow: hidden; }
+.admin-settings-toolbar { min-height: 78px; padding: 0 28px; display: flex; align-items: center; justify-content: space-between; gap: 24px; border-bottom: 1px solid #293241; }
+.admin-settings-tabs { min-width: 0; display: flex; align-self: stretch; overflow-x: auto; scrollbar-width: thin; scrollbar-color: #354359 transparent; }
+.admin-settings-tab { position: relative; flex-shrink: 0; padding: 22px 16px; border: 0; background: transparent; color: #95a4b9; font-size: 13px; white-space: nowrap; cursor: pointer; }
+.admin-settings-tab:hover { color: #d9e7fd; background: #a8c9ff05; }
+.admin-settings-tab[aria-selected="true"] { color: #bed5f5; font-weight: 550; }
+.admin-settings-tab[aria-selected="true"]::after { content: ''; position: absolute; bottom: 0; left: 16px; right: 16px; height: 2px; background: #a8c9ff; border-radius: 2px 2px 0 0; }
+.admin-settings-tab:focus-visible { outline: 2px solid #9cbeef; outline-offset: -5px; border-radius: 6px; }
+.admin-settings-toolbar-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px 20px; padding-block: 12px; }
+.admin-settings-updated { color: #8492a7; font-size: 11px; font-variant-numeric: tabular-nums; }
+.admin-settings-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.admin-settings-actions .button { min-height: 38px; padding-inline: 16px; white-space: nowrap; }
+.admin-settings-panel { padding: 0 32px; }
+.admin-settings-panel:focus-visible { outline: 2px solid #9cbeef; outline-offset: -5px; }
+.admin-settings-section { display: grid; grid-template-columns: minmax(150px, 210px) minmax(0, 1fr); gap: 36px; padding: 34px 0; }
+.admin-settings-section + .admin-settings-section { border-top: 1px solid #ffffff0b; }
+.admin-settings-section-heading h2 { font-size: 14px; font-weight: 550; color: #d5dfed; margin: 0 0 10px; }
+.admin-settings-section-heading p { color: #8492a7; font-size: 12px; line-height: 1.9; max-width: 190px; }
+.admin-settings-fields, .admin-settings-rules { width: 100%; max-width: 640px; min-width: 0; }
+.admin-settings-fields label { display: block; color: #cfdaeb; font-size: 13px; margin-bottom: 12px; }
+.admin-settings-input { display: flex; align-items: center; gap: 14px; }
+.admin-settings-input input { min-width: 0; width: 240px; min-height: 44px; padding: 10px 14px; border: 1px solid #3a485d; border-radius: 8px; background: #0b1017; color: #d9e7fd; font-size: 16px; font-variant-numeric: tabular-nums; }
+.admin-settings-input input:focus-visible { outline: 2px solid #9cbeef; outline-offset: 3px; }
+.admin-settings-input > span { white-space: nowrap; color: #91a0b6; font-size: 12px; }
+.admin-settings-help { font-size: 11px; color: #8492a7; line-height: 1.8; margin-top: 10px; }
+.admin-settings-change { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 16px 18px; margin-top: 24px; border: 1px solid #a8c9ff13; border-radius: 8px; background: #a8c9ff05; font-size: 12px; color: #8f9fb6; }
+.admin-settings-change strong { color: #bfd9ff; font-size: 14px; font-weight: 500; }
+.admin-settings-change p { width: 100%; line-height: 1.9; color: #a8b5c8; margin-top: 2px; }
+.admin-settings-saved { display: inline-flex; align-items: center; gap: 6px; margin-top: 16px; font-size: 12px; color: #aacdbb; }
+.admin-settings-rules > p { font-size: 12px; line-height: 1.9; color: #95a4b9; }
+.admin-settings-example { margin: 18px 0; padding-left: 16px; border-left: 2px solid #344660; }
+.admin-settings-example > span { font-size: 11px; color: #8492a7; }
+.admin-settings-example p { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 12px; color: #9baac0; font-size: 12px; }
+.admin-settings-example b { color: #c3d7f3; font-weight: 500; }
+.admin-settings-state { min-height: 300px; padding: 32px 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; color: #95a4b9; font-size: 13px; }
+.admin-nav-item + .admin-nav-item { margin-top: 6px; }
+@media (max-width: 1100px) {
+  .admin-settings-toolbar { align-items: stretch; flex-direction: column; gap: 0; padding-bottom: 16px; }
+  .admin-settings-tabs { min-height: 58px; }
+  .admin-settings-toolbar-meta { padding: 0; justify-content: space-between; }
+}
+@media (max-width: 650px) {
+  .admin-settings-toolbar { padding-inline: 18px; }
+  .admin-settings-panel { padding-inline: 20px; }
+  .admin-settings-section { grid-template-columns: minmax(0, 1fr); gap: 22px; padding-block: 26px; }
+  .admin-settings-section-heading p { max-width: none; }
+  .admin-settings-toolbar-meta { gap: 14px; }
+  .admin-settings-actions { margin-left: auto; }
+  .admin-settings-input input { width: 100%; }
+}
 @media (max-width: 900px) {
   .admin-sidebar { display: none; }
   .admin-console-body { margin-left: 0; }

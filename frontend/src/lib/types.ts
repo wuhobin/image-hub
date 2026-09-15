@@ -33,4 +33,4 @@ export type Page<T> = {
   pages: number
 }
 export type ImageList = { page: Page<ImageRecord>; totalBytes: number }
-export type UploadQuota = { total: number; remaining: number }
+export type UploadQuota = { total: number; remaining: number; used: number }

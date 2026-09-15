@@ -33,7 +33,7 @@ import static org.mockito.Mockito.*;
         "spring.sql.init.mode=always", "spring.sql.init.schema-locations=file:deploy/db/schema.sql",
         "platform.security.is-log=false"
 })
-@Import(AdminFlowTest.TestBeans.class)
+@Import({AdminFlowTest.TestBeans.class, com.aurora.imagehub.SettingsCacheTestConfiguration.class})
 class AdminFlowTest {
     @TestConfiguration
     static class TestBeans {
@@ -48,6 +48,8 @@ class AdminFlowTest {
     @Autowired private TestRestTemplate testRestTemplate;
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private SaTokenDao saTokenDao;
+    @Autowired private com.aurora.imagehub.service.admin.SystemSettingsService systemSettingsService;
+    @Autowired private com.aurora.starter.redis.core.TwoLevelCache twoLevelCache;
     @MockitoBean private RedissonClient redissonClient;
     @MockitoBean private LettuceConnectionFactory lettuceConnectionFactory;
     @MockitoBean private AttemptLimiter attemptLimiter;
@@ -58,6 +60,8 @@ class AdminFlowTest {
     @BeforeEach
     void setup() {
         SaManager.setSaTokenDao(saTokenDao);
+        com.aurora.imagehub.SettingsCacheTestConfiguration.resetCache(twoLevelCache);
+        jdbcTemplate.update("UPDATE hub_settings SET config_value='100', deleted=0 WHERE config_key='upload.free-total'");
         jdbcTemplate.update("DELETE FROM hub_image");
         jdbcTemplate.update("DELETE FROM hub_user");
         jdbcTemplate.update("DELETE FROM hub_admin");
@@ -119,8 +123,8 @@ class AdminFlowTest {
         user(2, "bob", "ALICE@example.test", 0);
         user(3, "carol", "three@example.test", 0);
         user(4, "archived-alice", "deleted@example.test", 1);
-        quotaState.put("image-hub:quota:v1:{1}", "87");
-        quotaState.put("image-hub:quota:v1:{2}", "0:in-flight");
+        quotaState.put("image-hub:quota:{1}", "u:13");
+        quotaState.put("image-hub:quota:{2}", "u:100:in-flight");
         String token = login("/api/admin/auth/login", "operator");
         var original = new HashMap<>(quotaState);
         JsonNode result = get("/api/admin/users?search=ALICE&pageSize=1&page=1", token);
@@ -150,6 +154,106 @@ class AdminFlowTest {
         verify(attemptLimiter, atLeastOnce()).check(eq("admin-login-ip"), anyString(), eq(30), eq(300));
         when(redissonClient.getBuckets(StringCodec.INSTANCE)).thenThrow(new IllegalStateException("offline"));
         assertThat(get("/api/admin/users", token).path("code").asInt()).isEqualTo(503);
+    }
+
+    @Test
+    void settingsRequireAdminValidateNumbersAndRefreshOnlyAfterCommit() {
+        user(1, "ordinary", "ordinary@example.test", 0);
+        String ordinary = login("/api/app/auth/login", "ordinary");
+        assertThat(get("/api/admin/settings", null).path("code").asInt()).isEqualTo(401);
+        assertThat(request("/api/admin/settings", HttpMethod.PUT, Map.of("freeUploadQuota", 0), ordinary).path("code").asInt()).isEqualTo(401);
+        String token = login("/api/admin/auth/login", "operator");
+        assertThat(get("/api/admin/settings", token).path("data").path("freeUploadQuota").asInt()).isEqualTo(100);
+        for (Object input : List.of(-1, 1.5, 2147483648L, "invalid")) {
+            assertThat(request("/api/admin/settings", HttpMethod.PUT, Map.of("freeUploadQuota", input), token).path("code").asInt()).isEqualTo(400);
+        }
+        assertThat(request("/api/admin/settings", HttpMethod.PUT, Map.of(), token).path("code").asInt()).isEqualTo(400);
+        var observed = new ArrayList<Integer>();
+        doAnswer(call -> {
+            observed.add(jdbcTemplate.queryForObject("SELECT config_value FROM hub_settings WHERE config_key='upload.free-total'", Integer.class));
+            return null;
+        }).when(twoLevelCache).evict(anyString());
+        var response = request("/api/admin/settings", HttpMethod.PUT, Map.of("freeUploadQuota", 200), token);
+        assertThat(response.path("code").asInt()).isEqualTo(200);
+        assertThat(response.path("data").path("freeUploadQuota").asInt()).isEqualTo(200);
+        assertThat(response.path("data").path("updateTime").asText()).isNotBlank();
+        assertThat(observed).containsExactly(100, 200);
+        var order = inOrder(twoLevelCache);
+        order.verify(twoLevelCache, times(2)).evict("image-hub:settings:upload.free-total");
+        order.verify(twoLevelCache).set("image-hub:settings:upload.free-total", "200", 3L, java.util.concurrent.TimeUnit.DAYS);
+        jdbcTemplate.update("UPDATE hub_admin SET deleted=1 WHERE id=1");
+        assertThat(request("/api/admin/settings", HttpMethod.PUT, Map.of("freeUploadQuota", 0), token).path("code").asInt()).isEqualTo(401);
+    }
+
+    @Test
+    void settingsUseIndependentKeysAndRejectInvalidQuotaValues() {
+        String token = login("/api/admin/auth/login", "operator");
+        jdbcTemplate.update("UPDATE hub_settings SET id=9001 WHERE config_key='upload.free-total'");
+        jdbcTemplate.update("INSERT INTO hub_settings(config_key,config_value,description) VALUES('test.site-title','测试站点','仅用于验证扩展存储')");
+        try {
+            assertThat(systemSettingsService.getValue("test.site-title")).isEqualTo("测试站点");
+            assertThat(systemSettingsService.freeUploadQuota()).isEqualTo(100);
+            verify(twoLevelCache).get(eq("image-hub:settings:test.site-title"), any(java.util.function.Supplier.class), eq(3L), eq(java.util.concurrent.TimeUnit.DAYS));
+            verify(twoLevelCache).get(eq("image-hub:settings:upload.free-total"), any(java.util.function.Supplier.class), eq(3L), eq(java.util.concurrent.TimeUnit.DAYS));
+            assertThat(request("/api/admin/settings", HttpMethod.PUT, Map.of("freeUploadQuota", 250), token).path("code").asInt()).isEqualTo(200);
+            assertThat(systemSettingsService.freeUploadQuota()).isEqualTo(250);
+            assertThat(jdbcTemplate.queryForObject("SELECT config_value FROM hub_settings WHERE config_key='test.site-title'", String.class)).isEqualTo("测试站点");
+            verify(twoLevelCache, never()).evict("image-hub:settings:test.site-title");
+            for (String invalid : List.of("text", "-1", "1.5", "2147483648")) {
+                jdbcTemplate.update("UPDATE hub_settings SET config_value=? WHERE config_key='upload.free-total'", invalid);
+                assertThat(get("/api/admin/settings", token).path("code").asInt()).isEqualTo(503);
+                org.assertj.core.api.Assertions.assertThatThrownBy(systemSettingsService::freeUploadQuota)
+                        .isInstanceOf(com.aurora.starter.webmvc.exception.BizException.class);
+            }
+        } finally {
+            jdbcTemplate.update("DELETE FROM hub_settings WHERE config_key='test.site-title'");
+            jdbcTemplate.update("UPDATE hub_settings SET id=1,config_value='100' WHERE config_key='upload.free-total'");
+        }
+    }
+
+    @Test
+    void settingsCacheFailuresFollowDatabaseCommitBoundary() {
+        String token = login("/api/admin/auth/login", "operator");
+        doThrow(new org.redisson.RedissonShutdownException("offline")).when(twoLevelCache).evict(anyString());
+        assertThat(request("/api/admin/settings", HttpMethod.PUT, Map.of("freeUploadQuota", 0), token).path("code").asInt()).isEqualTo(503);
+        assertThat(get("/api/admin/settings", token).path("data").path("freeUploadQuota").asInt()).isEqualTo(100);
+        verify(twoLevelCache, never()).set(anyString(), any(), anyLong(), any());
+
+        com.aurora.imagehub.SettingsCacheTestConfiguration.resetCache(twoLevelCache);
+        doThrow(new org.redisson.RedissonShutdownException("offline after commit"))
+                .when(twoLevelCache).set(anyString(), any(), anyLong(), any());
+        assertThat(request("/api/admin/settings", HttpMethod.PUT, Map.of("freeUploadQuota", 0), token).path("code").asInt()).isEqualTo(200);
+        assertThat(get("/api/admin/settings", token).path("data").path("freeUploadQuota").asInt()).isZero();
+
+        user(1, "alice", "one@example.test", 0);
+        quotaState.put("image-hub:quota:{1}", "u:80");
+        when(twoLevelCache.get(anyString(), any(java.util.function.Supplier.class), anyLong(), any()))
+                .thenThrow(new org.redisson.RedissonShutdownException("read offline"));
+        assertThat(get("/api/admin/users", token).path("data").path("records").get(0).path("remaining").asInt()).isZero();
+        jdbcTemplate.update("UPDATE hub_settings SET deleted=1 WHERE config_key='upload.free-total'");
+        assertThat(get("/api/admin/settings", token).path("code").asInt()).isEqualTo(503);
+        assertThat(get("/api/admin/users", token).path("code").asInt()).isEqualTo(503);
+    }
+
+    @Test
+    void settingsChangesRecalculateConsumptionAndIgnoreInvalidRedisStatesWithoutWritingBalances() {
+        String token = login("/api/admin/auth/login", "operator");
+        user(1, "unsupported", "unsupported@example.test", 0);
+        user(2, "current", "current@example.test", 0);
+        user(3, "invalid", "invalid@example.test", 0);
+        quotaState.put("image-hub:quota:{1}", "20");
+        quotaState.put("image-hub:quota:{2}", "u:80");
+        quotaState.put("image-hub:quota:{3}", "u:-1");
+        var original = new HashMap<>(quotaState);
+        for (int total : new int[]{50, 0, 200, 100}) {
+            assertThat(request("/api/admin/settings", HttpMethod.PUT, Map.of("freeUploadQuota", total), token).path("code").asInt()).isEqualTo(200);
+            var records = get("/api/admin/users", token).path("data").path("records");
+            assertThat(records.get(0).path("remaining").isNull()).isTrue();
+            assertThat(records.get(1).path("remaining").asInt()).isEqualTo(Math.max(0, total - 80));
+            assertThat(records.get(2).path("remaining").isNull()).isTrue();
+        }
+        assertThat(quotaState).isEqualTo(original);
+        verify(redissonClient, never()).getLock(anyString());
     }
 
     private void user(long id, String username, String email, int deleted) {

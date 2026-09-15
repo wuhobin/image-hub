@@ -34,7 +34,7 @@
 | POST | /auth/logout | 注销当前 Token |
 | POST | /images | multipart 字段 `file`，每个请求一张；返回图片记录 |
 | GET | /images | `page=1&pageSize=24&search=&type=&sort=desc`，返回 `ImageListVO {page,totalBytes}`；type 为 JPG/PNG/WEBP/GIF 或空 |
-| GET | /images/quota | 查询当前用户的上传额度 |
+| GET | /images/quota | 返回 `{total,remaining,used}`；总额由管理员配置，已用可能大于总额，剩余最低为 0 |
 | DELETE | /images/{id} | 仅限拥有者，删除文件并逻辑删除记录 |
 
 图片结构：`{id,name,url,preview,type,size,width,height,createdAt}`，ID 为字符串，大小单位字节，时间为 ISO UTC，preview 使用同一公开原始 URL。`createdAt` 继续映射实体的 `createTime`，保持前端兼容。

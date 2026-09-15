@@ -15,6 +15,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
+import java.util.List;
 import java.util.Map;
 import java.util.Base64;
 import java.util.concurrent.ConcurrentHashMap;
@@ -55,7 +56,7 @@ import static org.mockito.Mockito.*;
         "spring.sql.init.mode=always", "spring.sql.init.schema-locations=file:deploy/db/schema.sql,classpath:h2-datetime-precision.sql",
         "platform.security.is-log=false"
 })
-@Import(BusinessFlowTest.MemorySessions.class)
+@Import({BusinessFlowTest.MemorySessions.class, SettingsCacheTestConfiguration.class})
 class BusinessFlowTest {
     @TestConfiguration
     static class MemorySessions {
@@ -69,6 +70,7 @@ class BusinessFlowTest {
     @Autowired ImageFileService imageFileService;
     @Autowired ObjectMapper objectMapper;
     @Autowired SaTokenDao saTokenDao;
+    @Autowired com.aurora.starter.redis.core.TwoLevelCache twoLevelCache;
     @MockitoBean RedissonClient redissonClient;
     @MockitoBean LettuceConnectionFactory lettuceConnectionFactory;
     @MockitoBean AttemptLimiter attemptLimiter;
@@ -84,6 +86,8 @@ class BusinessFlowTest {
     @BeforeEach
     void setup() {
         SaManager.setSaTokenDao(saTokenDao);
+        SettingsCacheTestConfiguration.resetCache(twoLevelCache);
+        jdbcTemplate.update("UPDATE hub_settings SET config_value='100', deleted=0 WHERE config_key='upload.free-total'");
         jdbcTemplate.update("DELETE FROM hub_image");
         jdbcTemplate.update("DELETE FROM hub_user");
         codes.clear();
@@ -546,8 +550,8 @@ class BusinessFlowTest {
         register("refund", "refund@example.test");
         String token = login("refund");
         long userId = userMapper.findByUsername("refund").getId();
-        String key = "image-hub:quota:v1:{" + userId + "}";
-        quotaState.put(key, "99:interrupted-upload");
+        String key = "image-hub:quota:{" + userId + "}";
+        quotaState.put(key, "u:1:interrupted-upload");
         assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(100);
         UploadPretreatment uploadPretreatment = mock(UploadPretreatment.class, Answers.RETURNS_SELF);
         when(storage.of(any(MultipartFile.class))).thenReturn(uploadPretreatment);
@@ -563,7 +567,7 @@ class BusinessFlowTest {
                 .when(imageMapper).findOwned(anyLong(), anyString());
         assertThat(upload(token, "saved.png", png()).path("code").asInt()).isEqualTo(500);
         assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(99);
-        quotaState.put(key, "98:another-interrupted-upload");
+        quotaState.put(key, "u:2:another-interrupted-upload");
         assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(99);
         when(redissonClient.getBucket(anyString(), eq(org.redisson.client.codec.StringCodec.INSTANCE)))
                 .thenThrow(new IllegalStateException("Redis unavailable"));
@@ -577,7 +581,7 @@ class BusinessFlowTest {
         register("parallel", "parallel@example.test");
         String token = login("parallel");
         long userId = userMapper.findByUsername("parallel").getId();
-        quotaState.put("image-hub:quota:v1:{" + userId + "}", "1");
+        quotaState.put("image-hub:quota:{" + userId + "}", "u:99");
         var entered = new java.util.concurrent.CountDownLatch(1);
         var finish = new java.util.concurrent.CountDownLatch(1);
         UploadPretreatment uploadPretreatment = mock(UploadPretreatment.class, Answers.RETURNS_SELF);
@@ -594,12 +598,60 @@ class BusinessFlowTest {
             assertThat(entered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
             assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isZero();
             assertThat(upload(token, "second.png", bytes).path("code").asInt()).isEqualTo(409);
+            jdbcTemplate.update("UPDATE hub_settings SET config_value='0' WHERE config_key='upload.free-total'");
             finish.countDown();
             assertThat(first.get(5, java.util.concurrent.TimeUnit.SECONDS).path("code").asInt()).isEqualTo(200);
+            assertThat(get("/api/app/images/quota", token).path("data").path("used").asLong()).isEqualTo(100);
+            jdbcTemplate.update("UPDATE hub_settings SET config_value='100' WHERE config_key='upload.free-total'");
             assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isZero();
             assertThat(upload(token, "third.png", bytes).path("code").asInt()).isEqualTo(40301);
             verify(uploadPretreatment).upload();
         } finally { finish.countDown(); executor.shutdownNow(); }
+    }
+
+
+    @Test
+    void changingTotalPreservesConsumptionAcrossZeroAndInvalidOrMissingRedisState() throws Exception {
+        register("dynamic", "dynamic@example.test");
+        String token = login("dynamic");
+        long userId = userMapper.findByUsername("dynamic").getId();
+        String first = upload(token, "first.png", png()).path("data").path("id").asText();
+        for (int i = 0; i < 79; i++) jdbcTemplate.update("""
+                INSERT INTO hub_image (id,user_id,name,url,type,size,width,height,storage_info,quota_charged,deleted)
+                SELECT ?,user_id,name,url,type,size,width,height,storage_info,1,1 FROM hub_image WHERE id = ?
+                """, java.util.UUID.randomUUID().toString(), first);
+        String key = "image-hub:quota:{" + userId + "}";
+        quotaState.put(key, "u:80");
+        for (int total : new int[]{200, 50, 0, 100}) {
+            jdbcTemplate.update("UPDATE hub_settings SET config_value=? WHERE config_key='upload.free-total'", total);
+            var quota = get("/api/app/images/quota", token).path("data");
+            assertThat(quota.path("total").asInt()).isEqualTo(total);
+            assertThat(quota.path("used").asLong()).isEqualTo(80);
+            assertThat(quota.path("remaining").asInt()).isEqualTo(Math.max(0, total - 80));
+            if (total == 0) {
+                clearInvocations(storage);
+                assertThat(upload(token, "blocked.png", png()).path("code").asInt()).isEqualTo(40301);
+                verify(storage, never()).of(any(MultipartFile.class));
+                register("zero-quota", "zero-quota@example.test");
+                var fresh = get("/api/app/images/quota", login("zero-quota")).path("data");
+                assertThat(fresh.path("used").asLong()).isZero();
+                assertThat(fresh.path("remaining").asInt()).isZero();
+                assertThat(delete(first, token).path("code").asInt()).isEqualTo(200);
+            }
+        }
+        String next = upload(token, "next.png", png()).path("data").path("id").asText();
+        assertThat(quotaState.get(key)).isEqualTo("u:81");
+        assertThat(delete(next, token).path("code").asInt()).isEqualTo(200);
+        quotaState.clear();
+        var restored = get("/api/app/images/quota", token).path("data");
+        assertThat(restored.path("used").asLong()).isEqualTo(81);
+        assertThat(restored.path("remaining").asInt()).isEqualTo(19);
+        assertThat(quotaState.get(key)).isEqualTo("u:81");
+        for (String invalid : List.of("u:invalid", "u:", "u:-1", "u:9223372036854775808", "20", "20:in-flight")) {
+            quotaState.put(key, invalid);
+            assertThat(get("/api/app/images/quota", token).path("data").path("used").asLong()).isEqualTo(81);
+            assertThat(quotaState.get(key)).isEqualTo("u:81");
+        }
     }
 
     private void register(String username, String email) {
@@ -612,12 +664,12 @@ class BusinessFlowTest {
     void registrationInitializesQuotaWithoutOverwritingItAndSurvivesRedisFailure() {
         register("new-quota", "new-quota@example.test");
         long id = userMapper.findByUsername("new-quota").getId();
-        String key = "image-hub:quota:v1:{" + id + "}";
-        assertThat(quotaState.get(key)).isEqualTo("100");
-        quotaState.put(key, "87");
+        String key = "image-hub:quota:{" + id + "}";
+        assertThat(quotaState.get(key)).isEqualTo("u:0");
+        quotaState.put(key, "u:13");
         assertThat(post("/api/app/auth/register", Map.of("username", "new-quota", "email", "new-quota@example.test",
                 "password", "secret123", "code", "654321"), null).path("code").asInt()).isEqualTo(409);
-        assertThat(quotaState.get(key)).isEqualTo("87");
+        assertThat(quotaState.get(key)).isEqualTo("u:13");
         when(redissonClient.getBucket(anyString(), eq(org.redisson.client.codec.StringCodec.INSTANCE)))
                 .thenThrow(new IllegalStateException("Redis unavailable"));
         register("redis-down", "redis-down@example.test");
