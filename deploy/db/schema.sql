@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS hub_ai_generation (
     image_size VARCHAR(20) NOT NULL,
     quality VARCHAR(20) NOT NULL,
     status VARCHAR(20) NOT NULL,
-    error_message VARCHAR(255),
+    error_message TEXT,
     work_token VARCHAR(36),
     work_deadline datetime,
     pending_storage_info TEXT COMMENT '上传前记录定位，入库成功或补偿删除后清空',

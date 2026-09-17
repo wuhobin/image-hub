@@ -1030,6 +1030,27 @@ class BusinessFlowTest {
         verify(imageMapper, never()).selectList(any(com.baomidou.mybatisplus.core.conditions.Wrapper.class));
     }
 
+    /** 上游拒绝详情沿现有字段落库并返回，同时释放额度且不发起上传。 */
+    @Test
+    void aiProviderErrorIsReturnedInTaskAndHistory() {
+        register("provider-error", "provider-error@example.test");
+        String token = login("provider-error");
+        long userId = userMapper.findByUsername("provider-error").getId();
+        String errorMessage = "poll failed: 451 {\"error_code\":\"image_unsafe\",\"message\":\"The generated images appear to be unsafe.\"}\n" + "原始消息".repeat(100);
+        when(aiImageClient.generate(any())).thenThrow(new com.aurora.starter.webmvc.exception.BizException(502, errorMessage));
+        String id = post("/api/app/generations", generationRequest(enableAiModel()), token).path("data").path("id").asText();
+        aiGenerationService.runTask(userId, id);
+        var task = get("/api/app/generations/" + id, token);
+        assertThat(task.path("code").asInt()).isEqualTo(200);
+        assertThat(task.path("data").path("status").asText()).isEqualTo("FAILED");
+        assertThat(task.path("data").path("errorMessage").asText()).isEqualTo(errorMessage);
+        assertThat(get("/api/app/generations?page=1&pageSize=12", token).path("data").path("records").get(0)
+                .path("errorMessage").asText()).isEqualTo(errorMessage);
+        assertThat(imageFileService.quota(userId).getReserved()).isZero();
+        verify(aiImageClient, times(1)).generate(any());
+        verify(storage, never()).of(any(MultipartFile.class));
+    }
+
     /** 测试模型使用虚构Key，不触发真实供应商请求。 */
     private long enableAiModel() {
         long id = jdbcTemplate.queryForObject("SELECT id FROM hub_ai_model WHERE name='GPT-Image-2'", Long.class);

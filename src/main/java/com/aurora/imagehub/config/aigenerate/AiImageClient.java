@@ -1,11 +1,13 @@
 package com.aurora.imagehub.config.aigenerate;
 
 import com.aurora.imagehub.model.entity.AiGeneration;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.aurora.starter.webmvc.exception.BizException;
 import java.io.IOException;
 import java.net.URI;
 import java.net.HttpURLConnection;
 import java.net.http.*;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Base64;
 import lombok.extern.slf4j.Slf4j;
@@ -80,9 +82,16 @@ public class AiImageClient {
                                 }
                             }))
                             .requestInterceptor((request, body, execution) -> {
-                                ClientHttpResponse response = execution.execute(request, body);
+                                // 当前 Spring AI 图片参数未提供 moderation，在发送前固定补充到 JSON。
+                                var objectMapper = new ObjectMapper();
+                                var requestBody = (com.fasterxml.jackson.databind.node.ObjectNode) objectMapper.readTree(   body);
+                                requestBody.put("moderation", "low");
+                                byte[] payload = objectMapper.writeValueAsBytes(requestBody);
+                                request.getHeaders().setContentLength(payload.length);
+                                log.info("OpenAI 请求：taskId={}, 请求参数={}", task.getId(), new String(payload, StandardCharsets.UTF_8));
+                                ClientHttpResponse response = execution.execute(request, payload);
                                 httpStatus[0] = response.getStatusCode().value();
-                                return limitResponse(response);
+                                return response.getStatusCode().is2xxSuccessful() ? limitResponse(response) : response;
                             }))
                     .responseErrorHandler(new ResponseErrorHandler() {
                         @Override
@@ -92,7 +101,7 @@ public class AiImageClient {
 
                         @Override
                         public void handleError(URI url, org.springframework.http.HttpMethod method, ClientHttpResponse response) throws IOException {
-                            throw new BizException(502, "模型服务拒绝请求（HTTP " + response.getStatusCode().value() + "），请检查配置或稍后重试");
+                            throw new BizException(502, modelErrorMessage(response, task.getId()));
                         }
                     }).build();
             String[] size = task.getImageSize().split("x");
@@ -143,6 +152,24 @@ public class AiImageClient {
             if (e instanceof BizException business) throw business;
             if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             throw new BizException(502, "生成请求超时或未取得有效结果，额度将释放，请重新提交");
+        }
+    }
+
+    /** 原样透传上游 message；兼容顶层与 error 对象，仅在缺少消息或响应无效时使用兜底提示。 */
+    private String modelErrorMessage(ClientHttpResponse response, String taskId) throws IOException {
+        String fallback = "模型服务拒绝请求（HTTP " + response.getStatusCode().value() + "），请检查配置或稍后重试";
+        try {
+            byte[] body = response.getBody().readNBytes(8193);
+            log.info("OpenAI 响应：taskId={}, httpStatus={}, 正文截断={}, 响应正文={}", taskId,
+                    response.getStatusCode().value(), body.length > 8192,
+                    new String(body, 0, Math.min(body.length, 8192), StandardCharsets.UTF_8));
+            if (body.length > 8192) return fallback;
+            var root = new ObjectMapper().readTree(body);
+            if (root == null) return fallback;
+            var message = root.path("message").isTextual() ? root.path("message") : root.path("error").path("message");
+            return message.isTextual() ? message.textValue() : fallback;
+        } catch (IOException ignored) {
+            return fallback;
         }
     }
 

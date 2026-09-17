@@ -93,6 +93,7 @@ class AiImageClientTest {
         var authorization = new AtomicReference<String>();
         var calls = new AtomicInteger();
         var status = new AtomicInteger(200);
+        var errorBody = new AtomicReference<>("{\"error\":{\"message\":\"Too many requests\"},\"request_id\":\"upstream-request-id\"}");
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/v1/images/generations", exchange -> {
             calls.incrementAndGet();
@@ -100,7 +101,7 @@ class AiImageClientTest {
             authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
             byte[] response = (status.get() == 200
                     ? "{\"created\":1,\"data\":[{\"b64_json\":\"" + Base64.getEncoder().encodeToString(bytes.toByteArray()) + "\"}]}"
-                    : "{\"error\":{\"message\":\"upstream-private-key\"}}").getBytes(StandardCharsets.UTF_8);
+                    : errorBody.get()).getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(status.get(), response.length);
             try (var body = exchange.getResponseBody()) { body.write(response); }
@@ -112,6 +113,7 @@ class AiImageClientTest {
             when(aiEndpointPolicy.requirePublicHttps(anyString())).thenAnswer(call -> URI.create(call.getArgument(0)));
             AiImageClient aiImageClient = new AiImageClient(modelKeyCipher, aiEndpointPolicy, new AiImageLimits("10MB"), 5, 30);
             AiGeneration task = new AiGeneration();
+            task.setId("request-response-test-task");
             task.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
             task.setImagesPath("/v1/images/generations");
             task.setApiKeyCiphertext(modelKeyCipher.encrypt("test-only-key"));
@@ -123,6 +125,7 @@ class AiImageClientTest {
                 task.setImageSize(size);
                 assertThat(aiImageClient.generate(task)).isEqualTo(bytes.toByteArray());
                 assertThat(json.readTree(requestBody.get()).path("size").asText()).isEqualTo(size);
+                assertThat(json.readTree(requestBody.get()).path("moderation").asText()).isEqualTo("low");
             }
             assertThat(aiImageClient.generate(task)).isEqualTo(bytes.toByteArray());
             var body = json.readTree(requestBody.get());
@@ -136,13 +139,45 @@ class AiImageClientTest {
             assertThat(authorization.get()).isEqualTo("Bearer test-only-key");
             status.set(429);
             assertThatThrownBy(() -> aiImageClient.generate(task)).isInstanceOf(BizException.class)
-                    .hasMessageContaining("HTTP 429").hasMessageNotContaining("upstream-private-key");
+                    .hasMessage("Too many requests");
             assertThat(calls.get()).isEqualTo(sizes.size() + 2);
             assertThat(diagnosticLogs()).contains("AI 创作失败：", "httpStatus=429", "AI 创作耗时：", "阶段=Base64 解码", " 秒",
-                            "BizException: 模型服务拒绝请求（HTTP 429），请检查配置或稍后重试",
+                            "BizException: Too many requests",
                             "AiImageClient$1.handleError")
                     .doesNotContain("elapsedMs=", "AI generation timing")
-                    .doesNotContain("upstream-private-key", "test-only-key", task.getApiKeyCiphertext(), task.getPrompt());
+                    .contains("OpenAI 请求：taskId=request-response-test-task, 请求参数=" + requestBody.get(),
+                            "OpenAI 响应：taskId=request-response-test-task, httpStatus=200, 响应正文={\"created\":1,\"data\":[{\"b64_json\":\"" + Base64.getEncoder().encodeToString(bytes.toByteArray()) + "\"}]}",
+                            "OpenAI 响应：taskId=request-response-test-task, httpStatus=429, 正文截断=false, 响应正文=" + errorBody.get())
+                    .doesNotContain("Authorization", "test-only-key", task.getApiKeyCiphertext());
+
+            String unsafeMessage = "The generated images appear to be unsafe. Try modifying the prompts or the seeds.";
+            status.set(451);
+            errorBody.set(json.writeValueAsString(java.util.Map.of("error_code", "image_unsafe", "message", unsafeMessage)));
+            String expected = unsafeMessage;
+            assertThatThrownBy(() -> aiImageClient.generate(task)).isInstanceOf(BizException.class).hasMessage(expected);
+            assertThat(diagnosticLogs()).contains(expected);
+
+            status.set(429);
+            errorBody.set("{\"error\":{\"code\":\"rate_limit_exceeded\",\"message\":\"Too many requests\"}}");
+            assertThatThrownBy(() -> aiImageClient.generate(task)).isInstanceOf(BizException.class)
+                    .hasMessage("Too many requests");
+
+            status.set(502);
+            for (String invalid : new String[]{"<html>Bad gateway</html>", "{broken", "{}", "", "x".repeat(8193)}) {
+                errorBody.set(invalid);
+                assertThatThrownBy(() -> aiImageClient.generate(task)).isInstanceOf(BizException.class)
+                        .hasMessage("模型服务拒绝请求（HTTP 502），请检查配置或稍后重试");
+            }
+            assertThat(diagnosticLogs()).contains("httpStatus=502, 正文截断=true, 响应正文=" + "x".repeat(8192))
+                    .doesNotContain("x".repeat(8193));
+            errorBody.set(json.writeValueAsString(java.util.Map.of("message", "😀".repeat(300))));
+            var longError = catchThrowableOfType(BizException.class, () -> aiImageClient.generate(task));
+            assertThat(longError.getMessage()).isEqualTo("😀".repeat(300));
+            String rawMessage = "  poll failed: 451 " + json.writeValueAsString(java.util.Map.of("error_code", "image_unsafe", "message", unsafeMessage)) + "\n";
+            errorBody.set(json.writeValueAsString(java.util.Map.of("error", java.util.Map.of("message", rawMessage))));
+            assertThatThrownBy(() -> aiImageClient.generate(task)).isInstanceOf(BizException.class).hasMessage(rawMessage);
+            assertThat(calls.get()).isEqualTo(sizes.size() + 11);
+
         } finally { server.stop(0); }
     }
 
@@ -190,7 +225,8 @@ class AiImageClientTest {
                             "httpStatus=200", "httpStatus=-1", "耗时=", "模型连接超时=30 秒", "模型响应超时=1 秒", "TimeoutException", "Caused by:")
                     .contains("JSON parse error: Cannot deserialize value", "HttpTimeoutException: Request timed out",
                             "AiImageClient.generate")
-                    .doesNotContain("private-test-key", "private-test-prompt", task.getApiKeyCiphertext());
+                    .contains(task.getPrompt(), "响应正文={\"data\":\"invalid-response-value\"}")
+                    .doesNotContain("Authorization", "private-test-key", task.getApiKeyCiphertext());
         } finally {
             release.countDown();
             server.stop(0);
