@@ -96,7 +96,7 @@ try {
     Browser focus '.creation-history-item' | Out-Null
     Browser press Enter | Out-Null
     Browser wait '.creation-detail-modal[open]' | Out-Null
-    AssertJs '!!document.querySelector(".creation-detail-modal .creation-image img") && document.querySelector(".creation-detail-modal").textContent.includes("21:9 · 4K · 3808x1632") && !document.querySelector("main > .creation-result")'
+    AssertJs '!!document.querySelector(".creation-detail-modal .creation-image img") && document.querySelector(".creation-detail-badges").textContent.includes("21:9") && document.querySelector(".creation-detail-parameters").textContent.includes("3808×1632") && document.querySelector(".creation-detail-parameters").textContent.includes("4K") && !document.querySelector("main > .creation-result")'
     Browser set viewport 390 844 | Out-Null
     AssertJs 'document.querySelector(".creation-detail-modal").scrollWidth <= document.querySelector(".creation-detail-modal").clientWidth'
     Browser screenshot (Join-Path $outputDir 'creation-detail-mobile.png') | Out-Null

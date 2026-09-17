@@ -5,6 +5,8 @@ import { Sparkle } from '@phosphor-icons/react/dist/csr/Sparkle'
 import { ArrowUpRight } from '@phosphor-icons/react/dist/csr/ArrowUpRight'
 import { ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp'
 import { Copy } from '@phosphor-icons/react/dist/csr/Copy'
+import { DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple'
+import { ArrowUUpLeft } from '@phosphor-icons/react/dist/csr/ArrowUUpLeft'
 import type { AppState } from '../App'
 import type { AiModel, Generation, Page } from '../lib/types'
 import { api, ApiError } from '../lib/api'
@@ -243,18 +245,55 @@ export default function Create({ app }: { app: AppState }) {
     requestAnimationFrame(() => document.getElementById('creation-prompt')?.focus())
   }
 
+  async function copyPrompt(text: string) {
+    try { await navigator.clipboard.writeText(text); app.notify('提示词已复制') }
+    catch { app.notify('复制失败，请选中提示词后手动复制', true) }
+  }
+
   function renderResult(task: Generation) {
+    const running = runningStatuses.includes(task.status)
+    const downloadUrl = task.image ? new URL(task.image.url) : null
+    // 七牛使用 attname 返回附件下载响应，跨域图片无需先 fetch 到浏览器内存。
+    if (task.image && downloadUrl) downloadUrl.searchParams.set('attname', task.image.name)
     return <section className="creation-result" aria-label="生成结果">
-        <header><h2>{labels[task.status]}</h2><span>{task.modelName}</span></header>
-        {task.image ? <>
-          <div className="creation-image"><img src={task.image.url} alt={task.prompt} /></div>
-          <div className="creation-result-bottom"><span>已保存到我的图片</span><button className="button button-secondary" onClick={() => void app.copyUrl(task.image!.url)}><Copy size={16} />复制链接</button></div>
-        </> : <div className="creation-placeholder" aria-live="polite">
-          <Sparkle size={48} weight="thin" aria-hidden="true" />
-          <h3>{labels[task.status]}</h3>
-          <p>{task.status === 'GENERATING' || task.status === 'QUEUED' ? '你可以离开页面，任务会在后台继续。' : task.status === 'SAVING' ? '图片已生成，正在保存到你的图库。' : task.status === 'SUCCEEDED' ? '生成已完成，图片已被删除。' : task.errorMessage || '本次任务已结束，预留额度已释放。'}</p>
-        </div>}
-        <div className="creation-result-meta"><p>{task.prompt}</p><span>{imageAspectRatio(task.size)} · {generationResolution(task.size) && `${generationResolution(task.size)} · `}{task.size} · {qualityNames[task.quality] || task.quality}</span><time>{task.createTime}</time><button className="quiet-link" disabled={busy || uncertain} onClick={() => reuse(task)}>复用描述</button></div>
+      <div className={'creation-detail-preview' + (running ? ' is-running' : '')}>
+        <div className="creation-detail-image-tools">
+          <div className="creation-detail-badges"><span>{imageAspectRatio(task.size)}</span><span>{task.size.replace('x', '×')}</span></div>
+          {task.image && <a className="creation-detail-download" href={downloadUrl?.href} download={task.image.name} aria-label="下载图片" title="下载图片"><DownloadSimple size={18} /></a>}
+        </div>
+        {task.image ? <div className="creation-image"><img src={task.image.url} alt={task.prompt} /></div> :
+          <div className="creation-placeholder" aria-live="polite">
+            <div className="creation-detail-loader"><Sparkle size={38} weight="thin" aria-hidden="true" /></div>
+            <h3>{labels[task.status]}</h3>
+            <p>{task.status === 'GENERATING' || task.status === 'QUEUED' ? '你可以离开页面，任务会在后台继续。' : task.status === 'SAVING' ? '图片已生成，正在保存到你的图库。' : task.status === 'SUCCEEDED' ? '生成已完成，图片已被删除。' : task.errorMessage || '本次任务已结束，预留额度已释放。'}</p>
+          </div>}
+      </div>
+      <div className="creation-detail-panel">
+        <div className="creation-detail-content">
+          <section className="creation-detail-prompt" aria-labelledby="creation-detail-prompt-title">
+            <div className="creation-detail-section-heading"><h3 id="creation-detail-prompt-title">输入内容</h3><button className="icon-button" aria-label="复制提示词" title="复制提示词" onClick={() => void copyPrompt(task.prompt)}><Copy size={15} /></button></div>
+            <p tabIndex={0} aria-label="完整提示词">{task.prompt}</p>
+          </section>
+          <section className="creation-detail-settings" aria-labelledby="creation-detail-settings-title">
+            <h3 id="creation-detail-settings-title">参数配置</h3>
+            <dl className="creation-detail-parameters">
+              <div className="creation-detail-model"><dt>生成模型</dt><dd>{task.modelName}</dd></div>
+              <div><dt>尺寸</dt><dd>{task.size.replace('x', '×')}</dd></div>
+              <div><dt>质量</dt><dd>{qualityNames[task.quality] || task.quality}</dd></div>
+              <div><dt>画面比例</dt><dd>{imageAspectRatio(task.size)}</dd></div>
+              <div><dt>分辨率</dt><dd>{generationResolution(task.size) || '自定义'}</dd></div>
+              {task.image?.type && <div><dt>图片格式</dt><dd>{task.image.type.toUpperCase()}</dd></div>}
+              <div><dt>生成数量</dt><dd>1 张</dd></div>
+            </dl>
+          </section>
+          <div className="creation-detail-meta"><span className={'creation-detail-status status-' + task.status.toLowerCase()} role="status"><i aria-hidden="true" />{labels[task.status]}</span><time dateTime={task.createTime.replace(' ', 'T')}>创建于 {task.createTime}</time></div>
+          {task.image && <p className="creation-detail-saved">已保存到我的图片</p>}
+        </div>
+        <footer className="creation-detail-actions">
+          <button className="button creation-detail-reuse" disabled={busy || uncertain} onClick={() => reuse(task)}><ArrowUUpLeft size={17} />复用描述</button>
+          {task.image && <button className="button button-secondary" onClick={() => void app.copyUrl(task.image!.url)}><Copy size={16} />复制链接</button>}
+        </footer>
+      </div>
     </section>
   }
 

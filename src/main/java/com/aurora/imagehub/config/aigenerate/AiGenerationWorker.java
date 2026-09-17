@@ -1,6 +1,7 @@
 package com.aurora.imagehub.config.aigenerate;
 
 import com.aurora.imagehub.model.entity.AiGeneration;
+import com.aurora.imagehub.constants.AiGenerationConstants.TaskStatus;
 import com.aurora.imagehub.service.AiGenerationService;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -50,7 +51,7 @@ public class AiGenerationWorker {
             int capacity = semaphore.availablePermits();
             if (capacity == 0) return;
             var tasks = aiGenerationService.page(new Page<AiGeneration>(1, capacity, false),
-                    Wrappers.<AiGeneration>lambdaQuery().eq(AiGeneration::getStatus, "QUEUED")
+                    Wrappers.<AiGeneration>lambdaQuery().eq(AiGeneration::getStatus, TaskStatus.QUEUED.name())
                             .isNull(AiGeneration::getWorkToken)
                             .notIn(!dispatched.isEmpty(), AiGeneration::getId, dispatched)
                             .orderByAsc(AiGeneration::getCreateTime, AiGeneration::getId));

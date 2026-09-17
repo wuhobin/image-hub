@@ -1,6 +1,8 @@
 package com.aurora.imagehub.service.impl;
 
 import com.aurora.imagehub.config.aigenerate.AiImageClient;
+import com.aurora.imagehub.constants.AiGenerationConstants.TaskStatus;
+import com.aurora.imagehub.constants.AiGenerationConstants.TaskStage;
 import com.aurora.imagehub.config.aigenerate.AiGenerationQueuedEvent;
 import org.springframework.context.ApplicationEventPublisher;
 import com.aurora.imagehub.cache.UploadQuotaCache;
@@ -86,7 +88,7 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
             task.setPrompt(param.getPrompt().trim());
             task.setImageSize(param.getSize());
             task.setQuality(param.getQuality());
-            task.setStatus("QUEUED");
+            task.setStatus(TaskStatus.QUEUED.name());
             try {
                 uploadQuotaCache.checkOwnership(userId);
                 aiGenerationMapper.insert(task);
@@ -98,7 +100,7 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
             return task(userId, task.getId());
         });
         // 持久化和额度预占均已完成，通知失败不能把已接收的请求变成提交失败。
-        if ("QUEUED".equals(submitted.getStatus())) {
+        if (TaskStatus.QUEUED.name().equals(submitted.getStatus())) {
             try {
                 applicationEventPublisher.publishEvent(new AiGenerationQueuedEvent());
             } catch (RuntimeException e) {
@@ -128,7 +130,7 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
         uploadQuotaCache.releaseInterruptedGeneration(userId);
         Page<AiGeneration> tasks = page(PageUtils.buildPage(page, pageSize), Wrappers.<AiGeneration>lambdaQuery()
                 .eq(AiGeneration::getUserId, userId).orderByDesc(AiGeneration::getCreateTime, AiGeneration::getId));
-        var imageIds = tasks.getRecords().stream().filter(task -> "SUCCEEDED".equals(task.getStatus()))
+        var imageIds = tasks.getRecords().stream().filter(task -> TaskStatus.SUCCEEDED.name().equals(task.getStatus()))
                 .map(AiGeneration::getId).toList();
         var images = new java.util.HashMap<String, ImageVO>();
         if (!imageIds.isEmpty()) {
@@ -158,19 +160,19 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
     public void runTask(long userId, String id) {
         withTaskLock(id, () -> {
             AiGeneration task = requireOwned(userId, id);
-            if (!"QUEUED".equals(task.getStatus()) || task.getWorkToken() != null) return null;
+            if (!TaskStatus.QUEUED.name().equals(task.getStatus()) || task.getWorkToken() != null) return null;
             String token = UUID.randomUUID().toString();
             if (aiGenerationMapper.claim(userId, id, token, timeoutSeconds + 60) != 1) return null;
             long started = System.nanoTime();
             if (task.getCreateTime() != null) {
                 // 创建时间为数据库秒精度，跨数据库与应用时钟计算，仅用于近似排队耗时诊断。
-                log.info("AI 创作耗时：taskId={}, 阶段=排队等待, 近似耗时={} 秒",
-                        id, Math.max(0, System.currentTimeMillis() - task.getCreateTime().getTime()) / 1000.0);
+                log.info("AI 创作耗时：taskId={}, 阶段={}, 近似耗时={} 秒",
+                        id, TaskStage.QUEUE_WAIT.getDescription(), Math.max(0, System.currentTimeMillis() - task.getCreateTime().getTime()) / 1000.0);
             }
-            String stage = "MODEL_CALL";
+            TaskStage stage = TaskStage.MODEL_REQUEST;
             try {
                 byte[] bytes = aiImageClient.generate(task);
-                stage = "SAVE_IMAGE";
+                stage = TaskStage.SAVE_IMAGE;
                 requireTaskLock(id);
                 long savingStarted = System.nanoTime();
                 if (aiGenerationMapper.beginSaving(userId, id, token) != 1) {
@@ -178,12 +180,11 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
                 }
                 saveResult(task, token, bytes, savingStarted);
             } catch (Exception e) {
-                if (!"MODEL_CALL".equals(stage)) {
-                    log.info("AI 创作处理失败：taskId={}, 阶段=保存图片", id,
-                            e);
+                if (stage != TaskStage.MODEL_REQUEST) {
+                    log.info("AI 创作处理失败：taskId={}, 阶段={}", id, stage.getDescription(), e);
                 }
                 String message = e instanceof BizException ? e.getMessage()
-                        : "MODEL_CALL".equals(stage) ? "生成未取得结果，额度已释放，请重新提交"
+                        : stage == TaskStage.MODEL_REQUEST ? "生成未取得结果，额度已释放，请重新提交"
                         : "图片保存失败，额度已释放，请重新提交创作";
                 // 先确认任务未成功并记录失败；提交结果不明时不得删除可能已入库的云文件。
                 requireTaskLock(id);
@@ -198,8 +199,8 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
                     }
                 }
             } finally {
-                log.info("AI 创作耗时：taskId={}, 阶段=总处理, 耗时={} 秒",
-                        id, (System.nanoTime() - started) / 1_000_000 / 1000.0);
+                log.info("AI 创作耗时：taskId={}, 阶段={}, 耗时={} 秒",
+                        id, TaskStage.TOTAL.getDescription(), (System.nanoTime() - started) / 1_000_000 / 1000.0);
             }
             return null;
         });
@@ -231,8 +232,8 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
                 });
             });
         } finally {
-            log.info("AI 创作耗时：taskId={}, 阶段=入库与额度结算, 耗时={} 秒",
-                    task.getId(), (System.nanoTime() - started) / 1_000_000 / 1000.0);
+            log.info("AI 创作耗时：taskId={}, 阶段={}, 耗时={} 秒",
+                    task.getId(), TaskStage.PERSIST_RESULT.getDescription(), (System.nanoTime() - started) / 1_000_000 / 1000.0);
         }
     }
 
@@ -260,7 +261,7 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
     }
 
     private GenerationVO response(AiGeneration task) {
-        ImageFile image = "SUCCEEDED".equals(task.getStatus()) ? imageMapper.findOwned(task.getUserId(), task.getId()) : null;
+        ImageFile image = TaskStatus.SUCCEEDED.name().equals(task.getStatus()) ? imageMapper.findOwned(task.getUserId(), task.getId()) : null;
         return GenerationVO.from(task, image == null ? null : ImageVO.from(image));
     }
 

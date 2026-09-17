@@ -1,6 +1,7 @@
 package com.aurora.imagehub.config.aigenerate;
 
 import com.aurora.imagehub.model.entity.AiGeneration;
+import com.aurora.imagehub.constants.AiGenerationConstants.TaskStage;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.aurora.starter.webmvc.exception.BizException;
 import java.io.IOException;
@@ -60,7 +61,7 @@ public class AiImageClient {
     /** 获取一张图片的字节；异常完整记录到服务端日志，用户界面仍使用业务错误提示。 */
     public byte[] generate(AiGeneration task) {
         long started = System.nanoTime();
-        String stage = "准备请求";
+        TaskStage stage = TaskStage.PREPARE_REQUEST;
         int[] httpStatus = {-1};
         log.info("AI 创作开始：taskId={}, modelId={}, 尺寸={}, 质量={}, 模型连接超时={} 秒, 模型响应超时={} 秒",
                 task.getId(), task.getModelId(), task.getImageSize(), task.getQuality(), connectTimeoutSeconds, timeoutSeconds);
@@ -109,16 +110,16 @@ public class AiImageClient {
             var options = OpenAiImageOptions.builder().model(task.getModelCode()).N(1)
                     .width(Integer.parseInt(size[0])).height(Integer.parseInt(size[1])).quality(task.getQuality()).build();
             var model = new OpenAiImageModel(api, options, RetryTemplate.builder().maxAttempts(1).build());
-            stage = "模型请求";
+            stage = TaskStage.MODEL_REQUEST;
             long modelStarted = System.nanoTime();
             org.springframework.ai.image.ImageResponse response;
             try {
                 response = model.call(new ImagePrompt(task.getPrompt()));
             } finally {
-                log.info("AI 创作耗时：taskId={}, 阶段=模型请求, 耗时={} 秒",
-                        task.getId(), (System.nanoTime() - modelStarted) / 1_000_000 / 1000.0);
+                log.info("AI 创作耗时：taskId={}, 阶段={}, 耗时={} 秒",
+                        task.getId(), TaskStage.MODEL_REQUEST.getDescription(), (System.nanoTime() - modelStarted) / 1_000_000 / 1000.0);
             }
-            stage = "响应校验";
+            stage = TaskStage.VALIDATE_RESPONSE;
             if (response == null || response.getResults() == null || response.getResults().size() != 1) {
                 throw new BizException(502, "模型未返回单张图片，请检查模型配置");
             }
@@ -127,19 +128,19 @@ public class AiImageClient {
             long resultStarted = System.nanoTime();
             try {
                 if (output.getB64Json() != null && !output.getB64Json().isBlank()) {
-                    stage = "Base64 解码";
+                    stage = TaskStage.DECODE_BASE64;
                     if (output.getB64Json().length() > ((aiImageLimits.getMaxBytes() + 2L) / 3) * 4) {
                         throw new BizException(502, "生成图片超过 " + aiImageLimits.getSizeLabel());
                     }
                     bytes = Base64.getDecoder().decode(output.getB64Json());
                 } else {
-                    stage = "下载图片";
+                    stage = TaskStage.DOWNLOAD_IMAGE;
                     bytes = download(output.getUrl());
                 }
                 aiImageLimits.requireSize(bytes.length);
             } finally {
                 log.info("AI 创作耗时：taskId={}, 阶段={}, 耗时={} 秒",
-                        task.getId(), stage, (System.nanoTime() - resultStarted) / 1_000_000 / 1000.0);
+                        task.getId(), stage.getDescription(), (System.nanoTime() - resultStarted) / 1_000_000 / 1000.0);
             }
             // 任务服务在持久化前统一解码校验，下载和 Base64 响应遵守同一规则。
             log.info("AI 创作已取得图片：taskId={}, httpStatus={}, 耗时={} 秒, bytes={}",
@@ -147,7 +148,7 @@ public class AiImageClient {
             return bytes;
         } catch (Exception e) {
             log.info("AI 创作失败：taskId={}, 阶段={}, httpStatus={}, 耗时={} 秒, 模型连接超时={} 秒, 模型响应超时={} 秒",
-                    task.getId(), stage, httpStatus[0], (System.nanoTime() - started) / 1_000_000 / 1000.0,
+                    task.getId(), stage.getDescription(), httpStatus[0], (System.nanoTime() - started) / 1_000_000 / 1000.0,
                     connectTimeoutSeconds, timeoutSeconds, e);
             if (e instanceof BizException business) throw business;
             if (e instanceof InterruptedException) Thread.currentThread().interrupt();

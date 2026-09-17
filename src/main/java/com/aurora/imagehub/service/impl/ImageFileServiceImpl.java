@@ -1,6 +1,7 @@
 package com.aurora.imagehub.service.impl;
 
 import com.aurora.imagehub.mapper.ImageMapper;
+import com.aurora.imagehub.constants.AiGenerationConstants.TaskStage;
 import com.aurora.imagehub.service.ImageFileService;
 import com.aurora.imagehub.cache.UploadQuotaCache;
 import com.aurora.imagehub.model.vo.UploadQuotaVO;
@@ -108,8 +109,8 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
             if (!TYPES.containsKey(mime)) throw new BizException(400, "生成图片格式不支持");
             dimensions = dimensions(file);
         } finally {
-            log.info("AI 创作耗时：taskId={}, 阶段=图片校验, 耗时={} 秒",
-                    imageId, (System.nanoTime() - started) / 1_000_000 / 1000.0);
+            log.info("AI 创作耗时：taskId={}, 阶段={}, 耗时={} 秒",
+                    imageId, TaskStage.VALIDATE_IMAGE.getDescription(), (System.nanoTime() - started) / 1_000_000 / 1000.0);
         }
         return storeValidated(userId, file, mime, dimensions, imageId, "AI", beforeUpload);
     }
@@ -151,8 +152,8 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
                 stored = upload.setPlatform(storage.getPlatform()).upload(storage,
                         fileStorageService.getFileRecorder(), fileStorageService.getAspectList());
             } finally {
-                log.info("AI 创作耗时：taskId={}, 阶段=上传七牛, 耗时={} 秒, bytes={}",
-                        id, (System.nanoTime() - started) / 1_000_000 / 1000.0, file.getSize());
+                log.info("AI 创作耗时：taskId={}, 阶段={}, 耗时={} 秒, bytes={}",
+                        id, TaskStage.UPLOAD_IMAGE.getDescription(), (System.nanoTime() - started) / 1_000_000 / 1000.0, file.getSize());
             }
         }
         if (stored == null) throw new BizException(502, "图片上传失败，请重试");

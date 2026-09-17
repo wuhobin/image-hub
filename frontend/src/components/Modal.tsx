@@ -6,10 +6,20 @@ export function Modal({ title, onClose, children, className = '' }: { title: str
   const ref = useRef<HTMLDialogElement>(null)
   useEffect(() => {
     const dialog = ref.current!
+    const previousFocus = document.activeElement
     const previousOverflow = document.body.style.overflow
     dialog.showModal()
     document.body.style.overflow = 'hidden'
-    return () => { dialog.close(); document.body.style.overflow = previousOverflow }
+    return () => {
+      dialog.close()
+      document.body.style.overflow = previousOverflow
+      // 等待 dialog 移除后再恢复；复用描述等操作已主动转移焦点时不覆盖。
+      requestAnimationFrame(() => {
+        if (document.activeElement === document.body && previousFocus instanceof HTMLElement && previousFocus.isConnected) {
+          previousFocus.focus({ preventScroll: true })
+        }
+      })
+    }
   }, [])
   return <dialog ref={ref} className={`modal ${className}`} onCancel={onClose}
     onClick={event => { if (event.target === event.currentTarget) onClose() }} aria-labelledby="modal-title">
