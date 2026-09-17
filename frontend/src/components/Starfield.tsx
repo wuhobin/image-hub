@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from 'react'
+import { memo, useRef } from 'react'
 import type { RefObject } from 'react'
 import * as THREE from 'three'
 import gsap from 'gsap'
@@ -50,93 +50,28 @@ const pointFragment = `
     gl_FragColor = vec4((vColor * light + vec3(core)) * vLight, 1.0);
   }
 `
-const lensFragment = `
+// 直接合成星点，不再围绕输入框扭曲、聚光或扩散。
+const skyFragment = `
   uniform sampler2D uStars;
-  uniform vec2 uResolution;
-  uniform vec4 uBox;
-  uniform float uTime;
-  uniform float uEnergy;
-  uniform float uExpansion;
   uniform float uHasBox;
-  uniform float uRadius;
-  uniform float uArrival;
-  uniform float uIntroBurst;
   varying vec2 vUv;
-
-  vec3 sampleStars(vec2 uv) {
-    vec2 bounds = min(uv, 1.0 - uv) * uResolution;
-    return texture2D(uStars, clamp(uv, 0.0, 1.0)).rgb
-      * smoothstep(0.0, 2.0, min(bounds.x, bounds.y));
-  }
   void main() {
-    vec2 p = vUv * uResolution - uBox.xy;
-    vec2 q = abs(p) - uBox.zw + uRadius;
-    float edge = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - uRadius;
-    float outside = max(edge, 0.0);
-    float amount = uHasBox * uArrival;
-    // 开场扩散独立于悬停，结束后归零；只扩大框外星光，不改变上传框尺寸。
-    float burst = uIntroBurst * uHasBox;
-    float spread = 1.0 + uExpansion * 0.28 + burst * 1.8;
-    float mass = 1.0 + uEnergy * 0.3 + uExpansion * 0.35 + burst * 0.65;
-
-    // Point-mass lens equation over a rounded rectangle: stars curve and stretch
-    // continuously near the boundary, rather than repeating shifted copies.
-    float horizon = max(uBox.w, 24.0);
-    // Expand the surrounding lens field while keeping the physical rim fixed.
-    float impact = horizon + outside / spread;
-    float focus = horizon + 26.0 * mass;
-    float source = impact - focus * focus / impact;
-    vec2 direction = normalize(p / max(uBox.zw, vec2(1.0)) + vec2(0.00001));
-    vec2 bent = (uBox.xy + p * 0.45 + direction * source * 1.8) / uResolution;
-    float influence = amount * (1.0 - smoothstep(45.0 * spread, 115.0 * spread, edge));
-    vec3 light = sampleStars(mix(vUv, bent, influence));
-    light *= 1.0 + burst * influence * 0.8;
-    light *= mix(1.0, smoothstep(-1.0, 1.0, edge), amount);
-    vec2 title = (p - vec2(0.0, uBox.w + 110.0)) / vec2(max(uBox.z * 1.25, 210.0), 200.0);
-    float quiet = (1.0 - smoothstep(0.35, 1.0, length(title))) * smoothstep(12.0, 48.0, edge);
-    light *= pow(1.0 - quiet * amount * 0.98, 2.0);
-
-    // Integrate starlight only along the subpixel rim; the rest costs one sample.
-    float ring = edge - 0.7;
-    float pixel = max(fwidth(edge), 0.001);
-    float coverage = clamp((ring + 0.3) / pixel + 0.5, 0.0, 1.0)
-      - clamp((ring - 0.3) / pixel + 0.5, 0.0, 1.0);
-    if (amount > 0.0 && abs(ring) < 3.0) {
-      vec2 tangent = vec2(-direction.y, direction.x);
-      vec3 compressed = vec3(0.0);
-      for (int i = -8; i <= 8; i++) {
-        float offset = float(i);
-        float weight = exp(-offset * offset / 25.0);
-        for (int j = -1; j <= 1; j++) {
-          vec2 ray = tangent * offset * 12.0 + direction * float(j) * 18.0 * mass;
-          compressed += sampleStars(bent + ray / uResolution) * weight;
-        }
-      }
-      light += compressed * (coverage + exp(-abs(ring) / 0.6) * 0.3) * amount * (3.0 + burst * 2.0);
-    }
-
-    float orbit = atan(direction.y, direction.x) + uTime * 0.45;
-    float flow = 0.12 + 1.4 * pow(0.5 + 0.32 * sin(orbit * 2.0) + 0.18 * sin(orbit * 5.0), 2.0);
-    float flare = max(exp(-outside / (20.0 * spread)) - exp(-5.0), 0.0) * 0.035 * flow * (1.0 + burst * 2.0);
-    light += vec3(0.5, 0.72, 1.0) * flare * amount * smoothstep(-0.5, 0.5, edge);
-    float vignette = 1.0 - smoothstep(0.22, 0.85, distance(vUv, vec2(0.5, 0.5)));
+    vec3 light = texture2D(uStars, vUv).rgb;
+    float vignette = 1.0 - smoothstep(0.22, 0.85, distance(vUv, vec2(0.5)));
     float bottomFade = smoothstep(0.0, 0.18, vUv.y);
     gl_FragColor = vec4(light * mix(vignette, 1.0, uHasBox), 1.0);
     vec3 ambient = gl_FragColor.rgb * 1.2;
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
     vec3 base = mix(vec3(0.035, 0.043, 0.063), vec3(0.002, 0.003, 0.005), uHasBox * bottomFade);
-    gl_FragColor.rgb = base
-      + mix(ambient, gl_FragColor.rgb, uHasBox) * bottomFade;
+    gl_FragColor.rgb = base + mix(ambient, gl_FragColor.rgb, uHasBox) * bottomFade;
   }
 `
 
-export type StarfieldProps = { target?: RefObject<HTMLDivElement | null>; active?: boolean }
+export type StarfieldProps = { target?: RefObject<HTMLDivElement | null> }
 
-export default memo(function Starfield({ target, active = false }: StarfieldProps) {
+export default memo(function Starfield({ target }: StarfieldProps) {
   const hostRef = useRef<HTMLDivElement>(null)
-  const activeRef = useRef(active)
-  useEffect(() => { activeRef.current = active }, [active])
 
   useGSAP((_context, contextSafe) => {
     // 留出一次页面绘制，并让 StrictMode 的检查先完成，避免重复创建昂贵的 WebGL 上下文。
@@ -188,20 +123,16 @@ export default memo(function Starfield({ target, active = false }: StarfieldProp
       const postGeometry = new THREE.PlaneGeometry(2, 2)
       const material = new THREE.ShaderMaterial({
         vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }',
-        fragmentShader: lensFragment,
+        fragmentShader: skyFragment,
         uniforms: {
-          uStars: { value: texture.texture }, uResolution: { value: new THREE.Vector2(1, 1) },
-          uBox: { value: new THREE.Vector4(0, 0, 1, 1) }, uTime: { value: 0 },
-          uEnergy: { value: 0 }, uHasBox: { value: target ? 1 : 0 },
-          uExpansion: { value: 0 },
-          uRadius: { value: 0 }, uArrival: { value: 0 }, uIntroBurst: { value: 0 },
+          uStars: { value: texture.texture }, uHasBox: { value: target ? 1 : 0 },
         },
       })
       postScene.add(new THREE.Mesh(postGeometry, material))
       let quality = 1
       let width = 1
       let height = 1
-      let boxDirty = true
+      let frameDirty = true
       let boundsDirty = true
       let sizeDirty = true
       const resize = () => {
@@ -221,19 +152,17 @@ export default memo(function Starfield({ target, active = false }: StarfieldProp
         // 首页以视口为固定取景范围，内容增高只向下延伸，不缩放或挪动原有星点。
         camera.setViewOffset(width, target ? window.innerHeight : height, 0, 0, width, height)
         pointsMaterial.uniforms.uDpr.value = dpr
-        material.uniforms.uResolution.value.set(width, height)
         sizeDirty = false
-        boxDirty = true
+        frameDirty = true
         boundsDirty = true
       }
       const onResize = () => { sizeDirty = true; syncLoop() }
       const observer = new ResizeObserver(onResize)
       observer.observe(host)
-      if (target?.current) observer.observe(target.current)
       window.addEventListener('resize', onResize)
-      const wanted = { x: 0, y: 0, expansion: 0, energy: 0 }
+      const wanted = { x: 0, y: 0, hover: 0 }
       const motion = { ...wanted }
-      // Reuse four tweens; retarget from the current value instead of reversing an
+      // Reuse tweens; retarget from the current value instead of reversing an
       // eased timeline (which feels unresponsive when hover changes near its ends).
       const controls = (Object.keys(wanted) as (keyof typeof wanted)[]).map(key => ({
         key,
@@ -244,17 +173,10 @@ export default memo(function Starfield({ target, active = false }: StarfieldProp
       const uploadSurface = target?.current
       const entrance = { progress: 0 }
       const introMotion = gsap.timeline({ paused: true })
-        .to(entrance, { progress: 1, duration: 4.4, ease: 'power3.out' }, 0)
-        .to(material.uniforms.uArrival, { value: 1, duration: 1.7, ease: 'power2.inOut' }, 1.1)
         .from(renderer.domElement, { autoAlpha: 0, duration: 1.4, ease: 'sine.out' }, 0)
-      if (uploadSurface) {
-        // 与画布共用时钟；减少动态效果时直接落到无扩散的最终状态。
-        introMotion
-          .to(material.uniforms.uIntroBurst, { value: 1, duration: 1.55, ease: 'power2.inOut' }, 0.75)
-          .to(material.uniforms.uIntroBurst, { value: 0, duration: 3.5, ease: 'power2.inOut' }, 2.3)
-      }
+      // 创作页和上传页保持固定景深，其他页面沿用原有入场效果。
+      if (!target) introMotion.to(entrance, { progress: 1, duration: 4.4, ease: 'power3.out' }, 0)
       const hoverMotion = gsap.timeline({ paused: true, defaults: { duration: 1, ease: 'none' } })
-        .to(material.uniforms.uExpansion, { value: 1 }, 0)
       const uploadIcon = uploadSurface?.querySelector('.upload-symbol')
       if (uploadIcon) hoverMotion.to(uploadIcon, { y: -5, scale: 1.06 }, 0)
       let hovered = false
@@ -283,7 +205,7 @@ export default memo(function Starfield({ target, active = false }: StarfieldProp
       visibility.observe(host)
       let elapsed = 0
       let renderedStatic = false
-      const resetStatic = () => { resetPointer(); renderedStatic = false; boxDirty = true; syncLoop() }
+      const resetStatic = () => { resetPointer(); renderedStatic = false; frameDirty = true; syncLoop() }
       reducedMotion.addEventListener('change', resetStatic)
       let accumulatedMs = 0
       let sampleMs = 0
@@ -294,7 +216,7 @@ export default memo(function Starfield({ target, active = false }: StarfieldProp
         accumulatedMs += deltaMs
         // 移动端背景最多 30 帧；只节流装饰，业务交互仍按浏览器正常帧率响应。
         const interval = width < 600 ? 1000 / 30 : 1000 / 60
-        if (!still && !sizeDirty && !boxDirty && accumulatedMs < interval - 1) return
+        if (!still && !sizeDirty && !frameDirty && accumulatedMs < interval - 1) return
         const delta = Math.min(accumulatedMs / 1000, 0.1)
         accumulatedMs = 0
         // 连续慢帧才降低分辨率，避免一次网络回调或着色器准备影响画质。
@@ -311,25 +233,16 @@ export default memo(function Starfield({ target, active = false }: StarfieldProp
         }
         // 调整缓冲区会清空画布，必须紧接着绘制，避免 ResizeObserver 留下一帧空白。
         if (sizeDirty) resize()
-        if (still && renderedStatic && !boxDirty) return
+        if (still && renderedStatic && !frameDirty) return
         if (!still) elapsed += delta
-        if (boxDirty) {
+        if (frameDirty) {
           hostBounds = host.getBoundingClientRect()
           boundsDirty = false
-          if (target?.current) {
-            const rect = target.current.getBoundingClientRect()
-            material.uniforms.uBox.value.set(
-              rect.left - hostBounds.left + rect.width / 2,
-              height - (rect.top - hostBounds.top + rect.height / 2),
-              rect.width / 2, rect.height / 2,
-            )
-            material.uniforms.uRadius.value = parseFloat(getComputedStyle(target.current).borderTopLeftRadius) || 0
-          }
-          boxDirty = false
+          frameDirty = false
         }
         // One clock drives rendering and GSAP, so offscreen also freezes shader tweens.
         introMotion.time(still ? introMotion.duration() : Math.max(introMotion.time(), Math.min(elapsed, introMotion.duration())))
-        camera.position.z = 8 * (1 - entrance.progress)
+        camera.position.z = target ? 0 : 8 * (1 - entrance.progress)
         if (!still) {
           // Consume only the latest pointer event per frame, with cached bounds.
           if (pointerEvent) {
@@ -341,12 +254,11 @@ export default memo(function Starfield({ target, active = false }: StarfieldProp
             wanted.y = THREE.MathUtils.clamp(1 - (pointerEvent.clientY - hostBounds.top) / Math.max(hostBounds.height, 1) * 2, -1, 1)
             pointerEvent = null
           }
-          wanted.expansion = hovered ? 1 : 0
-          wanted.energy = activeRef.current ? 1 : 0
+          wanted.hover = hovered ? 1 : 0
           for (const control of controls) {
             if (control.destination !== wanted[control.key]) {
               control.destination = wanted[control.key]
-              if (control.key === 'expansion') control.to.tween.duration(hovered ? 0.85 : 1.1)
+              if (control.key === 'hover') control.to.tween.duration(hovered ? 0.85 : 1.1)
               control.to(control.destination).pause()
             }
             // Manually advance reusable tweens so offscreen cannot run ahead.
@@ -356,19 +268,18 @@ export default memo(function Starfield({ target, active = false }: StarfieldProp
           camera.position.y = -motion.y * 0.85
           camera.rotation.y = motion.x * 0.012
           camera.rotation.x = -motion.y * 0.009
-          points.rotation.y = Math.sin(elapsed * 0.018) * 0.045
-          points.rotation.z = Math.sin(elapsed * 0.025) * 0.008
+          // 持续缓慢游移，鼠标静止时也能看见星空流动；共用时钟，离屏与减少动态效果时自动暂停。
+          points.rotation.y = Math.sin(elapsed * 0.055) * 0.18
+          points.rotation.z = Math.sin(elapsed * 0.04) * 0.045
         } else if (reducedMotion.matches) {
           camera.position.x = camera.position.y = 0
           camera.rotation.set(0, 0, 0)
         }
         pointsMaterial.uniforms.uTime.value = elapsed
-        material.uniforms.uTime.value = elapsed
-        material.uniforms.uEnergy.value = reducedMotion.matches ? 0 : motion.energy
         if (reducedMotion.matches) {
           hoverMotion.time(0)
         } else if (!still) {
-          hoverMotion.progress(motion.expansion)
+          hoverMotion.progress(motion.hover)
         }
         renderer.setClearColor(0x000000)
         renderer.setRenderTarget(texture)
@@ -387,7 +298,7 @@ export default memo(function Starfield({ target, active = false }: StarfieldProp
         const animate = drawable && !reducedMotion.matches
         if (animate && !running) {
           accumulatedMs = 0
-          boxDirty = true
+          frameDirty = true
           gsap.ticker.add(render)
           running = true
         } else if (!animate && running) {
@@ -402,8 +313,8 @@ export default memo(function Starfield({ target, active = false }: StarfieldProp
       renderer.setRenderTarget(texture)
       const starsReady = renderer.compileAsync(scene, camera)
       renderer.setRenderTarget(null)
-      const lensReady = renderer.compileAsync(postScene, postCamera)
-      void Promise.all([starsReady, lensReady]).then(() => {
+      const skyReady = renderer.compileAsync(postScene, postCamera)
+      void Promise.all([starsReady, skyReady]).then(() => {
         if (disposed) return
         ready = true
         syncLoop()

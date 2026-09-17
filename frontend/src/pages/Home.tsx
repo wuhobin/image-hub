@@ -23,14 +23,13 @@ export default function Home({ app }: { app: AppState }) {
   const lensTarget = useRef<HTMLDivElement>(null)
   const dragDepth = useRef(0)
   const [dragging, setDragging] = useState(false)
-  const [focused, setFocused] = useState(false)
   const ready = app.pending.filter(item => item.status === 'ready' || item.status === 'error')
   const completed = app.pending.filter(item => item.status === 'done')
   const progress = app.pending.length ? Math.floor(app.pending.reduce((total, item) => total + item.progress, 0) / app.pending.length) : 0
 
   return <main id="main" className="home">
     <section className="hero" aria-labelledby="hero-title">
-      <Ambient target={lensTarget} active={dragging || focused || app.busy} />
+      <Ambient target={lensTarget} />
       <div className="hero-content">
         <div className="hero-heading">
           <span className="eyebrow"><span className="tiny-line" />上传已有图片<span className="tiny-line" /></span>
@@ -38,7 +37,6 @@ export default function Home({ app }: { app: AppState }) {
           <p>拖入图片，获取链接。把值得分享的，送到任何地方。</p>
         </div>
         <div className={`upload-shell ${dragging ? 'is-dragging' : ''} ${app.busy ? 'is-uploading' : ''}`} ref={lensTarget}
-          onFocusCapture={() => setFocused(true)} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false) }}
           onDragEnter={event => { event.preventDefault(); dragDepth.current++; if (!app.busy) setDragging(true) }}
           onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = app.busy ? 'none' : 'copy' }}
           onDragLeave={event => { event.preventDefault(); dragDepth.current--; if (dragDepth.current <= 0) setDragging(false) }}

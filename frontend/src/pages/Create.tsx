@@ -10,10 +10,11 @@ import { ArrowUUpLeft } from '@phosphor-icons/react/dist/csr/ArrowUUpLeft'
 import type { AppState } from '../App'
 import type { AiModel, Generation, Page } from '../lib/types'
 import { api, ApiError } from '../lib/api'
-import { GENERATION_RESOLUTIONS, generationResolution, generationSizeForRatio, imageAspectRatio } from '../lib/rules'
+import { generationResolution, generationSizeForRatio, imageAspectRatio } from '../lib/rules'
 import { Modal } from '../components/Modal'
 import { Ambient } from '../components/Ambient'
 import { QuotaStatus } from '../components/QuotaStatus'
+import { CreationRatioPicker } from '../components/CreationRatioPicker'
 import './create.css'
 
 const labels: Record<Generation['status'], string> = {
@@ -298,7 +299,7 @@ export default function Create({ app }: { app: AppState }) {
   }
 
   return <main id="main" className="creation-page hero">
-    <Ambient target={workspace} active={busy} />
+    <Ambient target={workspace} />
     <header className="creation-heading hero-heading">
       <span className="eyebrow"><span className="tiny-line" />AI 创作空间<span className="tiny-line" /></span>
       <h1>让想象，<span>即刻成真。</span></h1>
@@ -319,19 +320,8 @@ export default function Create({ app }: { app: AppState }) {
                 {models.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
               </select>
             </div>
-            <div><label className="visually-hidden" htmlFor="creation-size">画面比例</label><select className="format-select" id="creation-size" value={ratio} onChange={event => changeRatio(event.target.value)} disabled={!model || busy || uncertain}>
-              {!model && <option value="">比例</option>}
-              {ratios.map(value => <option key={value} value={value}>{value}</option>)}
-            </select></div>
-            <div className="creation-resolution-option"><label className="visually-hidden" htmlFor="creation-resolution">分辨率</label><select className="format-select" id="creation-resolution" value={size} onChange={event => { setSize(event.target.value); setSizeNotice('') }} disabled={!model || busy || uncertain}>
-              {!model ? <option value="">分辨率</option> : <>
-                {GENERATION_RESOLUTIONS.map(tier => {
-                  const value = ratioSizes.find(item => generationResolution(item) === tier)
-                  return <option key={tier} value={value || tier} disabled={!value}>{tier}{value ? ` · ${value.replace('x', '×')}` : ' · 当前比例不可用'}</option>
-                })}
-                {ratioSizes.filter(value => !generationResolution(value)).map(value => <option key={value} value={value}>自定义 · {value.replace('x', '×')}</option>)}
-              </>}
-            </select></div>
+            <CreationRatioPicker value={ratio} options={ratios} size={size} sizes={ratioSizes} onChange={changeRatio}
+              onSizeChange={value => { setSize(value); setSizeNotice('') }} disabled={!model || busy || uncertain} />
             <div><label className="visually-hidden" htmlFor="creation-quality">质量</label><select className="format-select" id="creation-quality" value={quality} onChange={event => setQuality(event.target.value)} disabled={!model || busy || uncertain}>
               {!model && <option value="">质量</option>}
               {model?.qualities.map(value => <option key={value} value={value}>{qualityNames[value] || value}</option>)}
