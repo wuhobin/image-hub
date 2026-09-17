@@ -17,13 +17,13 @@ public interface AiGenerationService extends IService<AiGeneration> {
 
     Page<GenerationVO> history(long userId, int page, int pageSize);
 
+    /** 旧接口兼容入口；不再保留结果，校验归属后返回 409。 */
     GenerationVO retrySave(long userId, String id);
 
+    /** 旧接口兼容入口；不再存在待放弃的暂存结果。 */
     void abandon(long userId, String id);
 
     /** 供有界后台执行器调用，不能从HTTP直接提交任意任务。 */
     void runTask(long userId, String id);
 
-    /** 恢复过期认领并清理24小时暂存；绝不自动重放结果不明的模型调用。 */
-    void recoverTasks();
 }

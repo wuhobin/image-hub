@@ -71,6 +71,7 @@ public class UploadQuotaCache {
     /** 查询当前额度；缓存缺失、格式无效或上传中断时，持锁按成功图片记录恢复消耗。 */
     public UploadQuotaVO get(long userId) {
         try {
+            releaseInterruptedGeneration(userId);
             int total = systemSettingsService.freeUploadQuota();
             RBucket<String> bucket = bucket(userId);
             String state = bucket.get();
@@ -93,6 +94,7 @@ public class UploadQuotaCache {
 
     /** 同账号串行预占；看门狗续租，不持有数据库事务，不影响其他账号上传。 */
     public <T> T consume(long userId, String imageId, Supplier<T> upload) {
+        releaseInterruptedGeneration(userId);
         RLock lock;
         RBucket<String> bucket;
         long used;
@@ -187,11 +189,14 @@ public class UploadQuotaCache {
         return new UploadQuotaVO(total, remaining(total, used + reserved), used, reserved);
     }
 
-    /** 只在创建持久化任务时短暂持锁，模型网络调用不占用普通上传锁。 */
-    public <T> T reserveGeneration(long userId, Supplier<T> createTask) {
+    /** 持锁后先返回重复请求，再检查新任务额度；模型网络调用不占用普通上传锁。 */
+    public <T> T reserveGeneration(long userId, Supplier<T> existingTask, Supplier<T> createTask) {
+        releaseInterruptedGeneration(userId);
         RLock lock = lock(userId);
         if (!lock.tryLock()) throw new BizException(409, "当前账号正在保存图片，请稍后重试");
         try {
+            T existing = existingTask.get();
+            if (existing != null) return existing;
             long used = recover(userId, bucket(userId));
             if (used + aiGenerationMapper.reserved(userId) >= systemSettingsService.freeUploadQuota()) {
                 throw new BizException(EXHAUSTED, "共享额度已用完");
@@ -202,10 +207,18 @@ public class UploadQuotaCache {
         }
     }
 
-    /** 已预占的任务保存不再检查总额；提交前标记缓存待恢复，防止崩溃留下旧余额。 */
-    public <T> T completeGeneration(long userId, Supplier<T> persist) {
+    /** 已预占任务在保存期限内有限等待额度锁；取得锁后才进入事务，不重放生图或上传。 */
+    public <T> T completeGeneration(long userId, long waitMillis, Supplier<T> persist) {
         RLock lock = lock(userId);
-        if (!lock.tryLock()) throw new BizException(409, "当前账号正在保存图片，请重试保存");
+        try {
+            // 使用带等待时间、不指定租期的重载，保留 Redisson 看门狗续租。
+            if (!lock.tryLock(Math.max(0, Math.min(waitMillis, 10_000)), java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                throw new BizException(409, "图片保存等待超时，请稍后重新提交创作");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BizException(503, "图片保存等待已中断");
+        }
         try {
             RBucket<String> bucket = bucket(userId);
             long used = recover(userId, bucket);
@@ -215,11 +228,30 @@ public class UploadQuotaCache {
             try {
                 if (lock.isHeldByCurrentThread()) rebuild(userId, bucket);
             } catch (RuntimeException e) {
-                log.warn("AI quota refresh deferred: userId={}", userId);
+                log.warn("AI 创作额度刷新失败，等待后续恢复：userId={}", userId);
             }
             return result;
         } finally {
             unlock(lock);
+        }
+    }
+
+    /**
+     * 用户查询或提交时释放本人的中断任务，避免取消定时恢复后额度永久占用。
+     * 活工作线程仍持有任务锁时不处理；不访问七牛、不重新生成，遗留云文件记录交人工处理。
+     */
+    public void releaseInterruptedGeneration(long userId) {
+        var interrupted = aiGenerationMapper.interrupted(userId);
+        if (interrupted == null) return;
+        RLock taskLock = redissonClient.getLock("image-hub:generation:" + interrupted.getId());
+        if (!taskLock.tryLock()) return;
+        try {
+            if (aiGenerationMapper.failInterrupted(userId, interrupted.getId()) == 1) {
+                log.info("用户访问时已释放中断的 AI 创作任务：taskId={}, 云文件需要人工清理={}",
+                        interrupted.getId(), interrupted.getPendingStorageInfo() != null);
+            }
+        } finally {
+            unlock(taskLock);
         }
     }
 

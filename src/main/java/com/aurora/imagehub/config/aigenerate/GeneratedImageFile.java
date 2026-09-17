@@ -15,18 +15,29 @@ public final class GeneratedImageFile implements MultipartFile {
 
     private final String format;
 
-    public GeneratedImageFile(byte[] bytes) {
-        if (bytes == null || bytes.length == 0 || bytes.length > 10 * 1024 * 1024) {
-            throw new BizException(400, "生成图片为空或超过10MB");
-        }
+    /** 入库前验证支持的容器及首帧内容；先限制像素再解码，避免损坏数据反复进入保存重试。 */
+    public GeneratedImageFile(byte[] bytes, AiImageLimits aiImageLimits) {
+        aiImageLimits.requireSize(bytes == null ? 0 : bytes.length);
         this.bytes = bytes;
         try (var input = new MemoryCacheImageInputStream(new ByteArrayInputStream(bytes))) {
             var readers = ImageIO.getImageReaders(input);
             if (!readers.hasNext()) throw new BizException(400, "生成结果不是有效图片");
             var reader = readers.next();
-            try { format = reader.getFormatName().toLowerCase(Locale.ROOT); }
+            try {
+                format = reader.getFormatName().toLowerCase(Locale.ROOT);
+                if (!java.util.Set.of("png", "jpg", "jpeg", "webp", "gif").contains(format)) {
+                    throw new BizException(400, "生成图片格式不支持");
+                }
+                reader.setInput(input, true, true);
+                int width = reader.getWidth(0), height = reader.getHeight(0);
+                if (width <= 0 || height <= 0 || (long) width * height > 8_294_400) {
+                    throw new BizException(400, "生成图片尺寸无效或超过像素上限");
+                }
+                reader.addIIOReadWarningListener((source, warning) -> { throw new IllegalArgumentException("Invalid image"); });
+                reader.read(0);
+            }
             finally { reader.dispose(); }
-        } catch (IOException e) {
+        } catch (IOException | IllegalArgumentException e) {
             throw new BizException(400, "无法读取生成图片");
         }
     }

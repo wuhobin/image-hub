@@ -31,7 +31,7 @@ window.fetch = (url, options = {}) => {
   else if (path.endsWith('/auth/me')) data = { username: 'guest' };
   else if (path.endsWith('/auth/logout')) data = null;
   else if (path.endsWith('/generations/models')) data = [{ id: 1, name: 'QA image model', sizes: ['1024x1024', '2048x2048', '2880x2880', '1536x1024', '2160x1440', '3456x2304', '1024x1536', '1440x2160', '2304x3456', '1280x720', '2560x1440', '3840x2160', '720x1280', '1440x2560', '2160x3840', '1024x768', '2048x1536', '3200x2400', '768x1024', '1536x2048', '2400x3200', '1344x576', '2016x864', '3808x1632'], defaultSize: '1024x1024', qualities: ['medium', 'high'], defaultQuality: 'medium' }, { id: 2, name: 'Custom size model', sizes: ['1536x864'], defaultSize: '1536x864', qualities: ['medium'], defaultQuality: 'medium' }];
-  else if (path.endsWith('/generations/active')) data = ['QUEUED', 'GENERATING', 'SAVING', 'SAVE_FAILED'].includes(window.creationTask?.status) ? window.creationTask : null;
+  else if (path.endsWith('/generations/active')) data = ['QUEUED', 'GENERATING', 'SAVING'].includes(window.creationTask?.status) ? window.creationTask : null;
   else if (path.endsWith('/generations') && options.method === 'POST') {
     window.creationRequest = JSON.parse(options.body);
     const pixel = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1kAAAAASUVORK5CYII=';
@@ -89,7 +89,7 @@ try {
         if ($width -eq 390) { Browser screenshot (Join-Path $outputDir 'creation-resolutions-mobile.png') | Out-Null }
     }
     Browser screenshot (Join-Path $outputDir 'creation-resolutions-desktop.png') | Out-Null
-    AssertJs 'document.querySelector(".creation-result").getBoundingClientRect().top > document.querySelector(".creation-workspace").getBoundingClientRect().bottom'
+    AssertJs '!document.querySelector("main > .creation-result") && !!document.querySelector(".creation-history-item img")'
     Browser reload | Out-Null
     Browser wait '.creation-history-item' | Out-Null
     AssertJs '!document.querySelector(".creation-result") && !document.querySelector("dialog[open]")'
@@ -102,16 +102,25 @@ try {
     Browser screenshot (Join-Path $outputDir 'creation-detail-mobile.png') | Out-Null
     Browser set viewport 1440 1000 | Out-Null
     Browser press Escape | Out-Null
-    foreach ($status in @('GENERATING', 'SAVE_FAILED')) {
+    foreach ($status in @('GENERATING', 'FAILED')) {
         AssertJs "(() => { window.creationTask.status = '$status'; window.creationTask.image = null; sessionStorage.setItem('qa-creation-task', JSON.stringify(window.creationTask)); return true; })()"
         Browser reload | Out-Null
         Browser wait '.creation-history-item' | Out-Null
-        AssertJs '!document.querySelector(".creation-result") && !document.querySelector("dialog[open]") && document.querySelector(".creation-submit").disabled'
+        AssertJs '!document.querySelector(".creation-result") && !document.querySelector("dialog[open]")'
+        AssertJs "document.getElementById('creation-submit-status').textContent === ('$status' === 'GENERATING' ? '任务进行中' : '生成图片')"
+        if ($status -eq 'GENERATING') {
+            AssertJs '!!document.querySelector(".creation-history-item.is-running") && getComputedStyle(document.querySelector(".is-running .creation-history-thumb"), "::after").animationName === "creation-orbit"'
+            Browser screenshot (Join-Path $outputDir 'creation-generating-desktop.png') --full | Out-Null
+            Browser set viewport 390 844 | Out-Null
+            AssertJs 'document.documentElement.scrollWidth <= innerWidth'
+            Browser screenshot (Join-Path $outputDir 'creation-generating-mobile.png') --full | Out-Null
+            Browser set viewport 1440 1000 | Out-Null
+        }
         Browser focus '.creation-history-item' | Out-Null
         Browser press Enter | Out-Null
         Browser wait '.creation-detail-modal[open]' | Out-Null
         AssertJs '!!document.querySelector(".creation-detail-modal .creation-placeholder") && !document.querySelector("main > .creation-result")'
-        if ($status -eq 'SAVE_FAILED') { AssertJs 'document.querySelectorAll(".creation-detail-modal .creation-result-actions button").length === 2' }
+        if ($status -eq 'FAILED') { AssertJs '!document.querySelector(".creation-detail-modal .creation-result-actions")' }
         Browser press Escape | Out-Null
         AssertJs '!document.querySelector(".creation-result") && !document.querySelector("dialog[open]")'
     }

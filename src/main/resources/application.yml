@@ -131,7 +131,11 @@ dromara:
 image-hub:
   ai:
     encryption-key: ${AI_MODEL_ENCRYPTION_KEY:}
-    timeout-seconds: 180
+    # 模型连接超时（1–60 秒），与响应等待时间分别配置。
+    connect-timeout-seconds: 30
+    timeout-seconds: 300
+    # 仅限制 AI 图片，支持 B/KB/MB，最大 50MB；修改后重启，普通上传仍为 10MB。
+    max-image-size: 10MB
     concurrency: 2
     worker-enabled: ${AI_WORKER_ENABLED:true}
 

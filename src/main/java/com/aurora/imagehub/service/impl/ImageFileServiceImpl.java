@@ -6,6 +6,7 @@ import com.aurora.imagehub.cache.UploadQuotaCache;
 import com.aurora.imagehub.model.vo.UploadQuotaVO;
 import com.aurora.imagehub.model.bo.ImageDimensionsBO;
 import com.aurora.imagehub.config.aigenerate.GeneratedImageFile;
+import com.aurora.imagehub.config.aigenerate.AiImageLimits;
 import com.aurora.imagehub.model.vo.ImageListVO;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.aurora.imagehub.model.entity.ImageFile;
@@ -47,6 +48,8 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
     private final OssTemplate ossTemplate;
 
     private final FileUploadValidator fileUploadValidator;
+
+    private final AiImageLimits aiImageLimits;
 
     private final ObjectMapper objectMapper;
 
@@ -93,24 +96,65 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
 
     /** AI图片复用内容检测及元数据构建，事务与额度结算由任务服务统一完成。 */
     @Override
-    public ImageFile storeGenerated(long userId, String imageId, byte[] bytes) {
-        MultipartFile file = new GeneratedImageFile(bytes);
+    public ImageFile storeGenerated(long userId, String imageId, byte[] bytes, java.util.function.Consumer<String> beforeUpload) {
+        // AI 文件已按独立大小配置解码并识别格式，文件名由服务端生成，不套用普通上传的 10 MB 限制。
+        long started = System.nanoTime();
+        MultipartFile file;
         String mime;
+        ImageDimensionsBO dimensions;
         try {
-            mime = fileUploadValidator.validate(file);
-        } catch (FileValidationException e) {
-            throw new BizException(400, "生成图片无效或超过10MB");
+            file = new GeneratedImageFile(bytes, aiImageLimits);
+            mime = file.getContentType();
+            if (!TYPES.containsKey(mime)) throw new BizException(400, "生成图片格式不支持");
+            dimensions = dimensions(file);
+        } finally {
+            log.info("AI 创作耗时：taskId={}, 阶段=图片校验, 耗时={} 秒",
+                    imageId, (System.nanoTime() - started) / 1_000_000 / 1000.0);
         }
-        if (!TYPES.containsKey(mime)) throw new BizException(400, "生成图片格式不支持");
-        return storeValidated(userId, file, mime, dimensions(file), imageId, "AI");
+        return storeValidated(userId, file, mime, dimensions, imageId, "AI", beforeUpload);
     }
 
     /** 使用独立对象名，重试补偿仅删除本次上传，不能误删另一保存尝试的文件。 */
     private ImageFile storeValidated(long userId, MultipartFile file, String mime, ImageDimensionsBO dimensions,
                                     String id, String sourceType) {
+        return storeValidated(userId, file, mime, dimensions, id, sourceType, null);
+    }
+
+    /** AI上传先持久化七牛对象定位，之后即使进程中断也能恢复删除；每次尝试使用独立对象名。 */
+    private ImageFile storeValidated(long userId, MultipartFile file, String mime, ImageDimensionsBO dimensions,
+                                    String id, String sourceType, java.util.function.Consumer<String> beforeUpload) {
         String filename = UUID.randomUUID() + "." + TYPES.get(mime).toLowerCase(Locale.ROOT);
-        FileInfo stored = ossTemplate.getFileStorageService().of(file).setPath("images/" + userId + "/")
-                .setSaveFilename(filename).setContentType(mime).upload();
+        var fileStorageService = ossTemplate.getFileStorageService();
+        var upload = fileStorageService.of(file).setPath("images/" + userId + "/")
+                .setSaveFilename(filename).setContentType(mime);
+        FileInfo stored;
+        if (beforeUpload == null) {
+            stored = upload.upload();
+        } else {
+            // ponytail: 恢复只适配当前七牛存储；新增平台时补齐上传前定位，不回退无补偿上传。
+            if (!(fileStorageService.getFileStorage() instanceof org.dromara.x.file.storage.core.platform.QiniuKodoFileStorage storage)) {
+                throw new BizException(503, "当前存储不支持生成图片恢复");
+            }
+            FileInfo pending = new FileInfo();
+            pending.setPlatform(storage.getPlatform());
+            pending.setBasePath(storage.getBasePath());
+            pending.setPath("images/" + userId + "/");
+            pending.setFilename(filename);
+            pending.setUrl(storage.getDomain() + storage.getFileKey(pending));
+            try {
+                beforeUpload.accept(objectMapper.writer(new StdDateFormat()).writeValueAsString(pending));
+            } catch (IOException e) {
+                throw new BizException(500, "无法记录生成图片存储位置");
+            }
+            long started = System.nanoTime();
+            try {
+                stored = upload.setPlatform(storage.getPlatform()).upload(storage,
+                        fileStorageService.getFileRecorder(), fileStorageService.getAspectList());
+            } finally {
+                log.info("AI 创作耗时：taskId={}, 阶段=上传七牛, 耗时={} 秒, bytes={}",
+                        id, (System.nanoTime() - started) / 1_000_000 / 1000.0, file.getSize());
+            }
+        }
         if (stored == null) throw new BizException(502, "图片上传失败，请重试");
         ImageFile image = new ImageFile();
         image.setId(id);
@@ -144,6 +188,19 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
             }
         } catch (Exception e) {
             log.warn("Cloud cleanup required: imageId={}", image.getId());
+        }
+    }
+
+    /** 不吞掉删除错误，调用方仅在确认对象已删除或不存在后清除恢复记录。 */
+    @Override
+    public void discardGenerated(String storageInfo) {
+        try {
+            FileInfo stored = readStorageInfo(storageInfo);
+            if (ossTemplate.getFileStorageService().exists(stored) && !ossTemplate.delete(stored)) {
+                throw new BizException(502, "生成图片清理失败，稍后重试");
+            }
+        } catch (IOException e) {
+            throw new BizException(500, "生成图片存储记录异常");
         }
     }
 

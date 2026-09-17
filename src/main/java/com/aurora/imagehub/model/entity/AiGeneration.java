@@ -49,11 +49,8 @@ public class AiGeneration {
 
     private Date workDeadline;
 
-    private Date resultExpiresAt;
-
-    /** 最多 10 MB，列表不加载；入库成功、放弃或过期后清空。 */
-    @TableField(select = false)
-    private byte[] resultData;
+    /** 上传前持久化的对象位置；成功事务或确认清理后才能清空，不对外返回。 */
+    private String pendingStorageInfo;
 
     /** 审计时间完全由数据库生成和维护。 */
     @TableField(insertStrategy = FieldStrategy.NEVER, updateStrategy = FieldStrategy.NEVER)

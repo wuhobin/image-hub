@@ -16,8 +16,18 @@ import './create.css'
 
 const labels: Record<Generation['status'], string> = {
   QUEUED: '等待生成', GENERATING: '正在生成', SAVING: '正在保存',
-  SAVE_FAILED: '等待重试保存', SUCCEEDED: '已完成', FAILED: '生成失败', EXPIRED: '结果已过期', ABANDONED: '已放弃',
+  SAVE_FAILED: '保存失败', SUCCEEDED: '已完成', FAILED: '生成失败', EXPIRED: '结果已过期', ABANDONED: '已放弃',
 }
+const runningStatuses: Generation['status'][] = ['QUEUED', 'GENERATING', 'SAVING']
+
+/** 独立请求可能乱序返回；历史行不能从终态或保存阶段退回较早阶段。 */
+function updateHistoryTask(record: Generation, observed: Generation): Generation {
+  if (record.id !== observed.id) return record
+  const previousStep = runningStatuses.indexOf(record.status)
+  const observedStep = runningStatuses.indexOf(observed.status)
+  return observedStep >= 0 && (previousStep < 0 || previousStep > observedStep) ? record : observed
+}
+
 const qualityNames: Record<string, string> = { low: '标准', medium: '精细', high: '高质量', auto: '自动' }
 const message = (error: unknown) => error instanceof Error ? error.message : '请求失败，请稍后重试'
 type Submission = { requestId: string; prompt: string; modelId: number; size: string; quality: string }
@@ -34,25 +44,33 @@ export default function Create({ app }: { app: AppState }) {
   const [quality, setQuality] = useState('')
   const [sizeNotice, setSizeNotice] = useState('')
   const [active, setActive] = useState<Generation | null>(null)
-  const [selected, setSelected] = useState<Generation | null>(null)
+  const [latestTask, setLatestTask] = useState<Generation | null>(null)
   const [detail, setDetail] = useState<Generation | null>(null)
   const [history, setHistory] = useState<Page<Generation> | null>(null)
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(!!app.user)
+  const [historyLoading, setHistoryLoading] = useState(!!app.user)
   const [error, setError] = useState('')
   const [modelsError, setModelsError] = useState('')
   const [modelsLoading, setModelsLoading] = useState(!!app.user)
   const [busy, setBusy] = useState(false)
   const [uncertain, setUncertain] = useState(false)
-  const [abandon, setAbandon] = useState<Generation | null>(null)
   const [revision, setRevision] = useState(0)
+  const [historyRevision, setHistoryRevision] = useState(0)
+  const [modelsRevision, setModelsRevision] = useState(0)
+  const [historyError, setHistoryError] = useState('')
+  const observedTask = useRef<Generation | null>(null)
   const pending = useRef<Submission | null>(null)
   const submitting = useRef(false)
   const mounted = useRef(false)
   const appRef = useRef(app)
   appRef.current = app
   const model = models.find(item => String(item.id) === modelId)
-  const shown = selected
+  // 提交成功后立即出现在第一页；历史请求较慢时也保留当前任务卡片。
+  const currentTask = active || latestTask
+  const historyRecords = history?.records || []
+  const visibleRecords = page === 1 && currentTask && !historyRecords.some(item => item.id === currentTask.id)
+    ? [currentTask, ...historyRecords].slice(0, 12) : historyRecords
   const ratio = imageAspectRatio(size)
   const ratios = [...new Set(model?.sizes.map(imageAspectRatio) || [])]
   const ratioSizes = model?.sizes.filter(value => imageAspectRatio(value) === ratio) || []
@@ -84,7 +102,7 @@ export default function Create({ app }: { app: AppState }) {
     }).catch(error => { if (!controller.signal.aborted) setModelsError(message(error)) })
       .finally(() => { if (!controller.signal.aborted) setModelsLoading(false) })
     return () => controller.abort()
-  }, [revision, app.user])
+  }, [modelsRevision, app.user])
 
   useEffect(() => {
     setSize(previous => model?.sizes.includes(previous) ? previous : model?.defaultSize || '')
@@ -92,42 +110,91 @@ export default function Create({ app }: { app: AppState }) {
   }, [model])
 
   useEffect(() => {
+    observedTask.current = null
+  }, [app.user])
+
+  // 历史列表独立请求和重试，慢列表不会占用任务状态的轮询周期。
+  useEffect(() => {
     if (!app.user) return
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout>
+    async function refreshHistory() {
+      if (document.hidden) { timer = setTimeout(refreshHistory, 5000); return }
+      const beforeRequest = observedTask.current
+      try {
+        const records = await api<Page<Generation>>('/generations?page=' + page + '&pageSize=12', { signal: controller.signal })
+        if (controller.signal.aborted) return
+        const latest = observedTask.current
+        // 请求途中已经观察到更新状态时，不能被较早发出的历史响应覆盖。
+        if (latest && latest !== beforeRequest) {
+          records.records = records.records.map(item => updateHistoryTask(item, latest))
+        }
+        setHistory(records)
+        setHistoryError('')
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setHistoryError(message(error))
+          timer = setTimeout(refreshHistory, 5000)
+        }
+      } finally {
+        if (!controller.signal.aborted) setHistoryLoading(false)
+      }
+    }
+    void refreshHistory()
+    return () => { controller.abort(); clearTimeout(timer) }
+  }, [page, historyRevision, revision, app.user])
+
+  useEffect(() => {
+    if (!app.user) return
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout>
+    let lastTask = active
+    let shouldPoll = !!active || !!pending.current
+    // 进入、主动刷新、切回页面或提交后读取额度；任务中间状态不改变额度。
+    void appRef.current.refreshQuota(controller.signal).catch(() => {})
+
     async function refresh() {
       if (document.hidden) { timer = setTimeout(refresh, 5000); return }
-      // 额度独立读取，任务或历史接口慢时也能及时展示。
-      void appRef.current.refreshQuota(controller.signal).catch(() => {})
       try {
-        const [current, records] = await Promise.all([
-          api<Generation | null>('/generations/active', { signal: controller.signal }),
-          api<Page<Generation>>('/generations?page=' + page + '&pageSize=12', { signal: controller.signal }),
-        ])
+        let observed = lastTask
+          ? await api<Generation>('/generations/' + lastTask.id, { signal: controller.signal })
+          : await api<Generation | null>('/generations/active', { signal: controller.signal })
+        // 只有提交响应丢失、尚不知道任务 ID 时才用最近历史确认；正常任务轮询不等列表。
+        if (!observed && pending.current) {
+          const recent = await api<Page<Generation>>('/generations?page=1&pageSize=12', { signal: controller.signal })
+          observed = recent.records.find(item => item.requestId === pending.current?.requestId) || null
+        }
         if (controller.signal.aborted) return
+        const current = observed && runningStatuses.includes(observed.status) ? observed : null
+        const confirmed = !!pending.current && observed?.requestId === pending.current.requestId
         setActive(current)
-        setHistory(records)
-        const submitted = pending.current
-          ? current?.requestId === pending.current.requestId ? current : records.records.find(item => item.requestId === pending.current?.requestId)
-          : null
-        if (submitted) {
+        if (observed) {
+          observedTask.current = observed
+          const result = observed
+          const updateViewed = (previous: Generation | null) => previous?.id === result.id ? result : previous
+          setLatestTask(result)
+          setDetail(updateViewed)
+          setHistory(previous => previous ? { ...previous, records: previous.records.map(item => updateHistoryTask(item, result)) } : previous)
+        }
+        if (confirmed) {
           pending.current = null
           setUncertain(false)
+          setPage(1)
         }
-        // 只更新本次提交或主动查看的记录；刷新页面不自动展开历史或未完成任务。
-        const updateViewed = (previous: Generation | null) => previous
-          ? current?.id === previous.id ? current : records.records.find(item => item.id === previous.id) || previous
-          : null
-        setSelected(previous => submitted || updateViewed(previous))
-        setDetail(updateViewed)
+        // 完成/失败及不明确提交确认后才重新读列表与额度；中间状态直接更新当前行。
+        if ((lastTask && !current) || confirmed) {
+          setHistoryRevision(value => value + 1)
+          void appRef.current.refreshQuota(controller.signal).catch(() => {})
+        }
+        lastTask = current
+        shouldPoll = !!current || !!pending.current
         if (!pending.current) setError('')
       } catch (error) {
         if (!controller.signal.aborted) setError(message(error))
       } finally {
         if (!controller.signal.aborted) {
           setLoading(false)
-          // ponytail: 页面可见时每5秒查询两次；规模扩大再改为服务端推送。
-          timer = setTimeout(refresh, 5000)
+          if (shouldPoll) timer = setTimeout(refresh, 2000)
         }
       }
     }
@@ -135,7 +202,7 @@ export default function Create({ app }: { app: AppState }) {
     const onFocus = () => { clearTimeout(timer); setRevision(value => value + 1) }
     window.addEventListener('focus', onFocus)
     return () => { controller.abort(); clearTimeout(timer); window.removeEventListener('focus', onFocus) }
-  }, [page, revision, app.user])
+  }, [revision, app.user])
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -151,8 +218,8 @@ export default function Create({ app }: { app: AppState }) {
       if (!mounted.current) return
       pending.current = null
       setUncertain(false)
-      setSelected(result)
-      if (['QUEUED', 'GENERATING', 'SAVING', 'SAVE_FAILED'].includes(result.status)) setActive(result)
+      setLatestTask(result)
+      if (runningStatuses.includes(result.status)) setActive(result)
       setPage(1)
       setRevision(value => value + 1)
     } catch (error) {
@@ -169,22 +236,6 @@ export default function Create({ app }: { app: AppState }) {
     }
   }
 
-  async function action(task: Generation, path: 'retry-save' | 'abandon') {
-    if (submitting.current) return
-    submitting.current = true
-    setBusy(true)
-    try {
-      const result = await api<Generation>('/generations/' + task.id + '/' + path, { method: 'POST' })
-      if (!mounted.current) return
-      if (detail?.id === result.id) setDetail(previous => previous?.id === result.id ? result : previous)
-      else setSelected(result)
-      setActive(path === 'abandon' ? null : result)
-      setAbandon(null)
-      setRevision(value => value + 1)
-    } catch (error) { if (mounted.current) setError(message(error)) }
-    finally { submitting.current = false; if (mounted.current) setBusy(false) }
-  }
-
   function reuse(task: Generation) {
     if (busy || uncertain) return
     setPrompt(task.prompt)
@@ -192,18 +243,16 @@ export default function Create({ app }: { app: AppState }) {
     requestAnimationFrame(() => document.getElementById('creation-prompt')?.focus())
   }
 
-  function renderResult(task: Generation, inDialog = false) {
+  function renderResult(task: Generation) {
     return <section className="creation-result" aria-label="生成结果">
         <header><h2>{labels[task.status]}</h2><span>{task.modelName}</span></header>
         {task.image ? <>
-          {inDialog ? <div className="creation-image"><img src={task.image.url} alt={task.prompt} /></div>
-            : <button className="creation-image" onClick={() => app.setPreview(task.image!)} aria-label="查看生成图片"><img src={task.image.url} alt={task.prompt} /></button>}
+          <div className="creation-image"><img src={task.image.url} alt={task.prompt} /></div>
           <div className="creation-result-bottom"><span>已保存到我的图片</span><button className="button button-secondary" onClick={() => void app.copyUrl(task.image!.url)}><Copy size={16} />复制链接</button></div>
         </> : <div className="creation-placeholder" aria-live="polite">
           <Sparkle size={48} weight="thin" aria-hidden="true" />
           <h3>{labels[task.status]}</h3>
           <p>{task.status === 'GENERATING' || task.status === 'QUEUED' ? '你可以离开页面，任务会在后台继续。' : task.status === 'SAVING' ? '图片已生成，正在保存到你的图库。' : task.status === 'SUCCEEDED' ? '生成已完成，图片已被删除。' : task.errorMessage || '本次任务已结束，预留额度已释放。'}</p>
-          {task.status === 'SAVE_FAILED' && <><p>结果保留至 {task.resultExpiresAt}（北京时间）</p><div className="creation-result-actions"><button className="button button-primary" disabled={busy} onClick={() => void action(task, 'retry-save')}>重试保存</button><button className="button button-secondary" disabled={busy} onClick={() => { setDetail(null); setAbandon(task) }}>放弃结果</button></div><p>重试仅保存这张图片，不会再次生成。</p></>}
         </div>}
         <div className="creation-result-meta"><p>{task.prompt}</p><span>{imageAspectRatio(task.size)} · {generationResolution(task.size) && `${generationResolution(task.size)} · `}{task.size} · {qualityNames[task.quality] || task.quality}</span><time>{task.createTime}</time><button className="quiet-link" disabled={busy || uncertain} onClick={() => reuse(task)}>复用描述</button></div>
     </section>
@@ -222,20 +271,20 @@ export default function Create({ app }: { app: AppState }) {
         <label className="visually-hidden" htmlFor="creation-prompt">画面描述</label>
         <textarea id="creation-prompt" value={prompt} onChange={event => setPrompt(event.target.value)} maxLength={4000} required
           disabled={busy || uncertain} placeholder="描述你想创作的画面…&#10;例如：海边的书店，午后阳光，胶片摄影质感。" />
-        <div className="creation-field-note"><span>描述主体、环境、光线和风格</span><span>{prompt.length} / 4000</span></div>
-        <div className="creation-options">
+        <div className="creation-toolbar">
+          <div className="creation-options">
             <div className="creation-model-option">
               <label className="visually-hidden" htmlFor="creation-model">生成模型</label>
-              <select id="creation-model" value={modelId} onChange={event => { setModelId(event.target.value); setSizeNotice('') }} disabled={!app.user || !models.length || busy || uncertain}>
+              <select className="format-select" id="creation-model" value={modelId} onChange={event => { setModelId(event.target.value); setSizeNotice('') }} disabled={!app.user || !models.length || busy || uncertain}>
                 {!models.length && <option value="">{!app.user ? '登录后选择模型' : modelsLoading ? '正在加载模型…' : '暂无可用模型'}</option>}
                 {models.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
               </select>
             </div>
-            <div><label className="visually-hidden" htmlFor="creation-size">画面比例</label><select id="creation-size" value={ratio} onChange={event => changeRatio(event.target.value)} disabled={!model || busy || uncertain}>
+            <div><label className="visually-hidden" htmlFor="creation-size">画面比例</label><select className="format-select" id="creation-size" value={ratio} onChange={event => changeRatio(event.target.value)} disabled={!model || busy || uncertain}>
               {!model && <option value="">比例</option>}
               {ratios.map(value => <option key={value} value={value}>{value}</option>)}
             </select></div>
-            <div className="creation-resolution-option"><label className="visually-hidden" htmlFor="creation-resolution">分辨率</label><select id="creation-resolution" value={size} onChange={event => { setSize(event.target.value); setSizeNotice('') }} disabled={!model || busy || uncertain}>
+            <div className="creation-resolution-option"><label className="visually-hidden" htmlFor="creation-resolution">分辨率</label><select className="format-select" id="creation-resolution" value={size} onChange={event => { setSize(event.target.value); setSizeNotice('') }} disabled={!model || busy || uncertain}>
               {!model ? <option value="">分辨率</option> : <>
                 {GENERATION_RESOLUTIONS.map(tier => {
                   const value = ratioSizes.find(item => generationResolution(item) === tier)
@@ -244,39 +293,41 @@ export default function Create({ app }: { app: AppState }) {
                 {ratioSizes.filter(value => !generationResolution(value)).map(value => <option key={value} value={value}>自定义 · {value.replace('x', '×')}</option>)}
               </>}
             </select></div>
-            <div><label className="visually-hidden" htmlFor="creation-quality">质量</label><select id="creation-quality" value={quality} onChange={event => setQuality(event.target.value)} disabled={!model || busy || uncertain}>
+            <div><label className="visually-hidden" htmlFor="creation-quality">质量</label><select className="format-select" id="creation-quality" value={quality} onChange={event => setQuality(event.target.value)} disabled={!model || busy || uncertain}>
               {!model && <option value="">质量</option>}
               {model?.qualities.map(value => <option key={value} value={value}>{qualityNames[value] || value}</option>)}
             </select></div>
           </div>
-        {sizeNotice && <p className="creation-help" role="status">{sizeNotice}</p>}
-        <div className="upload-toolbar creation-toolbar">
-          <div className="upload-info"><span className="upload-limit">单张生成 · 消耗 1 次</span><QuotaStatus app={app} /></div>
-          {app.user ? <button className="button button-primary button-upload creation-submit" disabled={busy || loading || !!active || (!model && !uncertain) || !prompt.trim() || (!uncertain && (!app.quota || !!app.quotaError || app.quota.remaining < 1))}>
-            <span>{busy ? '正在提交…' : active ? '任务进行中' : uncertain ? '确认本次提交' : app.quotaError ? '额度待更新' : app.quota?.remaining === 0 ? '额度已用完' : '生成图片'}</span><ArrowUp size={17} />
-          </button> : <button type="button" className="button button-primary button-upload creation-submit" onClick={() => navigate('/login', { state: { from: '/', creationPrompt: prompt } })}><span>登录创作</span><ArrowUp size={17} /></button>}
+          {app.user ? <button className="creation-submit" title={uncertain ? '确认本次提交' : '生成图片'} aria-describedby="creation-submit-status" disabled={busy || loading || !!active || (!model && !uncertain) || !prompt.trim() || (!uncertain && (!app.quota || !!app.quotaError || app.quota.remaining < 1))}>
+            <span className="visually-hidden">{uncertain ? '确认本次提交' : '生成图片'}</span><ArrowUp size={21} aria-hidden="true" />
+          </button> : <button type="button" className="creation-submit" title="登录创作" onClick={() => navigate('/login', { state: { from: '/', creationPrompt: prompt } })}><span className="visually-hidden">登录创作</span><ArrowUp size={21} aria-hidden="true" /></button>}
         </div>
       </form>
     </div>
-    {modelsError && <p className="creation-error creation-notice" role="alert">{modelsError}</p>}
+    <div className="creation-caption">
+      <div className="creation-quota"><span>单张生成 · 消耗 1 次</span><QuotaStatus app={app} /></div>
+      <span id="creation-submit-status" role="status">{!app.user ? '登录创作' : busy ? '正在提交…' : active ? '任务进行中' : uncertain ? '确认本次提交' : app.quotaError ? '额度待更新' : app.quota?.remaining === 0 ? '额度已用完' : '生成图片'}</span>
+    </div>
+    {sizeNotice && <p className="creation-help creation-notice" role="status">{sizeNotice}</p>}
+    {modelsError && <div className="creation-error creation-alert" role="alert">{modelsError}<button className="quiet-link" onClick={() => setModelsRevision(value => value + 1)}>重新加载模型</button></div>}
     {app.user && !models.length && !modelsError && !modelsLoading && <p className="creation-help creation-notice">管理员配置并启用模型后，即可开始创作。</p>}
     {app.user && <p className="creation-help creation-notice">与上传共用额度。生成并保存成功后扣除，失败返还预留额度。</p>}
-    {shown && renderResult(shown)}
-    {detail && <Modal title="创作记录详情" className="creation-detail-modal" onClose={() => setDetail(null)}>{renderResult(detail, true)}</Modal>}
+    {detail && <Modal title="创作记录详情" className="creation-detail-modal" onClose={() => setDetail(null)}>{renderResult(detail)}</Modal>}
     {error && <div className="creation-error creation-alert" role="alert">{error}<button className="quiet-link" onClick={() => setRevision(value => value + 1)}>刷新状态</button></div>}
-    {app.user && (loading || !!history?.records.length) && <section className="creation-history" aria-labelledby="creation-history-title">
-      <header><div><h2 id="creation-history-title">创作记录</h2><p>每一个想法，都有迹可循。</p></div><span>{history?.total || 0} 次创作</span></header>
-      {!history?.records.length ? <p className="creation-history-empty">{loading ? '正在加载…' : '还没有创作记录，试着生成第一张图片。'}</p> :
-        <div className="creation-history-grid">{history.records.map(task => <button className={'creation-history-item' + (detail?.id === task.id ? ' is-selected' : '')} key={task.id} onClick={() => setDetail(task)} aria-haspopup="dialog">
-          <div className="creation-history-thumb">{task.image ? <img src={task.image.preview} alt="" loading="lazy" /> : <Sparkle size={24} weight="light" />}</div>
-          <div><span className={'creation-status status-' + task.status.toLowerCase()}>{labels[task.status]}</span><p>{task.prompt}</p><span>{task.modelName} · {task.createTime}</span></div>
-        </button>)}</div>}
+    {historyError && <div className="creation-error creation-alert" role="alert">历史记录加载失败：{historyError}<button className="quiet-link" onClick={() => setHistoryRevision(value => value + 1)}>刷新历史</button></div>}
+    {app.user && (historyLoading || !!visibleRecords.length) && <section className="creation-history" aria-labelledby="creation-history-title">
+      <header><div><h2 id="creation-history-title">创作记录</h2><p>每一个想法，都有迹可循。</p></div><span>{Math.max(history?.total || 0, visibleRecords.length)} 次创作</span></header>
+      {!visibleRecords.length ? <p className="creation-history-empty">{historyLoading ? '正在加载…' : '还没有创作记录，试着生成第一张图片。'}</p> :
+        <div className="creation-history-grid">{visibleRecords.map(task => {
+          const running = runningStatuses.includes(task.status)
+          return <button className={'creation-history-item' + (running ? ' is-running' : '') + (detail?.id === task.id ? ' is-selected' : '')} key={task.id} onClick={() => setDetail(task)} aria-haspopup="dialog">
+            <div className="creation-history-thumb">{task.image ? <img src={task.image.preview} alt="" loading="lazy" /> : <Sparkle size={24} weight="light" aria-hidden="true" />}</div>
+            <div className="creation-history-copy"><span className={'creation-status status-' + task.status.toLowerCase()} aria-live="polite">{labels[task.status]}{running && <span className="creation-status-dots" aria-hidden="true"><i /><i /><i /></span>}</span><p>{task.prompt}</p><span>{task.modelName} · {task.createTime}</span></div>
+          </button>
+        })}</div>}
       {history && history.pages > 1 && <div className="library-pagination"><button className="button button-secondary" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>上一页</button><span>{page} / {history.pages}</span><button className="button button-secondary" disabled={page >= history.pages} onClick={() => setPage(value => value + 1)}>下一页</button></div>}
     </section>}
     <section className="creation-upload-entry" aria-label="上传已有图片"><div><h2>已经有想分享的图片？</h2><p>上传本地图片，与 AI 作品一起保存在「我的图片」。</p></div><Link className="button button-secondary" to="/upload">上传图片 <ArrowUpRight size={16} /></Link></section>
-    {abandon && <Modal title="放弃这张生成结果？" onClose={() => { if (!busy) setAbandon(null) }}>
-      <p className="creation-help">临时图片将被清除，预留的 1 次额度会释放。之后无法恢复这张结果。</p>
-      <div className="modal-actions"><button className="button button-secondary" disabled={busy} onClick={() => setAbandon(null)}>继续保留</button><button className="button button-danger" disabled={busy} onClick={() => void action(abandon, 'abandon')}>{busy ? '处理中…' : '确认放弃'}</button></div>
-    </Modal>}
+
   </main>
 }

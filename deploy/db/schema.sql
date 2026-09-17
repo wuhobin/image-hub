@@ -100,14 +100,12 @@ CREATE TABLE IF NOT EXISTS hub_ai_generation (
     error_message VARCHAR(255),
     work_token VARCHAR(36),
     work_deadline datetime,
-    result_expires_at datetime,
-    result_data MEDIUMBLOB COMMENT '最多10MB，保存完成或24小时过期时清理',
+    pending_storage_info TEXT COMMENT '上传前记录定位，入库成功或补偿删除后清空',
     create_time datetime DEFAULT CURRENT_TIMESTAMP,
     update_time datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     deleted TINYINT NOT NULL DEFAULT 0,
     UNIQUE KEY uk_hub_ai_generation_request (user_id, request_id),
     UNIQUE KEY uk_hub_ai_generation_active (active_user_id),
     KEY idx_hub_ai_generation_user (user_id, deleted, create_time, id),
-    KEY idx_hub_ai_generation_work (deleted, status, work_token, work_deadline),
-    KEY idx_hub_ai_generation_expiry (deleted, result_expires_at)
+    KEY idx_hub_ai_generation_work (deleted, status, work_token, create_time, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -30,6 +30,7 @@ public class GenerationVO {
 
     private Date createTime;
 
+    /** 兼容旧响应字段；结果不再暂存，固定为空。 */
     private Date resultExpiresAt;
 
     private ImageVO image;
@@ -46,7 +47,6 @@ public class GenerationVO {
         result.setStatus(task.getStatus());
         result.setErrorMessage(task.getErrorMessage());
         result.setCreateTime(task.getCreateTime());
-        result.setResultExpiresAt(task.getResultExpiresAt());
         result.setImage(image);
         return result;
     }

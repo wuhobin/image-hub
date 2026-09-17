@@ -35,7 +35,7 @@ public class AiGenerationController {
         return Result.data(aiGenerationService.submit(StpUtil.getLoginIdAsLong(), param));
     }
 
-    /** 返回本人历史，不包含模型密钥和临时图片字节。 */
+    /** 返回本人历史，不包含模型密钥。 */
     @GetMapping
     public Result<Page<GenerationVO>> history(@RequestParam(defaultValue = "1") int page,
                                               @RequestParam(defaultValue = "12") int pageSize) {
@@ -54,13 +54,13 @@ public class AiGenerationController {
         return Result.data(aiGenerationService.task(StpUtil.getLoginIdAsLong(), id));
     }
 
-    /** 仅重试保存已有结果，不重复调用生图模型。 */
+    /** 兼容旧客户端路径，校验归属后返回不再支持暂存重试的提示。 */
     @PostMapping("/{id}/retry-save")
     public Result<GenerationVO> retrySave(@PathVariable String id) {
         return Result.data(aiGenerationService.retrySave(StpUtil.getLoginIdAsLong(), id));
     }
 
-    /** 放弃待保存结果并释放预留额度。 */
+    /** 兼容旧客户端路径，当前已无可放弃的暂存结果。 */
     @PostMapping("/{id}/abandon")
     public Result<GenerationVO> abandon(@PathVariable String id) {
         long userId = StpUtil.getLoginIdAsLong();

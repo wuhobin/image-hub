@@ -17,8 +17,11 @@ public interface ImageFileService extends IService<ImageFile> {
     /** 分页图片及全部匹配图片的总大小；sort 为 desc 最新优先、asc 最早优先。 */
     ImageListVO list(long userId, String search, String type, String sourceType, int page, int pageSize, String sort);
 
-    /** 生成结果通过同一内容校验和云存储流程，返回待入库实体；此方法不扣额、不入库。 */
-    ImageFile storeGenerated(long userId, String imageId, byte[] bytes);
+    /** 校验并上传生成结果，上传前由回调持久化对象定位；回调失败则不上传，此方法不扣额、不写图片表。 */
+    ImageFile storeGenerated(long userId, String imageId, byte[] bytes, java.util.function.Consumer<String> beforeUpload);
+
+    /** 删除持久化定位的未入库对象；失败必须抛出异常，让任务保留记录继续补偿。 */
+    void discardGenerated(String storageInfo);
 
     /** 仅供未入库云文件补偿，业务删除仍使用含归属校验的delete。 */
     void discardUncommitted(ImageFile image);

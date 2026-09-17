@@ -56,7 +56,7 @@ import static org.mockito.Mockito.*;
         "spring.datasource.driver-class-name=org.h2.Driver",
         "spring.datasource.username=sa", "spring.datasource.password=",
         "spring.sql.init.mode=always", "spring.sql.init.schema-locations=file:deploy/db/schema.sql,classpath:h2-datetime-precision.sql",
-        "platform.security.is-log=false"
+        "platform.security.is-log=false", "image-hub.ai.max-image-size=20MB"
 })
 @Import({BusinessFlowTest.MemorySessions.class, SettingsCacheTestConfiguration.class})
 class BusinessFlowTest {
@@ -70,6 +70,8 @@ class BusinessFlowTest {
     @Autowired UserMapper userMapper;
     @Autowired UserAccountService userAccountService;
     @Autowired ImageFileService imageFileService;
+
+    @Autowired com.aurora.imagehub.cache.UploadQuotaCache uploadQuotaCache;
     @Autowired ObjectMapper objectMapper;
     @Autowired SaTokenDao saTokenDao;
     @Autowired com.aurora.starter.redis.core.TwoLevelCache twoLevelCache;
@@ -108,6 +110,8 @@ class BusinessFlowTest {
             var mutex = locks.computeIfAbsent(call.getArgument(0), ignored -> new java.util.concurrent.locks.ReentrantLock());
             org.redisson.api.RLock lock = mock(org.redisson.api.RLock.class);
             when(lock.tryLock()).thenAnswer(ignored -> mutex.tryLock());
+            when(lock.tryLock(anyLong(), any(java.util.concurrent.TimeUnit.class))).thenAnswer(ignored ->
+                    mutex.tryLock(ignored.getArgument(0), ignored.getArgument(1)));
             when(lock.isHeldByCurrentThread()).thenAnswer(ignored -> mutex.isHeldByCurrentThread());
             doAnswer(ignored -> { mutex.unlock(); return null; }).when(lock).unlock();
             return lock;
@@ -123,6 +127,11 @@ class BusinessFlowTest {
         });
         storage = mock(FileStorageService.class);
         when(ossTemplate.getFileStorageService()).thenReturn(storage);
+        var qiniuKodoFileStorage = new org.dromara.x.file.storage.core.platform.QiniuKodoFileStorage();
+        qiniuKodoFileStorage.setPlatform("qiniu-kodo-1");
+        qiniuKodoFileStorage.setBasePath("base/");
+        qiniuKodoFileStorage.setDomain("https://cdn.example.test/");
+        when(storage.getFileStorage()).thenReturn(qiniuKodoFileStorage);
         stored = new FileInfo().setPlatform("qiniu-kodo-1").setBasePath("base/").setPath("images/test/")
                 .setFilename("stored.png").setUrl("https://cdn.example.test/base/images/test/stored.png")
                 .setSize(100L).setContentType("image/png")
@@ -130,6 +139,19 @@ class BusinessFlowTest {
         when(storage.of(any(MultipartFile.class))).thenAnswer(call -> {
             UploadPretreatment upload = mock(UploadPretreatment.class, Answers.RETURNS_SELF);
             when(upload.upload()).thenReturn(stored);
+            var filename = new java.util.concurrent.atomic.AtomicReference<String>();
+            var path = new java.util.concurrent.atomic.AtomicReference<String>();
+            when(upload.setSaveFilename(anyString())).thenAnswer(set -> { filename.set(set.getArgument(0)); return upload; });
+            when(upload.setPath(anyString())).thenAnswer(set -> { path.set(set.getArgument(0)); return upload; });
+            when(upload.upload(eq(qiniuKodoFileStorage), any(), any())).thenAnswer(save -> {
+                FileInfo generated = new FileInfo().setPlatform("qiniu-kodo-1").setBasePath("base/")
+                        .setPath(path.get()).setFilename(filename.get())
+                        .setUrl("https://cdn.example.test/base/" + path.get() + filename.get());
+                // 网络上传开始前必须已落库，而且定位必须与实际对象一致。
+                assertThat(jdbcTemplate.queryForList("SELECT pending_storage_info FROM hub_ai_generation WHERE pending_storage_info IS NOT NULL", String.class))
+                        .anySatisfy(info -> assertThat(info).contains("\"url\":\"" + generated.getUrl() + "\""));
+                return generated;
+            });
             return upload;
         });
         when(storage.exists(any(FileInfo.class))).thenReturn(true);
@@ -695,8 +717,6 @@ class BusinessFlowTest {
         jdbcTemplate.update("UPDATE hub_ai_model SET enabled=0 WHERE id=?", modelId);
         when(aiImageClient.generate(any())).thenReturn(png());
         aiGenerationService.runTask(userId, id);
-        assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("SAVING");
-        aiGenerationService.runTask(userId, id);
         aiGenerationService.runTask(userId, id);
         assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("SUCCEEDED");
         verify(aiImageClient, times(1)).generate(argThat(task -> task.getModelCode().equals("gpt-image-2")));
@@ -708,7 +728,6 @@ class BusinessFlowTest {
         assertThat(get("/api/app/images?sourceType=bogus", token).path("code").asInt()).isEqualTo(400);
         assertThat(get("/api/app/images/quota", token).path("data").path("used").asInt()).isEqualTo(2);
         assertThat(get("/api/app/images/quota", token).path("data").path("reserved").asInt()).isZero();
-        assertThat(jdbcTemplate.queryForObject("SELECT result_data FROM hub_ai_generation WHERE id=?", byte[].class, id)).isNull();
         assertThat(jdbcTemplate.queryForObject("SELECT api_key_ciphertext FROM hub_ai_generation WHERE id=?", String.class, id)).isNull();
         assertThat(delete(id, token).path("code").asInt()).isEqualTo(200);
         quotaState.clear();
@@ -716,67 +735,85 @@ class BusinessFlowTest {
         assertThat(post("/api/app/generations", request, token).path("data").path("id").asText()).isEqualTo(id);
     }
 
+    /** AI 调高上限后直接上传大图片，普通 multipart 上传仍限制为 10 MB。 */
     @Test
-    void aiSaveFailureRetriesSameBytesAndRollsBackFailedDatabaseCommit() throws Exception {
+    void aiSizeConfigurationAllowsLargeResultsButDoesNotChangeUploadLimit() throws Exception {
+        register("large-ai", "large-ai@example.test");
+        String token = login("large-ai");
+        long userId = userMapper.findByUsername("large-ai").getId();
+        long modelId = enableAiModel();
+        byte[] large = java.util.Arrays.copyOf(png(), 17 * 1024 * 1024);
+        assertThat(upload(token, "large.png", java.util.Arrays.copyOf(large, 10 * 1024 * 1024 + 1)).path("code").asInt()).isEqualTo(413);
+        String id = post("/api/app/generations", generationRequest(modelId), token).path("data").path("id").asText();
+        when(aiImageClient.generate(any())).thenReturn(large);
+        aiGenerationService.runTask(userId, id);
+        assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("SUCCEEDED");
+        assertThat(aiGenerationService.task(userId, id).getImage().getSize()).isEqualTo(large.length);
+        verify(aiImageClient, times(1)).generate(any());
+        assertThat(imageFileService.quota(userId).getUsed()).isEqualTo(1);
+
+        String tooLarge = post("/api/app/generations", generationRequest(modelId), token).path("data").path("id").asText();
+        when(aiImageClient.generate(any())).thenReturn(new byte[20 * 1024 * 1024 + 1]);
+        aiGenerationService.runTask(userId, tooLarge);
+        assertThat(aiGenerationService.task(userId, tooLarge).getStatus()).isEqualTo("FAILED");
+        assertThat(aiGenerationService.task(userId, tooLarge).getErrorMessage()).contains("20MB");
+        assertThat(imageFileService.quota(userId).getReserved()).isZero();
+        assertThat(imageFileService.quota(userId).getUsed()).isEqualTo(1);
+    }
+
+
+    @Test
+    void aiSaveFailureReleasesQuotaAndNeverReplaysGeneration() throws Exception {
         register("retry-ai", "retry-ai@example.test");
         String token = login("retry-ai");
         long userId = userMapper.findByUsername("retry-ai").getId();
-        String id = post("/api/app/generations", generationRequest(enableAiModel()), token).path("data").path("id").asText();
+        var request = generationRequest(enableAiModel());
+        String id = post("/api/app/generations", request, token).path("data").path("id").asText();
         when(aiImageClient.generate(any())).thenReturn(png());
-        aiGenerationService.runTask(userId, id);
         doThrow(new org.springframework.dao.DataIntegrityViolationException("simulated insert failure")).when(imageMapper).insert(any(ImageFile.class));
         aiGenerationService.runTask(userId, id);
-        assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("SAVE_FAILED");
-        assertThat(jdbcTemplate.queryForObject("SELECT result_data FROM hub_ai_generation WHERE id=?", byte[].class, id)).isEqualTo(png());
+        assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("FAILED");
         assertThat(get("/api/app/images/quota", token).path("data").path("used").asInt()).isZero();
-        assertThat(get("/api/app/images/quota", token).path("data").path("reserved").asInt()).isEqualTo(1);
+        assertThat(get("/api/app/images/quota", token).path("data").path("reserved").asInt()).isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_image WHERE id=?", Long.class, id)).isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT pending_storage_info FROM hub_ai_generation WHERE id=?", String.class, id)).isNull();
         verify(ossTemplate).delete(any(FileInfo.class));
         reset(imageMapper);
-        assertThat(post("/api/app/generations/" + id + "/retry-save", Map.of(), token).path("code").asInt()).isEqualTo(200);
         assertThat(post("/api/app/generations/" + id + "/retry-save", Map.of(), token).path("code").asInt()).isEqualTo(409);
+        assertThat(post("/api/app/generations/" + id + "/abandon", Map.of(), token).path("code").asInt()).isEqualTo(409);
+        assertThat(post("/api/app/generations", request, token).path("data").path("status").asText()).isEqualTo("FAILED");
         aiGenerationService.runTask(userId, id);
-        assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("SUCCEEDED");
         verify(aiImageClient, times(1)).generate(any());
-        assertThat(get("/api/app/images/quota", token).path("data").path("used").asInt()).isEqualTo(1);
+        verify(ossTemplate, times(1)).delete(any(FileInfo.class));
     }
 
+
     @Test
-    void aiExpiryAbandonAndInterruptedGenerationReleaseReservationWithoutRegeneration() throws Exception {
+    void interruptedTasksReleaseQuotaOnUserRequestsWithoutScheduledCleanup() throws Exception {
         register("recover-ai", "recover-ai@example.test");
         String token = login("recover-ai");
         long userId = userMapper.findByUsername("recover-ai").getId();
         long modelId = enableAiModel();
-        when(aiImageClient.generate(any())).thenReturn(png());
-        for (String outcome : List.of("EXPIRED", "ABANDONED", "FAILED")) {
+        for (String state : List.of("GENERATING", "SAVING")) {
             String id = post("/api/app/generations", generationRequest(modelId), token).path("data").path("id").asText();
-            if (outcome.equals("FAILED")) {
-                jdbcTemplate.update("UPDATE hub_ai_generation SET status='GENERATING', work_token='stale', work_deadline=TIMESTAMPADD(SECOND,-1,CURRENT_TIMESTAMP) WHERE id=?", id);
-            } else {
-                aiGenerationService.runTask(userId, id);
-                // 模拟保存线程退出；恢复只能进入可重试保存，不再次生成。
-                jdbcTemplate.update("UPDATE hub_ai_generation SET work_token='stale', work_deadline=TIMESTAMPADD(SECOND,-1,CURRENT_TIMESTAMP) WHERE id=?", id);
-                aiGenerationService.recoverTasks();
-                assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("SAVE_FAILED");
-                if (outcome.equals("EXPIRED")) {
-                    jdbcTemplate.update("UPDATE hub_ai_generation SET result_expires_at=TIMESTAMPADD(SECOND,-1,CURRENT_TIMESTAMP) WHERE id=?", id);
-                    assertThat(post("/api/app/generations/" + id + "/retry-save", Map.of(), token).path("code").asInt()).isEqualTo(409);
-                } else {
-                    assertThat(post("/api/app/generations/" + id + "/abandon", Map.of(), token).path("code").asInt()).isEqualTo(200);
-                }
-            }
-            aiGenerationService.recoverTasks();
-            assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo(outcome);
-            assertThat(get("/api/app/images/quota", token).path("data").path("reserved").asInt()).isZero();
-            assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(100);
-            assertThat(jdbcTemplate.queryForObject("SELECT result_data FROM hub_ai_generation WHERE id=?", byte[].class, id)).isNull();
+            jdbcTemplate.update("UPDATE hub_ai_generation SET status=?, work_token='stale', work_deadline=TIMESTAMPADD(SECOND,-1,CURRENT_TIMESTAMP) WHERE id=?", state, id);
+            // 未查询前不会主动清理；首次请求通过数据库时间与任务锁回收。
+            assertThat(jdbcTemplate.queryForObject("SELECT status FROM hub_ai_generation WHERE id=?", String.class, id)).isEqualTo(state);
+            if (state.equals("GENERATING")) assertThat(get("/api/app/generations/active", token).path("data").isNull()).isTrue();
+            else assertThat(get("/api/app/images/quota", token).path("data").path("reserved").asInt()).isZero();
+            assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("FAILED");
+            assertThat(imageFileService.quota(userId).getRemaining()).isEqualTo(100);
         }
-        verify(aiImageClient, times(2)).generate(any());
+        verifyNoInteractions(aiImageClient);
+        verify(storage, never()).of(any(MultipartFile.class));
+        verify(ossTemplate, never()).delete(any(FileInfo.class));
+
         String failed = post("/api/app/generations", generationRequest(modelId), token).path("data").path("id").asText();
         when(aiImageClient.generate(any())).thenThrow(new IllegalStateException("provider-secret-should-not-escape"));
         aiGenerationService.runTask(userId, failed);
         assertThat(aiGenerationService.task(userId, failed).getStatus()).isEqualTo("FAILED");
         assertThat(get("/api/app/generations/" + failed, token).toString()).doesNotContain("provider-secret");
-        assertThat(get("/api/app/images/quota", token).path("data").path("reserved").asInt()).isZero();
+        assertThat(imageFileService.quota(userId).getReserved()).isZero();
     }
 
     @Test
@@ -797,6 +834,200 @@ class BusinessFlowTest {
             assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_ai_generation WHERE active_user_id=?", Long.class, userId)).isEqualTo(1);
             assertThat(upload(token, "last.png", png()).path("code").asInt()).isEqualTo(40301);
         } finally { executor.shutdownNow(); }
+    }
+
+
+    @Test
+    void invalidGeneratedBytesReleaseQuotaBeforeCloudUpload() throws Exception {
+        register("invalid-ai", "invalid-ai@example.test");
+        String token = login("invalid-ai");
+        long userId = userMapper.findByUsername("invalid-ai").getId();
+        String id = post("/api/app/generations", generationRequest(enableAiModel()), token).path("data").path("id").asText();
+        when(aiImageClient.generate(any())).thenReturn(java.util.Arrays.copyOf(png(), 8));
+        aiGenerationService.runTask(userId, id);
+        assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("FAILED");
+        assertThat(imageFileService.quota(userId).getReserved()).isZero();
+        verify(storage, never()).of(any(MultipartFile.class));
+    }
+
+    @Test
+    void duplicateDiscoveredInsideQuotaLockReturnsOriginalEvenWhenQuotaIsFull() {
+        register("idem-ai", "idem-ai@example.test");
+        String token = login("idem-ai");
+        long userId = userMapper.findByUsername("idem-ai").getId();
+        jdbcTemplate.update("UPDATE hub_settings SET config_value='1' WHERE config_key='upload.free-total'");
+        var request = generationRequest(enableAiModel());
+        String id = post("/api/app/generations", request, token).path("data").path("id").asText();
+        assertThat(imageFileService.quota(userId).getRemaining()).isZero();
+        // 模拟首次查询之后其他请求已经提交；锁内发现重复时不能再按新任务检查额度。
+        String duplicate = uploadQuotaCache.reserveGeneration(userId, () -> id, () -> { throw new AssertionError("must not create again"); });
+        assertThat(duplicate).isEqualTo(id);
+        assertThat(post("/api/app/generations", request, token).path("data").path("id").asText()).isEqualTo(id);
+    }
+
+
+    @Test
+    void failedCloudCompensationIsRetainedWithoutAutomaticCleanup() throws Exception {
+        register("cleanup-ai", "cleanup-ai@example.test");
+        String token = login("cleanup-ai");
+        long userId = userMapper.findByUsername("cleanup-ai").getId();
+        String id = post("/api/app/generations", generationRequest(enableAiModel()), token).path("data").path("id").asText();
+        when(aiImageClient.generate(any())).thenReturn(png());
+        doThrow(new org.springframework.dao.DataIntegrityViolationException("simulated rollback")).when(imageMapper).insert(any(ImageFile.class));
+        when(ossTemplate.delete(any(FileInfo.class))).thenReturn(false);
+        aiGenerationService.runTask(userId, id);
+        String pending = jdbcTemplate.queryForObject("SELECT pending_storage_info FROM hub_ai_generation WHERE id=?", String.class, id);
+        assertThat(pending).isNotBlank();
+        assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("FAILED");
+        assertThat(imageFileService.quota(userId).getReserved()).isZero();
+        aiGenerationService.active(userId);
+        aiGenerationService.runTask(userId, id);
+        assertThat(jdbcTemplate.queryForObject("SELECT pending_storage_info FROM hub_ai_generation WHERE id=?", String.class, id)).isEqualTo(pending);
+        verify(ossTemplate, times(1)).delete(any(FileInfo.class));
+        verify(storage, times(1)).of(any(MultipartFile.class));
+        verify(aiImageClient, times(1)).generate(any());
+    }
+
+
+    /** 超时不等于线程已退出；仍持锁的任务不能被查询请求释放或覆盖。 */
+    @Test
+    void onDemandRecoveryDoesNotInterruptLiveWorkerAndPreservesCloudLocation() throws Exception {
+        register("crash-ai", "crash-ai@example.test");
+        String token = login("crash-ai");
+        long userId = userMapper.findByUsername("crash-ai").getId();
+        String id = post("/api/app/generations", generationRequest(enableAiModel()), token).path("data").path("id").asText();
+        String pending = objectMapper.writeValueAsString(stored);
+        jdbcTemplate.update("UPDATE hub_ai_generation SET status='SAVING', pending_storage_info=?, work_token='crashed', work_deadline=TIMESTAMPADD(SECOND,-1,CURRENT_TIMESTAMP) WHERE id=?", pending, id);
+        var executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+        var acquired = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        try {
+            var live = executor.submit(() -> {
+                var taskLock = redissonClient.getLock("image-hub:generation:" + id);
+                assertThat(taskLock.tryLock()).isTrue();
+                acquired.countDown();
+                try { release.await(10, java.util.concurrent.TimeUnit.SECONDS); }
+                finally { taskLock.unlock(); }
+                return null;
+            });
+            assertThat(acquired.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("SAVING");
+            assertThat(imageFileService.quota(userId).getReserved()).isEqualTo(1);
+            release.countDown();
+            live.get(5, java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("FAILED");
+            assertThat(imageFileService.quota(userId).getReserved()).isZero();
+            assertThat(jdbcTemplate.queryForObject("SELECT pending_storage_info FROM hub_ai_generation WHERE id=?", String.class, id)).isEqualTo(pending);
+            verify(ossTemplate, never()).delete(any(FileInfo.class));
+            verifyNoInteractions(aiImageClient);
+        } finally {
+            release.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    /** 普通上传占用额度锁时，AI 保存等待释放后成功，不重新生成、不删除已上传结果。 */
+    @Test
+    void aiSaveWaitsForQuotaLockAndCommitsOnce() throws Exception {
+        register("wait-ai", "wait-ai@example.test");
+        String token = login("wait-ai");
+        long userId = userMapper.findByUsername("wait-ai").getId();
+        String id = post("/api/app/generations", generationRequest(enableAiModel()), token).path("data").path("id").asText();
+        when(aiImageClient.generate(any())).thenReturn(png());
+        var mutex = new java.util.concurrent.locks.ReentrantLock();
+        var waiting = new java.util.concurrent.CountDownLatch(1);
+        var quotaLock = mock(org.redisson.api.RLock.class);
+        when(quotaLock.tryLock()).thenAnswer(call -> mutex.tryLock());
+        when(quotaLock.tryLock(anyLong(), eq(java.util.concurrent.TimeUnit.MILLISECONDS))).thenAnswer(call -> {
+            assertThat(call.<Long>getArgument(0)).isBetween(1L, 10_000L);
+            waiting.countDown();
+            return mutex.tryLock(call.getArgument(0), call.getArgument(1));
+        });
+        when(quotaLock.isHeldByCurrentThread()).thenAnswer(call -> mutex.isHeldByCurrentThread());
+        doAnswer(call -> { mutex.unlock(); return null; }).when(quotaLock).unlock();
+        when(redissonClient.getLock("image-hub:quota:{" + userId + "}:lock")).thenReturn(quotaLock);
+        var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
+        mutex.lock();
+        try {
+            var saving = executor.submit(() -> aiGenerationService.runTask(userId, id));
+            assertThat(waiting.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(saving.isDone()).isFalse();
+            assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("SAVING");
+            verify(ossTemplate, never()).delete(any(FileInfo.class));
+            mutex.unlock();
+            saving.get(5, java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("SUCCEEDED");
+            assertThat(imageFileService.quota(userId).getUsed()).isEqualTo(1);
+            assertThat(imageFileService.quota(userId).getReserved()).isZero();
+            verify(aiImageClient, times(1)).generate(any());
+            verify(storage, times(1)).of(any(MultipartFile.class));
+            verify(ossTemplate, never()).delete(any(FileInfo.class));
+        } finally {
+            if (mutex.isHeldByCurrentThread()) mutex.unlock();
+            executor.shutdownNow();
+        }
+    }
+
+    /** 等待有上限，超时或中断不进入持久化回调、不释放其他线程的锁。 */
+    @Test
+    void aiQuotaWaitTimeoutAndInterruptionDoNotPersist() throws Exception {
+        var quotaLock = mock(org.redisson.api.RLock.class);
+        when(redissonClient.getLock("image-hub:quota:{123}:lock")).thenReturn(quotaLock);
+        java.util.function.Supplier<Object> persist = () -> { throw new AssertionError("must not persist"); };
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> uploadQuotaCache.completeGeneration(123, 50_000, persist))
+                .isInstanceOf(com.aurora.starter.webmvc.exception.BizException.class).hasMessageContaining("等待超时");
+        verify(quotaLock).tryLock(10_000, java.util.concurrent.TimeUnit.MILLISECONDS);
+        when(quotaLock.tryLock(0, java.util.concurrent.TimeUnit.MILLISECONDS)).thenThrow(new InterruptedException());
+        try {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> uploadQuotaCache.completeGeneration(123, 0, persist))
+                    .isInstanceOf(com.aurora.starter.webmvc.exception.BizException.class).hasMessageContaining("已中断");
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted();
+        }
+        verify(quotaLock, never()).unlock();
+    }
+
+    /** 分页批量取图必须保留排序与总数，且不能返回已删除或其他用户的图片。 */
+    @Test
+    @SuppressWarnings("unchecked")
+    void aiHistoryLoadsImagesOnceAndKeepsOwnershipAndPagination() throws Exception {
+        register("history-ai", "history-ai@example.test");
+        String token = login("history-ai");
+        long userId = userMapper.findByUsername("history-ai").getId();
+        register("history-other", "history-other@example.test");
+        long otherUserId = userMapper.findByUsername("history-other").getId();
+        long modelId = enableAiModel();
+        when(aiImageClient.generate(any())).thenReturn(png());
+        var ids = new java.util.ArrayList<String>();
+        for (int index = 0; index < 3; index++) {
+            String id = post("/api/app/generations", generationRequest(modelId), token).path("data").path("id").asText();
+            aiGenerationService.runTask(userId, id);
+            ids.add(id);
+        }
+        imageMapper.deleteOwned(userId, ids.get(0));
+        jdbcTemplate.update("UPDATE hub_image SET user_id=? WHERE id=?", otherUserId, ids.get(1));
+        clearInvocations(imageMapper);
+        var all = aiGenerationService.history(userId, 1, 12);
+        assertThat(all.getTotal()).isEqualTo(3);
+        assertThat(all.getRecords()).hasSize(3);
+        for (var task : all.getRecords()) {
+            if (task.getId().equals(ids.get(2))) assertThat(task.getImage().getId()).isEqualTo(ids.get(2));
+            else assertThat(task.getImage()).isNull();
+        }
+        verify(imageMapper, times(1)).selectList(any(com.baomidou.mybatisplus.core.conditions.Wrapper.class));
+        verify(imageMapper, never()).findOwned(anyLong(), anyString());
+        var first = aiGenerationService.history(userId, 1, 2);
+        var second = aiGenerationService.history(userId, 2, 2);
+        assertThat(first.getTotal()).isEqualTo(3);
+        assertThat(first.getPages()).isEqualTo(2);
+        assertThat(first.getRecords()).extracting(com.aurora.imagehub.model.vo.GenerationVO::getId)
+                .containsExactlyElementsOf(all.getRecords().subList(0, 2).stream().map(com.aurora.imagehub.model.vo.GenerationVO::getId).toList());
+        assertThat(second.getRecords()).extracting(com.aurora.imagehub.model.vo.GenerationVO::getId)
+                .containsExactly(all.getRecords().get(2).getId());
+        clearInvocations(imageMapper);
+        assertThat(aiGenerationService.history(otherUserId, 1, 12).getRecords()).isEmpty();
+        verify(imageMapper, never()).selectList(any(com.baomidou.mybatisplus.core.conditions.Wrapper.class));
     }
 
     /** 测试模型使用虚构Key，不触发真实供应商请求。 */
