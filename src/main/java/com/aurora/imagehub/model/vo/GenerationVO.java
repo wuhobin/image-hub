@@ -1,6 +1,7 @@
 package com.aurora.imagehub.model.vo;
 
 import com.aurora.imagehub.model.entity.AiGeneration;
+import java.math.BigDecimal;
 import java.util.Date;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -30,6 +31,9 @@ public class GenerationVO {
 
     private Date createTime;
 
+    /** 实测生成及保存耗时，单位秒、精确到毫秒；不含排队，旧记录或中断未实测时为空。 */
+    private BigDecimal durationSeconds;
+
     /** 兼容旧响应字段；结果不再暂存，固定为空。 */
     private Date resultExpiresAt;
 
@@ -47,6 +51,9 @@ public class GenerationVO {
         result.setStatus(task.getStatus());
         result.setErrorMessage(task.getErrorMessage());
         result.setCreateTime(task.getCreateTime());
+        if (task.getDurationMillis() != null) {
+            result.setDurationSeconds(BigDecimal.valueOf(task.getDurationMillis(), 3));
+        }
         result.setImage(image);
         return result;
     }

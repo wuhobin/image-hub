@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS hub_ai_generation (
     quality VARCHAR(20) NOT NULL,
     status VARCHAR(20) NOT NULL,
     error_message TEXT,
+    duration_millis BIGINT DEFAULT NULL COMMENT '实际生成及保存耗时（毫秒），不含排队和失败补偿',
     work_token VARCHAR(36),
     work_deadline datetime,
     pending_storage_info TEXT COMMENT '上传前记录定位，入库成功或补偿删除后清空',

@@ -44,6 +44,9 @@ public class AiGeneration {
 
     private String errorMessage;
 
+    /** 实际生成及保存耗时，单位毫秒；不含排队和失败补偿，未实测时为空。 */
+    private Long durationMillis;
+
     /** 每次认领使用不同标记，阻止超时工作线程提交过期结果。 */
     private String workToken;
 

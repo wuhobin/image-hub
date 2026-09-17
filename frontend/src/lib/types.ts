@@ -41,5 +41,5 @@ export type AiModelConfig = AiModel & { modelCode: string; baseUrl: string; imag
 export type Generation = {
   id: string; requestId: string; modelName: string; prompt: string; size: string; quality: string
   status: 'QUEUED' | 'GENERATING' | 'SAVING' | 'SAVE_FAILED' | 'SUCCEEDED' | 'FAILED' | 'EXPIRED' | 'ABANDONED'
-  errorMessage: string | null; createTime: string; resultExpiresAt: string | null; image: ImageRecord | null
+  errorMessage: string | null; createTime: string; durationSeconds: number | null; resultExpiresAt: string | null; image: ImageRecord | null
 }

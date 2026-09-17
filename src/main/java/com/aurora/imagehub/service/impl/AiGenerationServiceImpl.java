@@ -163,6 +163,7 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
             if (!TaskStatus.QUEUED.name().equals(task.getStatus()) || task.getWorkToken() != null) return null;
             String token = UUID.randomUUID().toString();
             if (aiGenerationMapper.claim(userId, id, token, timeoutSeconds + 60) != 1) return null;
+            // 认领后使用单调时钟计时，不受排队、系统校时和后续审计时间更新影响。
             long started = System.nanoTime();
             if (task.getCreateTime() != null) {
                 // 创建时间为数据库秒精度，跨数据库与应用时钟计算，仅用于近似排队耗时诊断。
@@ -178,8 +179,9 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
                 if (aiGenerationMapper.beginSaving(userId, id, token) != 1) {
                     throw new BizException(409, "生成任务执行期限已过，请重新提交");
                 }
-                saveResult(task, token, bytes, savingStarted);
+                saveResult(task, token, bytes, savingStarted, started);
             } catch (Exception e) {
+                long durationMillis = (System.nanoTime() - started) / 1_000_000;
                 if (stage != TaskStage.MODEL_REQUEST) {
                     log.info("AI 创作处理失败：taskId={}, 阶段={}", id, stage.getDescription(), e);
                 }
@@ -188,7 +190,7 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
                         : "图片保存失败，额度已释放，请重新提交创作";
                 // 先确认任务未成功并记录失败；提交结果不明时不得删除可能已入库的云文件。
                 requireTaskLock(id);
-                int updated = aiGenerationMapper.generationFailed(userId, id, token, message);
+                int updated = aiGenerationMapper.generationFailed(userId, id, token, message, durationMillis);
                 log.info("AI 创作失败已记录：taskId={}, 预留额度已释放={}", id, updated == 1);
                 if (updated == 1) {
                     try {
@@ -206,8 +208,8 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
         });
     }
 
-    /** 直接上传当前内存结果，云请求在事务外；图片记录与成功状态在同一短事务提交。 */
-    private void saveResult(AiGeneration task, String token, byte[] bytes, long savingStarted) {
+    /** 直接上传当前内存结果，云请求在事务外；实测耗时与图片记录、成功状态在同一短事务提交。 */
+    private void saveResult(AiGeneration task, String token, byte[] bytes, long savingStarted, long taskStarted) {
         ImageFile image = imageFileService.storeGenerated(task.getUserId(), task.getId(), bytes, storageInfo -> {
             requireTaskLock(task.getId());
             if (aiGenerationMapper.prepareUpload(task.getUserId(), task.getId(), token, storageInfo) != 1) {
@@ -224,7 +226,8 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
                 return transaction.execute(status -> {
                     requireTaskLock(task.getId());
                     uploadQuotaCache.checkOwnership(task.getUserId());
-                    if (aiGenerationMapper.succeed(task.getUserId(), task.getId(), token) != 1) {
+                    if (aiGenerationMapper.succeed(task.getUserId(), task.getId(), token,
+                            (System.nanoTime() - taskStarted) / 1_000_000) != 1) {
                         throw new BizException(409, "任务执行期限已过，不能保存结果");
                     }
                     imageMapper.insert(image);

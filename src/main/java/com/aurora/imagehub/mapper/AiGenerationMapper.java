@@ -72,19 +72,22 @@ public interface AiGenerationMapper extends BaseMapper<AiGeneration> {
     @Update("""
             UPDATE hub_ai_generation SET status = 'SUCCEEDED', active_user_id = NULL,
               api_key_ciphertext = NULL, work_token = NULL, work_deadline = NULL, pending_storage_info = NULL,
-              error_message = NULL, update_time = CURRENT_TIMESTAMP
+              error_message = NULL, duration_millis = #{durationMillis}, update_time = CURRENT_TIMESTAMP
             WHERE id = #{id} AND user_id = #{userId} AND deleted = 0 AND status = 'SAVING'
               AND work_token = #{token} AND work_deadline > CURRENT_TIMESTAMP
             """)
-    int succeed(@Param("userId") long userId, @Param("id") String id, @Param("token") String token);
+    int succeed(@Param("userId") long userId, @Param("id") String id,
+                @Param("token") String token, @Param("durationMillis") long durationMillis);
 
     /** 失败释放预留；保留未确认删除的云文件定位，绝不覆盖已成功状态。 */
     @Update("""
             UPDATE hub_ai_generation SET status = 'FAILED', error_message = #{message}, active_user_id = NULL,
+              duration_millis = #{durationMillis},
               api_key_ciphertext = NULL, work_token = NULL, work_deadline = NULL, update_time = CURRENT_TIMESTAMP
             WHERE id = #{id} AND user_id = #{userId} AND deleted = 0
               AND status IN ('GENERATING', 'SAVING') AND work_token = #{token}
             """)
     int generationFailed(@Param("userId") long userId, @Param("id") String id,
-                         @Param("token") String token, @Param("message") String message);
+                         @Param("token") String token, @Param("message") String message,
+                         @Param("durationMillis") long durationMillis);
 }

@@ -715,13 +715,25 @@ class BusinessFlowTest {
 
         // 已接收任务使用快照；管理员之后停用模型不会取消该任务。
         jdbcTemplate.update("UPDATE hub_ai_model SET enabled=0 WHERE id=?", modelId);
-        when(aiImageClient.generate(any())).thenReturn(png());
+        // 模拟长时间排队；耗时应从认领后开始，不使用数据库创建时间。
+        jdbcTemplate.update("UPDATE hub_ai_generation SET create_time=TIMESTAMPADD(DAY,-1,CURRENT_TIMESTAMP) WHERE id=?", id);
+        assertThat(aiGenerationService.task(userId, id).getDurationSeconds()).isNull();
+        when(aiImageClient.generate(any())).thenAnswer(call -> {
+            Thread.sleep(50);
+            return png();
+        });
+        long started = System.nanoTime();
         aiGenerationService.runTask(userId, id);
+        long elapsedMillis = (System.nanoTime() - started) / 1_000_000;
+        Long durationMillis = jdbcTemplate.queryForObject("SELECT duration_millis FROM hub_ai_generation WHERE id=?", Long.class, id);
+        assertThat(durationMillis).isBetween(50L, elapsedMillis);
         aiGenerationService.runTask(userId, id);
         assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("SUCCEEDED");
         verify(aiImageClient, times(1)).generate(argThat(task -> task.getModelCode().equals("gpt-image-2")));
         var result = get("/api/app/generations/" + id, token);
         assertThat(result.path("data").path("image").path("sourceType").asText()).isEqualTo("AI");
+        assertThat(result.path("data").path("durationSeconds").decimalValue())
+                .isEqualByComparingTo(java.math.BigDecimal.valueOf(durationMillis, 3));
         assertThat(result.toString()).doesNotContain("apiKey", "baseUrl", "resultData", "workToken");
         assertThat(get("/api/app/images?sourceType=AI", token).path("data").path("page").path("total").asInt()).isEqualTo(1);
         assertThat(get("/api/app/images?sourceType=UPLOAD", token).path("data").path("page").path("total").asInt()).isEqualTo(1);
@@ -730,6 +742,9 @@ class BusinessFlowTest {
         assertThat(get("/api/app/images/quota", token).path("data").path("reserved").asInt()).isZero();
         assertThat(jdbcTemplate.queryForObject("SELECT api_key_ciphertext FROM hub_ai_generation WHERE id=?", String.class, id)).isNull();
         assertThat(delete(id, token).path("code").asInt()).isEqualTo(200);
+        jdbcTemplate.update("UPDATE hub_ai_generation SET update_time=TIMESTAMPADD(DAY,1,CURRENT_TIMESTAMP) WHERE id=?", id);
+        assertThat(aiGenerationService.task(userId, id).getDurationSeconds())
+                .isEqualByComparingTo(java.math.BigDecimal.valueOf(durationMillis, 3));
         quotaState.clear();
         assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isZero();
         assertThat(post("/api/app/generations", request, token).path("data").path("id").asText()).isEqualTo(id);
@@ -778,6 +793,11 @@ class BusinessFlowTest {
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_image WHERE id=?", Long.class, id)).isZero();
         assertThat(jdbcTemplate.queryForObject("SELECT pending_storage_info FROM hub_ai_generation WHERE id=?", String.class, id)).isNull();
         verify(ossTemplate).delete(any(FileInfo.class));
+        Long durationMillis = jdbcTemplate.queryForObject("SELECT duration_millis FROM hub_ai_generation WHERE id=?", Long.class, id);
+        assertThat(durationMillis).isNotNull().isNotNegative();
+        jdbcTemplate.update("UPDATE hub_ai_generation SET update_time=TIMESTAMPADD(DAY,1,CURRENT_TIMESTAMP) WHERE id=?", id);
+        assertThat(aiGenerationService.task(userId, id).getDurationSeconds())
+                .isEqualByComparingTo(java.math.BigDecimal.valueOf(durationMillis, 3));
         reset(imageMapper);
         assertThat(post("/api/app/generations/" + id + "/retry-save", Map.of(), token).path("code").asInt()).isEqualTo(409);
         assertThat(post("/api/app/generations/" + id + "/abandon", Map.of(), token).path("code").asInt()).isEqualTo(409);
@@ -802,6 +822,7 @@ class BusinessFlowTest {
             if (state.equals("GENERATING")) assertThat(get("/api/app/generations/active", token).path("data").isNull()).isTrue();
             else assertThat(get("/api/app/images/quota", token).path("data").path("reserved").asInt()).isZero();
             assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("FAILED");
+            assertThat(aiGenerationService.task(userId, id).getDurationSeconds()).isNull();
             assertThat(imageFileService.quota(userId).getRemaining()).isEqualTo(100);
         }
         verifyNoInteractions(aiImageClient);
@@ -812,6 +833,7 @@ class BusinessFlowTest {
         when(aiImageClient.generate(any())).thenThrow(new IllegalStateException("provider-secret-should-not-escape"));
         aiGenerationService.runTask(userId, failed);
         assertThat(aiGenerationService.task(userId, failed).getStatus()).isEqualTo("FAILED");
+        assertThat(aiGenerationService.task(userId, failed).getDurationSeconds()).isNotNull().isNotNegative();
         assertThat(get("/api/app/generations/" + failed, token).toString()).doesNotContain("provider-secret");
         assertThat(imageFileService.quota(userId).getReserved()).isZero();
     }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle'
 import { Sparkle } from '@phosphor-icons/react/dist/csr/Sparkle'
 import { ArrowUpRight } from '@phosphor-icons/react/dist/csr/ArrowUpRight'
 import { ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp'
@@ -210,7 +211,7 @@ export default function Create({ app }: { app: AppState }) {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!app.user) { navigate('/login', { state: { from: '/', creationPrompt: prompt } }); return }
-    if (submitting.current || active || (!model && !pending.current)) return
+    if (submitting.current || active || (!pending.current && (!model || !prompt.trim()))) return
     submitting.current = true
     setBusy(true)
     setError('')
@@ -285,6 +286,7 @@ export default function Create({ app }: { app: AppState }) {
               <div><dt>分辨率</dt><dd>{generationResolution(task.size) || '自定义'}</dd></div>
               {task.image?.type && <div><dt>图片格式</dt><dd>{task.image.type.toUpperCase()}</dd></div>}
               <div><dt>生成数量</dt><dd>1 张</dd></div>
+              <div className="creation-detail-duration" title="实际生成及保存耗时，不包含排队和失败后的清理时间"><dt>生成耗时</dt><dd>{task.durationSeconds != null ? task.durationSeconds + ' 秒' : running ? '进行中' : '暂无数据'}</dd></div>
             </dl>
           </section>
           <div className="creation-detail-meta"><span className={'creation-detail-status status-' + task.status.toLowerCase()} role="status"><i aria-hidden="true" />{labels[task.status]}</span><time dateTime={task.createTime.replace(' ', 'T')}>创建于 {task.createTime}</time></div>
@@ -309,7 +311,7 @@ export default function Create({ app }: { app: AppState }) {
       <span className="upload-rim" aria-hidden="true" />
       <form className="creation-form" onSubmit={submit} aria-busy={busy}>
         <label className="visually-hidden" htmlFor="creation-prompt">画面描述</label>
-        <textarea id="creation-prompt" value={prompt} onChange={event => setPrompt(event.target.value)} maxLength={4000} required
+        <textarea id="creation-prompt" value={prompt} onChange={event => setPrompt(event.target.value)} maxLength={4000} aria-required="true"
           disabled={busy || uncertain} placeholder="描述你想创作的画面…&#10;例如：海边的书店，午后阳光，胶片摄影质感。" />
         <div className="creation-toolbar">
           <div className="creation-options">
@@ -345,13 +347,25 @@ export default function Create({ app }: { app: AppState }) {
     {error && <div className="creation-error creation-alert" role="alert">{error}<button className="quiet-link" onClick={() => setRevision(value => value + 1)}>刷新状态</button></div>}
     {historyError && <div className="creation-error creation-alert" role="alert">历史记录加载失败：{historyError}<button className="quiet-link" onClick={() => setHistoryRevision(value => value + 1)}>刷新历史</button></div>}
     {app.user && (historyLoading || !!visibleRecords.length) && <section className="creation-history" aria-labelledby="creation-history-title">
-      <header><div><h2 id="creation-history-title">创作记录</h2><p>每一个想法，都有迹可循。</p></div><span>{Math.max(history?.total || 0, visibleRecords.length)} 次创作</span></header>
+      <header><div><h2 id="creation-history-title">创作记录</h2><p>查看生成结果与任务进度</p></div><span>{Math.max(history?.total || 0, visibleRecords.length)} 次创作</span></header>
       {!visibleRecords.length ? <p className="creation-history-empty">{historyLoading ? '正在加载…' : '还没有创作记录，试着生成第一张图片。'}</p> :
         <div className="creation-history-grid">{visibleRecords.map(task => {
           const running = runningStatuses.includes(task.status)
-          return <button className={'creation-history-item' + (running ? ' is-running' : '') + (detail?.id === task.id ? ' is-selected' : '')} key={task.id} onClick={() => setDetail(task)} aria-haspopup="dialog">
-            <div className="creation-history-thumb">{task.image ? <img src={task.image.preview} alt="" loading="lazy" /> : <Sparkle size={24} weight="light" aria-hidden="true" />}</div>
-            <div className="creation-history-copy"><span className={'creation-status status-' + task.status.toLowerCase()} aria-live="polite">{labels[task.status]}{running && <span className="creation-status-dots" aria-hidden="true"><i /><i /><i /></span>}</span><p>{task.prompt}</p><span>{task.modelName} · {task.createTime}</span></div>
+          const failed = task.status === 'FAILED' || task.status === 'SAVE_FAILED' || task.status === 'EXPIRED'
+          return <button className={'creation-history-item' + (running ? ' is-running' : '') + (failed ? ' is-failed' : '') + (detail?.id === task.id ? ' is-selected' : '')} key={task.id} onClick={() => setDetail(task)} aria-haspopup="dialog">
+            <span className="creation-history-thumb">
+              {task.image ? <img src={task.image.preview} alt="" loading="lazy" /> : <span className="creation-history-placeholder">
+                {failed ? <WarningCircle size={30} weight="light" aria-hidden="true" /> : <Sparkle size={30} weight="light" aria-hidden="true" />}
+                <span>{running ? (task.status === 'SAVING' ? '正在保存图片' : '画面正在慢慢成形') : failed ? '点击查看失败原因' : task.status === 'SUCCEEDED' ? '图片已删除' : '暂无图片预览'}</span>
+              </span>}
+              <span className={'creation-status status-' + task.status.toLowerCase()} aria-live="polite"><i className="creation-status-indicator" aria-hidden="true" />{labels[task.status]}{running && <span className="creation-status-dots" aria-hidden="true"><i /><i /><i /></span>}</span>
+              <span className="creation-history-ratio">{imageAspectRatio(task.size)}</span>
+            </span>
+            <span className="creation-history-copy">
+              <span className="creation-history-prompt">{task.prompt}</span>
+              <span className="creation-history-model"><span>{task.modelName}</span><span>{generationResolution(task.size) || task.size.replace('x', '×')}</span></span>
+              <span className="creation-history-footer"><time dateTime={task.createTime.replace(' ', 'T')}>{task.createTime.slice(0, 16)}</time><ArrowUpRight size={16} aria-hidden="true" /></span>
+            </span>
           </button>
         })}</div>}
       {history && history.pages > 1 && <div className="library-pagination"><button className="button button-secondary" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>上一页</button><span>{page} / {history.pages}</span><button className="button button-secondary" disabled={page >= history.pages} onClick={() => setPage(value => value + 1)}>下一页</button></div>}
