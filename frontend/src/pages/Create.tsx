@@ -6,12 +6,14 @@ import { Sparkle } from '@phosphor-icons/react/dist/csr/Sparkle'
 import { ArrowUpRight } from '@phosphor-icons/react/dist/csr/ArrowUpRight'
 import { ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp'
 import { Copy } from '@phosphor-icons/react/dist/csr/Copy'
+import { ImageSquare } from '@phosphor-icons/react/dist/csr/ImageSquare'
+import { X } from '@phosphor-icons/react/dist/csr/X'
 import { DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple'
 import { ArrowUUpLeft } from '@phosphor-icons/react/dist/csr/ArrowUUpLeft'
 import type { AppState } from '../App'
-import type { AiModel, Generation, Page } from '../lib/types'
+import type { AiModel, Generation, ImageRecord, Page } from '../lib/types'
 import { api, ApiError } from '../lib/api'
-import { generationResolution, generationSizeForRatio, imageAspectRatio } from '../lib/rules'
+import { MAX_BYTES, fileError, generationResolution, generationSizeForRatio, imageAspectRatio } from '../lib/rules'
 import { Modal } from '../components/Modal'
 import { Ambient } from '../components/Ambient'
 import { QuotaStatus } from '../components/QuotaStatus'
@@ -34,13 +36,17 @@ function updateHistoryTask(record: Generation, observed: Generation): Generation
 
 const qualityNames: Record<string, string> = { low: '标准', medium: '精细', high: '高质量', auto: '自动' }
 const message = (error: unknown) => error instanceof Error ? error.message : '请求失败，请稍后重试'
-type Submission = { requestId: string; prompt: string; modelId: number; size: string; quality: string }
+type Submission = { requestId: string; prompt: string; modelId: number; size: string; quality: string; reference?: File; referenceImageId?: string }
+type ReferenceImage = { file: File; preview: string } | { image: ImageRecord; preview: string }
 
 /** AI 创作首页，游客可先写描述；登录后恢复任务，轮询不重放生成请求。 */
 export default function Create({ app }: { app: AppState }) {
   const location = useLocation()
   const navigate = useNavigate()
   const workspace = useRef<HTMLDivElement>(null)
+  const referenceInput = useRef<HTMLInputElement>(null)
+  const [reference, setReference] = useState<ReferenceImage | null>(null)
+  const [referenceError, setReferenceError] = useState('')
   const [models, setModels] = useState<AiModel[]>([])
   const [modelId, setModelId] = useState('')
   const [prompt, setPrompt] = useState(() => typeof location.state?.creationPrompt === 'string' ? location.state.creationPrompt.slice(0, 4000) : '')
@@ -78,6 +84,22 @@ export default function Create({ app }: { app: AppState }) {
   const ratio = imageAspectRatio(size)
   const ratios = [...new Set(model?.sizes.map(imageAspectRatio) || [])]
   const ratioSizes = model?.sizes.filter(value => imageAspectRatio(value) === ratio) || []
+
+  useEffect(() => {
+    if (!reference) return
+    return () => {
+      if (appRef.current.preview?.preview === reference.preview) appRef.current.setPreview(null)
+      if ('file' in reference) URL.revokeObjectURL(reference.preview)
+    }
+  }, [reference])
+
+  function selectReference(file?: File) {
+    if (!file || busy || uncertain) return
+    const invalid = fileError(file) || (file.type === 'image/gif' ? '参考图仅支持 JPG、PNG、WebP 格式' : '')
+    setReferenceError(invalid)
+    if (invalid) return
+    setReference({ file, preview: URL.createObjectURL(file) })
+  }
 
   function changeRatio(nextRatio: string) {
     const nextSize = generationSizeForRatio(model?.sizes || [], nextRatio, size)
@@ -215,10 +237,18 @@ export default function Create({ app }: { app: AppState }) {
     submitting.current = true
     setBusy(true)
     setError('')
-    const request = pending.current || { requestId: crypto.randomUUID(), prompt: prompt.trim(), modelId: model!.id, size, quality }
+    const request = pending.current || { requestId: crypto.randomUUID(), prompt: prompt.trim(), modelId: model!.id, size, quality, reference: reference && 'file' in reference ? reference.file : undefined, referenceImageId: reference && 'image' in reference ? reference.image.id : undefined }
     pending.current = request
     try {
-      const result = await api<Generation>('/generations', { method: 'POST', body: JSON.stringify(request) })
+      // 不明确提交沿用同一份文件与 requestId；参数与参考图一次提交，避免提前上传产生闲置文件。
+      const { reference: referenceFile, ...param } = request
+      let body: string | FormData = JSON.stringify(param)
+      if (referenceFile) {
+        body = new FormData()
+        body.append('param', new Blob([JSON.stringify(param)], { type: 'application/json' }))
+        body.append('reference', referenceFile)
+      }
+      const result = await api<Generation>('/generations', { method: 'POST', body })
       if (!mounted.current) return
       pending.current = null
       setUncertain(false)
@@ -243,8 +273,22 @@ export default function Create({ app }: { app: AppState }) {
   function reuse(task: Generation) {
     if (busy || uncertain) return
     setPrompt(task.prompt)
+    setReference(null)
+    setReferenceError('')
     setDetail(null)
     requestAnimationFrame(() => document.getElementById('creation-prompt')?.focus())
+  }
+
+  function editImage(task: Generation) {
+    if (!task.image || busy || uncertain) return
+    if (task.image.size > MAX_BYTES) { app.notify('参考图不能超过 10 MB', true); return }
+    setReference({ image: task.image, preview: task.image.preview })
+    setReferenceError('')
+    setDetail(null)
+    requestAnimationFrame(() => {
+      workspace.current?.scrollIntoView({ block: 'center' })
+      document.getElementById('creation-prompt')?.focus({ preventScroll: true })
+    })
   }
 
   async function copyPrompt(text: string) {
@@ -263,7 +307,7 @@ export default function Create({ app }: { app: AppState }) {
           <div className="creation-detail-badges"><span>{imageAspectRatio(task.size)}</span><span>{task.size.replace('x', '×')}</span></div>
           {task.image && <a className="creation-detail-download" href={downloadUrl?.href} download={task.image.name} aria-label="下载图片" title="下载图片"><DownloadSimple size={18} /></a>}
         </div>
-        {task.image ? <div className="creation-image"><img src={task.image.url} alt={task.prompt} /></div> :
+        {task.image ? <button type="button" className="creation-image" aria-label="预览生成图片" aria-haspopup="dialog" title="点击预览" onClick={() => app.setPreview(task.image)}><img src={task.image.url} alt={task.prompt} /></button> :
           <div className="creation-placeholder" aria-live="polite">
             <div className="creation-detail-loader"><Sparkle size={38} weight="thin" aria-hidden="true" /></div>
             <h3>{labels[task.status]}</h3>
@@ -294,6 +338,7 @@ export default function Create({ app }: { app: AppState }) {
         </div>
         <footer className="creation-detail-actions">
           <button className="button creation-detail-reuse" disabled={busy || uncertain} onClick={() => reuse(task)}><ArrowUUpLeft size={17} />复用描述</button>
+          {task.image && <button className="button button-secondary creation-detail-edit" disabled={busy || uncertain} onClick={() => editImage(task)}><ImageSquare size={17} />编辑图片</button>}
           {task.image && <button className="button button-secondary" onClick={() => void app.copyUrl(task.image!.url)}><Copy size={16} />复制链接</button>}
         </footer>
       </div>
@@ -310,11 +355,26 @@ export default function Create({ app }: { app: AppState }) {
     <div className="creation-workspace" ref={workspace}>
       <span className="upload-rim" aria-hidden="true" />
       <form className="creation-form" onSubmit={submit} aria-busy={busy}>
+        <input ref={referenceInput} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp"
+          tabIndex={-1} aria-label="选择参考图文件" disabled={!app.user || busy || uncertain}
+          onChange={event => { selectReference(event.currentTarget.files?.[0]); event.currentTarget.value = '' }} />
+        {reference && <div className="creation-reference">
+          <button type="button" className="creation-reference-preview" aria-label="预览参考图" aria-haspopup="dialog"
+            onClick={() => app.setPreview('image' in reference ? reference.image : { name: reference.file.name, preview: reference.preview, size: reference.file.size, width: 0, height: 0 })}>
+            <img src={reference.preview} alt="已选择的参考图" />
+          </button>
+          <button type="button" className="icon-button creation-reference-remove" aria-label="移除参考图" title="移除参考图" disabled={busy || uncertain}
+            onClick={() => { setReference(null); setReferenceError('') }}><X size={15} /></button>
+        </div>}
+        {referenceError && <p className="creation-reference-error" role="alert">{referenceError}</p>}
         <label className="visually-hidden" htmlFor="creation-prompt">画面描述</label>
         <textarea id="creation-prompt" value={prompt} onChange={event => setPrompt(event.target.value)} maxLength={4000} aria-required="true"
           disabled={busy || uncertain} placeholder="描述你想创作的画面…&#10;例如：海边的书店，午后阳光，胶片摄影质感。" />
         <div className="creation-toolbar">
           <div className="creation-options">
+            <button type="button" className={'creation-reference-add' + (reference ? ' has-reference' : '')}
+              aria-label={reference ? '替换参考图' : '添加参考图'} title={!app.user ? '登录后添加参考图' : '添加单张参考图，JPG / PNG / WebP，最大 10 MB'}
+              disabled={!app.user || busy || uncertain} onClick={() => referenceInput.current?.click()}><ImageSquare size={19} /></button>
             <div className="creation-model-option">
               <label className="visually-hidden" htmlFor="creation-model">生成模型</label>
               <select className="format-select" id="creation-model" value={modelId} onChange={event => { setModelId(event.target.value); setSizeNotice('') }} disabled={!app.user || !models.length || busy || uncertain}>
@@ -346,13 +406,18 @@ export default function Create({ app }: { app: AppState }) {
     {detail && <Modal title="创作记录详情" className="creation-detail-modal" onClose={() => setDetail(null)}>{renderResult(detail)}</Modal>}
     {error && <div className="creation-error creation-alert" role="alert">{error}<button className="quiet-link" onClick={() => setRevision(value => value + 1)}>刷新状态</button></div>}
     {historyError && <div className="creation-error creation-alert" role="alert">历史记录加载失败：{historyError}<button className="quiet-link" onClick={() => setHistoryRevision(value => value + 1)}>刷新历史</button></div>}
-    {app.user && (historyLoading || !!visibleRecords.length) && <section className="creation-history" aria-labelledby="creation-history-title">
-      <header><div><h2 id="creation-history-title">创作记录</h2><p>查看生成结果与任务进度</p></div><span>{Math.max(history?.total || 0, visibleRecords.length)} 次创作</span></header>
-      {!visibleRecords.length ? <p className="creation-history-empty">{historyLoading ? '正在加载…' : '还没有创作记录，试着生成第一张图片。'}</p> :
-        <div className="creation-history-grid">{visibleRecords.map(task => {
+    {app.user && <section className="creation-history" aria-labelledby="creation-history-title" aria-busy={historyLoading && !visibleRecords.length}>
+      <header><div><h2 id="creation-history-title">创作记录</h2><p>查看生成结果与任务进度</p></div><span>{historyLoading && !visibleRecords.length ? '正在读取…' : Math.max(history?.total || 0, visibleRecords.length) + ' 次创作'}</span></header>
+      {historyLoading && !visibleRecords.length ? <div className="creation-history-loading" role="status" aria-label="正在加载创作记录">
+        <span className="visually-hidden">正在加载创作记录…</span>
+        <div className="creation-history-grid" aria-hidden="true">
+          {[0, 1, 2].map(index => <div className="creation-history-skeleton" key={index} />)}
+        </div>
+      </div> : !visibleRecords.length ? <p className="creation-history-empty">{historyError ? '暂时无法读取创作记录，请稍后重试。' : '还没有创作记录，试着生成第一张图片。'}</p> :
+        <div className="creation-history-grid">{visibleRecords.map((task, index) => {
           const running = runningStatuses.includes(task.status)
           const failed = task.status === 'FAILED' || task.status === 'SAVE_FAILED' || task.status === 'EXPIRED'
-          return <button className={'creation-history-item' + (running ? ' is-running' : '') + (failed ? ' is-failed' : '') + (detail?.id === task.id ? ' is-selected' : '')} key={task.id} onClick={() => setDetail(task)} aria-haspopup="dialog">
+          return <button className={'creation-history-item' + (running ? ' is-running' : '') + (failed ? ' is-failed' : '') + (detail?.id === task.id ? ' is-selected' : '')} key={task.id} style={{ animationDelay: Math.min(index, 5) * 35 + 'ms' }} onClick={() => setDetail(task)} aria-haspopup="dialog">
             <span className="creation-history-thumb">
               {task.image ? <img src={task.image.preview} alt="" loading="lazy" /> : <span className="creation-history-placeholder">
                 {failed ? <WarningCircle size={30} weight="light" aria-hidden="true" /> : <Sparkle size={30} weight="light" aria-hidden="true" />}

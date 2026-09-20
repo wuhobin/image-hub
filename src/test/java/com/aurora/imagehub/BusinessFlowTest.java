@@ -87,6 +87,8 @@ class BusinessFlowTest {
     private FileInfo stored;
     private final Map<String, String> quotaState = new ConcurrentHashMap<>();
 
+    private final Map<String, byte[]> referenceState = new ConcurrentHashMap<>();
+
     @BeforeEach
     void setup() {
         SaManager.setSaTokenDao(saTokenDao);
@@ -97,6 +99,7 @@ class BusinessFlowTest {
         jdbcTemplate.update("DELETE FROM hub_user");
         codes.clear();
         quotaState.clear();
+        referenceState.clear();
         var locks = new ConcurrentHashMap<String, java.util.concurrent.locks.ReentrantLock>();
         when(redissonClient.getBucket(anyString(), eq(org.redisson.client.codec.StringCodec.INSTANCE))).thenAnswer(call -> {
             String key = call.getArgument(0);
@@ -104,6 +107,18 @@ class BusinessFlowTest {
             when(bucket.get()).thenAnswer(ignored -> quotaState.get(key));
             when(bucket.setIfAbsent(anyString())).thenAnswer(write -> quotaState.putIfAbsent(key, write.getArgument(0)) == null);
             doAnswer(write -> { quotaState.put(key, write.getArgument(0)); return null; }).when(bucket).set(anyString());
+            return bucket;
+        });
+        when(redissonClient.getBucket(anyString(), eq(org.redisson.client.codec.ByteArrayCodec.INSTANCE))).thenAnswer(call -> {
+            String key = call.getArgument(0);
+            org.redisson.api.RBucket<byte[]> bucket = mock(org.redisson.api.RBucket.class);
+            when(bucket.get()).thenAnswer(ignored -> referenceState.get(key));
+            doAnswer(write -> {
+                assertThat(write.<java.time.Duration>getArgument(1)).isEqualTo(java.time.Duration.ofMinutes(10));
+                referenceState.put(key, write.getArgument(0));
+                return null;
+            }).when(bucket).set(any(byte[].class), any(java.time.Duration.class));
+            when(bucket.delete()).thenAnswer(ignored -> referenceState.remove(key) != null);
             return bucket;
         });
         when(redissonClient.getLock(anyString())).thenAnswer(call -> {
@@ -550,6 +565,7 @@ class BusinessFlowTest {
         String legacyId = upload(token, "legacy.png", png()).path("data").path("id").asText();
         jdbcTemplate.update("UPDATE hub_image SET quota_charged = 0 WHERE id = ?", legacyId);
         quotaState.clear();
+        referenceState.clear();
         assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(100);
         // 种入 99 条新版成功记录，其中包含已删除图片；历史记录始终不计费。
         for (int i = 0; i < 99; i++) jdbcTemplate.update("""
@@ -557,11 +573,13 @@ class BusinessFlowTest {
                 SELECT ?,user_id,name,url,type,size,width,height,storage_info,1,1 FROM hub_image WHERE id = ?
                 """, java.util.UUID.randomUUID().toString(), legacyId);
         quotaState.clear();
+        referenceState.clear();
         assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isEqualTo(1);
         String lastId = upload(token, "last.png", png()).path("data").path("id").asText();
         assertThat(lastId).isNotBlank();
         assertThat(delete(lastId, token).path("code").asInt()).isEqualTo(200);
         quotaState.clear();
+        referenceState.clear();
         assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isZero();
         clearInvocations(storage);
         assertThat(upload(token, "over.png", png()).path("code").asInt()).isEqualTo(40301);
@@ -668,6 +686,7 @@ class BusinessFlowTest {
         assertThat(quotaState.get(key)).isEqualTo("u:81");
         assertThat(delete(next, token).path("code").asInt()).isEqualTo(200);
         quotaState.clear();
+        referenceState.clear();
         var restored = get("/api/app/images/quota", token).path("data");
         assertThat(restored.path("used").asLong()).isEqualTo(81);
         assertThat(restored.path("remaining").asInt()).isEqualTo(19);
@@ -688,6 +707,9 @@ class BusinessFlowTest {
 
     @MockitoBean
     AiImageClient aiImageClient;
+
+    @MockitoSpyBean
+    com.aurora.imagehub.mapper.AiGenerationMapper aiGenerationMapper;
 
     @Test
     void aiReservationSharesQuotaAndSuccessfulImageIsChargedOnce() throws Exception {
@@ -746,6 +768,7 @@ class BusinessFlowTest {
         assertThat(aiGenerationService.task(userId, id).getDurationSeconds())
                 .isEqualByComparingTo(java.math.BigDecimal.valueOf(durationMillis, 3));
         quotaState.clear();
+        referenceState.clear();
         assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isZero();
         assertThat(post("/api/app/generations", request, token).path("data").path("id").asText()).isEqualTo(id);
     }
@@ -1073,7 +1096,155 @@ class BusinessFlowTest {
         verify(storage, never()).of(any(MultipartFile.class));
     }
 
-    /** 测试模型使用虚构Key，不触发真实供应商请求。 */
+    /** 参考图仅缓存到 Redis，幂等重试不重复缓存，后台读取原图后清理且只对生成结果扣额。 */
+    @Test
+    void referenceSubmissionIsDurableIdempotentAndChargedOnlyForResult() throws Exception {
+        register("reference-ai", "reference-ai@example.test");
+        String token = login("reference-ai");
+        long userId = userMapper.findByUsername("reference-ai").getId();
+        var request = generationRequest(enableAiModel());
+        var submitted = submitReference(token, request, png(), 1);
+        assertThat(submitted.path("code").asInt()).isEqualTo(200);
+        String id = submitted.path("data").path("id").asText();
+        var saved = aiGenerationMapper.selectById(id);
+        assertThat(saved.getReferenceImageSource()).isEqualTo("redis:image/png");
+        String key = "image-hub:reference:{" + userId + "}:" + id;
+        String dataUrl = "data:image/png;base64," + Base64.getEncoder().encodeToString(png());
+        assertThat(referenceState.get(key)).isEqualTo(png());
+        assertThat(saved.getImagesPath()).isEqualTo("/v1/images/edits");
+        assertThat(imageFileService.quota(userId).getUsed()).isZero();
+        assertThat(imageFileService.quota(userId).getReserved()).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_image WHERE user_id=?", Long.class, userId)).isZero();
+        assertThat(submitReference(token, request, png(), 1).path("data").path("id").asText()).isEqualTo(id);
+        verify(storage, never()).of(any(MultipartFile.class));
+        assertThat(referenceState.get(key)).isEqualTo(png());
+        when(aiImageClient.generate(any())).thenReturn(png());
+        aiGenerationService.runTask(userId, id);
+        assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("SUCCEEDED");
+        assertThat(referenceState).doesNotContainKey(key);
+        assertThat(aiGenerationMapper.selectById(id).getReferenceImageSource()).isEqualTo("redis:image/png");
+        verify(storage, times(1)).of(any(MultipartFile.class));
+        verify(aiImageClient).generate(argThat(task -> dataUrl.equals(task.getReferenceImageSource())
+                && "/v1/images/edits".equals(task.getImagesPath())));
+        assertThat(imageFileService.quota(userId).getUsed()).isEqualTo(1);
+        verify(ossTemplate, never()).delete(any(FileInfo.class));
+    }
+
+    /** 非法文件不得缓存或扣额；写库失败即时移除参考图，不触发云上传或云删除。 */
+    @Test
+    void invalidReferencesAndFailedTaskInsertDoNotChargeQuota() throws Exception {
+        register("invalid-ref", "invalid-ref@example.test");
+        String token = login("invalid-ref");
+        long userId = userMapper.findByUsername("invalid-ref").getId();
+        long modelId = enableAiModel();
+        assertThat(submitReference(null, generationRequest(modelId), png(), 1).path("code").asInt()).isEqualTo(401);
+        assertThat(submitReference(token, generationRequest(modelId), png(), 2).path("code").asInt()).isEqualTo(400);
+        assertThat(submitReference(token, generationRequest(modelId), new byte[0], 1).path("code").asInt()).isEqualTo(400);
+        assertThat(submitReference(token, generationRequest(modelId), "fake image".getBytes(), 1).path("code").asInt()).isEqualTo(400);
+        assertThat(submitReference(token, generationRequest(modelId), new byte[10 * 1024 * 1024 + 1], 1).path("code").asInt()).isEqualTo(413);
+        verify(storage, never()).of(any(MultipartFile.class));
+
+        doThrow(new org.springframework.dao.DataIntegrityViolationException("simulated reference task insert failure"))
+                .when(aiGenerationMapper).insert(any(com.aurora.imagehub.model.entity.AiGeneration.class));
+        assertThat(submitReference(token, generationRequest(modelId), png(), 1).path("code").asInt()).isNotEqualTo(200);
+        verify(storage, never()).of(any(MultipartFile.class));
+        verify(ossTemplate, never()).delete(any(FileInfo.class));
+        assertThat(referenceState).isEmpty();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_ai_generation WHERE user_id=?", Long.class, userId)).isZero();
+        assertThat(imageFileService.quota(userId).getUsed()).isZero();
+        assertThat(imageFileService.quota(userId).getReserved()).isZero();
+    }
+
+    /** 参考图丢失不能降级纯文生图；模型拒绝时也要删除缓存并释放预占。 */
+    @Test
+    void expiredAndFailedReferencesReleaseQuotaWithoutCloudStorage() throws Exception {
+        register("expired-ref", "expired-ref@example.test");
+        String token = login("expired-ref");
+        long userId = userMapper.findByUsername("expired-ref").getId();
+        long modelId = enableAiModel();
+        for (boolean expired : new boolean[]{true, false}) {
+            String id = submitReference(token, generationRequest(modelId), png(), 1).path("data").path("id").asText();
+            String key = "image-hub:reference:{" + userId + "}:" + id;
+            assertThat(referenceState).containsKey(key);
+            if (expired) referenceState.remove(key);
+            else when(aiImageClient.generate(any())).thenThrow(new com.aurora.starter.webmvc.exception.BizException(502, "model refused"));
+            aiGenerationService.runTask(userId, id);
+            var task = aiGenerationService.task(userId, id);
+            assertThat(task.getStatus()).isEqualTo("FAILED");
+            assertThat(task.getErrorMessage()).contains(expired ? "参考图已过期或不可用" : "model refused");
+            assertThat(referenceState).doesNotContainKey(key);
+            assertThat(imageFileService.quota(userId).getUsed()).isZero();
+            assertThat(imageFileService.quota(userId).getReserved()).isZero();
+        }
+        verify(aiImageClient, times(1)).generate(any());
+        verify(storage, never()).of(any(MultipartFile.class));
+    }
+
+    /** 编辑复用本人原图，不重复上传；跨用户、已删除、超限和双参考图请求不能预占额度。 */
+    @Test
+    void editSavedImageReusesOwnedSourceAndRejectsInvalidReferences() throws Exception {
+        register("edit-ai", "edit-ai@example.test");
+        String token = login("edit-ai");
+        long userId = userMapper.findByUsername("edit-ai").getId();
+        long modelId = enableAiModel();
+        when(aiImageClient.generate(any())).thenReturn(png());
+        String sourceId = post("/api/app/generations", generationRequest(modelId), token).path("data").path("id").asText();
+        aiGenerationService.runTask(userId, sourceId);
+        ImageFile source = imageMapper.findOwned(userId, sourceId);
+        assertThat(source).isNotNull();
+        clearInvocations(storage, aiImageClient);
+
+        var request = new java.util.HashMap<String, Object>(generationRequest(modelId));
+        request.put("referenceImageId", sourceId);
+        register("edit-other", "edit-other@example.test");
+        String otherToken = login("edit-other");
+        assertThat(post("/api/app/generations", request, otherToken).path("code").asInt()).isEqualTo(404);
+        assertThat(submitReference(token, request, png(), 1).path("code").asInt()).isEqualTo(400);
+        jdbcTemplate.update("UPDATE hub_image SET deleted=1 WHERE id=?", sourceId);
+        assertThat(post("/api/app/generations", request, token).path("code").asInt()).isEqualTo(404);
+        jdbcTemplate.update("UPDATE hub_image SET deleted=0, size=? WHERE id=?", 10 * 1024 * 1024 + 1, sourceId);
+        assertThat(post("/api/app/generations", request, token).path("code").asInt()).isEqualTo(413);
+        jdbcTemplate.update("UPDATE hub_image SET size=?, type='GIF' WHERE id=?", source.getSize(), sourceId);
+        assertThat(post("/api/app/generations", request, token).path("code").asInt()).isEqualTo(400);
+        assertThat(imageFileService.quota(userId).getReserved()).isZero();
+        assertThat(referenceState).isEmpty();
+        verifyNoInteractions(storage, aiImageClient);
+        jdbcTemplate.update("UPDATE hub_image SET type='PNG' WHERE id=?", sourceId);
+
+        var submitted = post("/api/app/generations", request, token);
+        assertThat(submitted.path("code").asInt()).isEqualTo(200);
+        String id = submitted.path("data").path("id").asText();
+        assertThat(post("/api/app/generations", request, token).path("data").path("id").asText()).isEqualTo(id);
+        assertThat(aiGenerationMapper.selectById(id).getReferenceImageSource()).isEqualTo(source.getUrl());
+        assertThat(aiGenerationMapper.selectById(id).getImagesPath()).isEqualTo("/v1/images/edits");
+        verifyNoInteractions(storage);
+        aiGenerationService.runTask(userId, id);
+        assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("SUCCEEDED");
+        verify(aiImageClient).generate(argThat(task -> source.getUrl().equals(task.getReferenceImageSource())
+                && "/v1/images/edits".equals(task.getImagesPath())));
+        verify(storage, times(1)).of(any(MultipartFile.class));
+        assertThat(imageFileService.quota(userId).getUsed()).isEqualTo(2);
+        assertThat(imageFileService.quota(userId).getReserved()).isZero();
+        assertThat(referenceState).isEmpty();
+    }
+
+    /** 构造与浏览器一致的 JSON 参数 part 和单张图片 part，不访问真实云端。 */
+    private JsonNode submitReference(String token, Map<String, Object> param, byte[] bytes, int count) {
+        var body = new LinkedMultiValueMap<String, Object>();
+        var jsonHeaders = new HttpHeaders();
+        jsonHeaders.setContentType(MediaType.APPLICATION_JSON);
+        body.add("param", new HttpEntity<>(param, jsonHeaders));
+        for (int i = 0; i < count; i++) {
+            body.add("reference", new ByteArrayResource(bytes) {
+                @Override public String getFilename() { return "reference.png"; }
+            });
+        }
+        var requestHeaders = headers(token);
+        requestHeaders.setContentType(MediaType.MULTIPART_FORM_DATA);
+        return testRestTemplate.postForObject("/api/app/generations", new HttpEntity<>(body, requestHeaders), JsonNode.class);
+    }
+
+    /** 测试模型使用虚构 Key，不触发真实供应商请求。 */
     private long enableAiModel() {
         long id = jdbcTemplate.queryForObject("SELECT id FROM hub_ai_model WHERE name='GPT-Image-2'", Long.class);
         jdbcTemplate.update("UPDATE hub_ai_model SET enabled=1, deleted=0, api_key_ciphertext=? WHERE id=?",

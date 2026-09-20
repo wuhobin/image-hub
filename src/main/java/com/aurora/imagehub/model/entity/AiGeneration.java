@@ -36,6 +36,10 @@ public class AiGeneration {
 
     private String prompt;
 
+    /** 新上传记录 redis:MIME 标记，键由任务 ID 推导；复用图库记录原图云地址，图片字节不入库。 */
+    @TableField("reference_image_url")
+    private String referenceImageSource;
+
     private String imageSize;
 
     private String quality;

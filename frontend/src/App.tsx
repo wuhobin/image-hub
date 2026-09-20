@@ -6,10 +6,9 @@ import { SignOut } from '@phosphor-icons/react/dist/csr/SignOut'
 import { UserCircle } from '@phosphor-icons/react/dist/csr/UserCircle'
 import Create from './pages/Create'
 import Profile from './pages/Profile'
-import { Modal } from './components/Modal'
+import { ImagePreview } from './components/ImagePreview'
 import { NoticeToast } from './components/NoticeToast'
 import HistoryLoading from './components/HistoryLoading'
-import { formatSize } from './lib/rules'
 import { useImageHub } from './lib/useImageHub'
 
 const History = lazy(() => import('./pages/History'))
@@ -116,9 +115,6 @@ export default function App() {
       <span className="demo-label">AI 创作 · 图片分享</span>
     </footer>
     <NoticeToast notice={app.notice} onDismiss={() => app.setNotice(null)} />
-    {app.preview && <Modal title={app.preview.name} onClose={() => app.setPreview(null)} className="preview-modal">
-      <div className="preview-image-wrap"><img src={app.preview.url ?? app.preview.preview} alt={app.preview.name} /></div>
-      <div className="preview-caption"><span>{app.preview.width} × {app.preview.height}</span><span>{formatSize(app.preview.size)}</span></div>
-    </Modal>}
+    {app.preview && <ImagePreview key={app.preview.url ?? app.preview.preview} image={app.preview} onClose={() => app.setPreview(null)} />}
   </>
 }

@@ -40,6 +40,20 @@
 .creation-toolbar { display: flex; align-items: flex-end; gap: 12px; }
 .creation-options { display: flex; flex: 1; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
 .creation-options > div { min-width: 0; }
+.creation-reference-add { display: grid; place-items: center; flex: 0 0 40px; width: 40px; height: 40px; padding: 0; border: 1px solid transparent; border-radius: 12px; background: transparent; color: #aab8ce; cursor: pointer; }
+.creation-reference-add:hover:not(:disabled), .creation-reference-add.has-reference { background: #ffffff0a; color: #e1ebfa; }
+.creation-reference-add:disabled { opacity: .45; cursor: not-allowed; }
+.creation-reference { position: relative; width: 72px; height: 72px; margin: 0 8px 16px; }
+.creation-reference-preview { flex: 0 0 72px; width: 72px; height: 72px; padding: 0; overflow: hidden; border: 1px solid #343a45; border-radius: 10px; background: transparent; cursor: zoom-in; }
+.creation-reference-preview img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.creation-reference .creation-reference-remove { position: absolute; top: 3px; right: 3px; width: 24px; height: 24px; min-width: 0; min-height: 0; padding: 0; border: 0; border-radius: 50%; background: #101318d9; color: #fff; opacity: 0; pointer-events: none; }
+.creation-reference:hover .creation-reference-remove, .creation-reference:focus-within .creation-reference-remove { opacity: 1; pointer-events: auto; }
+.creation-reference .creation-reference-remove:hover, .creation-reference .creation-reference-remove:focus-visible { background: #343a45; }
+@media (hover: none) {
+  .creation-reference .creation-reference-remove { opacity: 1; pointer-events: auto; width: 32px; height: 32px; }
+}
+.creation-reference-error { margin: 0 8px 12px; color: #efb5a4; font-size: 12px; }
+.creation-reference-add:focus-visible, .creation-reference-preview:focus-visible { outline: 2px solid #a8c9ff; outline-offset: -2px; }
 .creation-model-option { flex: 0 1 auto; max-width: 176px; }
 .creation-resolution-panel { margin-top: 14px; padding-top: 14px; border-top: 1px solid #ffffff12; }
 .creation-resolution-heading { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 10px; color: #a6a6a6; font-size: 11px; font-variant-numeric: tabular-nums; }
@@ -95,7 +109,8 @@
 .creation-detail-badges span { padding: 4px 8px; }
 .creation-detail-download { display: grid; place-items: center; width: 32px; height: 32px; pointer-events: auto; }
 .creation-detail-download:hover { background: #354053; }
-.creation-image { display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 0; padding: 16px; }
+.creation-image { display: flex; align-items: center; justify-content: center; width: 100%; min-width: 0; min-height: 0; padding: 16px; border: 0; background: transparent; cursor: zoom-in; }
+.creation-image:focus-visible { outline: 2px solid #a8c9ff; outline-offset: -3px; }
 .creation-image img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .creation-placeholder { min-width: 0; min-height: 0; padding: 72px 32px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
 .creation-detail-loader { position: relative; width: 76px; height: 76px; display: grid; place-items: center; margin-bottom: 24px; color: #9ebadb; }
@@ -156,6 +171,17 @@
 .creation-history header > span { flex-shrink: 0; padding: 6px 10px; border: 1px solid #ffffff10; border-radius: 20px; background: #13171ddd; color: #a3adbb; font-size: 11px; font-variant-numeric: tabular-nums; }
 .creation-history-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; }
 .creation-history-item { display: flex; flex-direction: column; min-width: 0; padding: 0; text-align: left; border: 1px solid #ffffff12; border-radius: 16px; background: #11151b; color: #e5e9ef; font-family: inherit; cursor: pointer; overflow: hidden; transition: border-color .2s, background .2s; }
+.creation-history-skeleton { overflow: hidden; border: 1px solid #ffffff08; border-radius: 16px; background: #11151b80; }
+.creation-history-skeleton::before { content: ""; display: block; aspect-ratio: 4 / 3; background: #191f2980; }
+.creation-history-skeleton::after { content: ""; display: block; height: 142px; }
+@media (prefers-reduced-motion: no-preference) {
+  .creation-history > header, .creation-history-empty { animation: creation-history-enter .4s ease-out backwards; }
+  /* 每张卡片仅在挂载时入场；稳定的任务 key 让轮询更新不重播。 */
+  .creation-history-item { animation: creation-history-enter .42s cubic-bezier(.22, 1, .36, 1) backwards; }
+  /* 快响应直接显示卡片，慢响应再淡入占位，避免加载提示闪一下。 */
+  .creation-history-loading { animation: creation-history-enter .3s ease-out .15s backwards; }
+}
+@keyframes creation-history-enter { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
 .creation-history-item:not(:disabled):hover, .creation-history-item.is-selected { border-color: #7e93b36b; background: #171c24; }
 .creation-history-item:focus-visible { border-color: #a8c9ff; outline: 2px solid #a8c9ff; outline-offset: -2px; }
 .creation-history-thumb { position: relative; isolation: isolate; display: grid; place-items: center; width: 100%; aspect-ratio: 4 / 3; overflow: hidden; background: #191f29; color: #8294ad; }
@@ -193,8 +219,14 @@
 .creation-history-item:hover .creation-history-footer svg { color: #d3e1f5; }
 .creation-history-empty { padding: 44px; border: 1px dashed #303d51; border-radius: 16px; color: #9baac0; text-align: center; font-size: 13px; }
 .creation-page button.quiet-link, .admin-models-page button.quiet-link { background: transparent; border: 0; font-family: inherit; cursor: pointer; min-height: 36px; padding: 4px 0; }
-@media (max-width: 1050px) { .creation-history-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 560px) { .creation-history-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 1050px) {
+  .creation-history-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .creation-history-skeleton:nth-child(3) { display: none; }
+}
+@media (max-width: 560px) {
+  .creation-history-grid { grid-template-columns: minmax(0, 1fr); }
+  .creation-history-skeleton:nth-child(2) { display: none; }
+}
 @media (max-width: 760px) {
   .creation-workspace { margin-top: 38px; }
   .creation-history-grid { gap: 16px; }
@@ -205,8 +237,10 @@
   .creation-workspace { margin-top: 33px; border-radius: 20px; }
   .creation-form { padding: 18px 10px 10px; }
   .creation-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) 44px; gap: 8px; }
-  .creation-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-column: 1 / -1; }
-  .creation-model-option { max-width: none; }
+  .creation-options { display: grid; grid-template-columns: 44px minmax(0, 1fr) minmax(0, 1fr); grid-column: 1 / -1; }
+  .creation-reference-add { width: 44px; height: 44px; }
+  .creation-model-option { grid-column: 2 / -1; max-width: none; }
+  .creation-options > .creation-ratio-picker { grid-column: 1 / 3; }
   .creation-form select { min-height: 44px; padding-inline: 8px; }
   .creation-submit { grid-column: 2; }
   .creation-caption { padding-inline: 4px; gap: 8px; }

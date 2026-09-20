@@ -25,4 +25,8 @@ public class GenerationParam {
 
     @NotBlank @Size(max = 20)
     private String quality;
+
+    /** 复用本人已保存的图片作为参考图；不能与上传文件同时提供。 */
+    @Pattern(regexp = "[a-fA-F0-9-]{36}")
+    private String referenceImageId;
 }

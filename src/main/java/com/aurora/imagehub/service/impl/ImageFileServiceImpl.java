@@ -63,6 +63,23 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
 
     @Override
     public ImageVO upload(long userId, MultipartFile file) {
+        String mime = validateUpload(file);
+        ImageDimensionsBO dimensions = dimensions(file);
+        String id = UUID.randomUUID().toString();
+        return uploadQuotaCache.consume(userId, id, () -> uploadValidated(userId, file, mime, dimensions, id));
+    }
+
+    /** 参考图沿用普通上传的真实内容及 10 MB 校验，限制为模型支持的静态图片格式。 */
+    @Override
+    public String validateReference(MultipartFile file) {
+        String mime = validateUpload(file);
+        if ("image/gif".equals(mime)) throw new BizException(400, "参考图仅支持 JPG、PNG、WEBP 格式");
+        dimensions(file);
+        return mime;
+    }
+
+    /** 普通上传与参考图共用校验，不能信任扩展名或客户端 Content-Type。 */
+    private String validateUpload(MultipartFile file) {
         String mime;
         try {
             mime = fileUploadValidator.validate(file);
@@ -70,9 +87,7 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
             throw new BizException(400, "图片校验失败：仅支持真实的 JPG、PNG、WEBP、GIF，单张最大 10 MB");
         }
         if (!TYPES.containsKey(mime)) throw new BizException(400, "不支持的图片格式");
-        ImageDimensionsBO dimensions = dimensions(file);
-        String id = UUID.randomUUID().toString();
-        return uploadQuotaCache.consume(userId, id, () -> uploadValidated(userId, file, mime, dimensions, id));
+        return mime;
     }
 
     /** 普通上传先保存云文件，再写库；回读失败不撤销已经成功保存的图片。 */

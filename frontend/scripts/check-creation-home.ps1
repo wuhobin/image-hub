@@ -28,9 +28,13 @@ if (!sessionStorage.getItem('creationHomeCheck')) {
   sessionStorage.setItem('creationHomeCheck', '1');
 }
 window.creationHomeRequests = [];
+window.historyEntrances = 0;
+document.addEventListener('animationstart', event => {
+  if (event.animationName === 'creation-history-enter' && event.target.classList.contains('creation-history-item')) window.historyEntrances++;
+});
 window.creationTask = JSON.parse(sessionStorage.getItem('qa-creation-task') || 'null');
 const originalFetch = window.fetch;
-window.fetch = (url, options = {}) => {
+window.fetch = async (url, options = {}) => {
   const path = new URL(String(url), location.href).pathname;
   if (!path.startsWith('/api/')) return originalFetch(url, options);
   window.creationHomeRequests.push({ path, method: options.method || 'GET' });
@@ -41,12 +45,21 @@ window.fetch = (url, options = {}) => {
   else if (path.endsWith('/generations/models')) data = [{ id: 1, name: 'QA image model', sizes: ['1024x1024', '2048x2048', '2880x2880', '1536x1024', '2160x1440', '3456x2304', '1024x1536', '1440x2160', '2304x3456', '1280x720', '2560x1440', '3840x2160', '720x1280', '1440x2560', '2160x3840', '1024x768', '2048x1536', '3200x2400', '768x1024', '1536x2048', '2400x3200', '1344x576', '2016x864', '3808x1632'], defaultSize: '1024x1024', qualities: ['medium', 'high'], defaultQuality: 'medium' }, { id: 2, name: 'Custom size model', sizes: ['1536x864'], defaultSize: '1536x864', qualities: ['medium'], defaultQuality: 'medium' }];
   else if (path.endsWith('/generations/active')) data = ['QUEUED', 'GENERATING', 'SAVING'].includes(window.creationTask?.status) ? window.creationTask : null;
   else if (path.endsWith('/generations') && options.method === 'POST') {
-    window.creationRequest = JSON.parse(options.body);
+    window.creationRequest = JSON.parse(options.body instanceof FormData ? await options.body.get('param').text() : options.body);
+    window.referenceRequests ||= [];
+    if (options.body instanceof FormData) {
+      const file = options.body.get('reference');
+      window.referenceRequests.push({ id: window.creationRequest.requestId, name: file.name, size: file.size, bytes: Array.from(new Uint8Array(await file.arrayBuffer())), contentType: new Headers(options.headers).get('Content-Type') });
+    }
+    if (window.failReferenceOnce) { window.failReferenceOnce = false; throw new TypeError('Simulated connection loss'); }
     const pixel = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1kAAAAASUVORK5CYII=';
     data = window.creationTask = { ...window.creationRequest, id: 'qa-task', status: 'SUCCEEDED', modelName: 'QA image model', errorMessage: null, createTime: '2026-09-15 12:00:00', image: { id: 'qa-image', name: 'QA image', url: pixel, preview: pixel, width: 1, height: 1, size: 68 } };
     sessionStorage.setItem('qa-creation-task', JSON.stringify(data));
   }
-  else if (path.endsWith('/generations')) data = { records: window.creationTask ? [window.creationTask] : [], total: window.creationTask ? 1 : 0, current: 1, size: 12, pages: 1 };
+  else if (path.endsWith('/generations')) {
+    if (sessionStorage.getItem('qa-hold-history')) await new Promise(resolve => { window.releaseHistory = resolve; });
+    data = { records: window.creationTask ? [window.creationTask] : [], total: window.creationTask ? 1 : 0, current: 1, size: 12, pages: 1 };
+  }
   else if (path.endsWith('/images/quota')) data = { total: 100, used: 0, reserved: 0, remaining: 100 };
   else return Promise.resolve(new Response(JSON.stringify({ code: 500, message: 'Unexpected test API: ' + path })));
   return Promise.resolve(new Response(JSON.stringify({ code: 200, data }), { headers: { 'Content-Type': 'application/json' } }));
@@ -70,6 +83,55 @@ try {
     Browser wait '#creation-model' | Out-Null
     AssertJs 'location.pathname === "/" && document.querySelector("#creation-prompt").value === "海边书店，午后的阳光，胶片质感" && !history.state.usr'
     AssertJs 'Array.from(document.querySelectorAll(".creation-ratio-option input"), option => option.value).join(",") === "1:1,3:2,2:3,16:9,9:16,4:3,3:4,21:9"'
+
+    $referenceFile = Join-Path $outputDir 'reference.png'
+    $replacementFile = Join-Path $outputDir 'reference-replacement.png'
+    [IO.File]::WriteAllBytes($referenceFile, [Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1kAAAAASUVORK5CYII='))
+    Copy-Item -LiteralPath $referenceFile -Destination $replacementFile -Force
+    $referenceFile = (Resolve-Path $referenceFile).Path
+    $replacementFile = (Resolve-Path $replacementFile).Path
+    AssertJs 'document.querySelector(".creation-options").firstElementChild.classList.contains("creation-reference-add")'
+    Browser upload 'input[type=file]' $referenceFile | Out-Null
+    Browser wait '.creation-reference' | Out-Null
+    AssertJs '(() => { window.firstReferencePreview = document.querySelector(".creation-reference img").src; return !window.creationRequest && !document.querySelector(".creation-reference-info") && document.querySelector(".creation-reference").textContent.trim() === ""; })()'
+    Browser hover '.creation-heading' | Out-Null
+    AssertJs 'getComputedStyle(document.querySelector(".creation-reference-remove")).opacity === "0"'
+    Browser hover '.creation-reference' | Out-Null
+    AssertJs '(() => { const button = document.querySelector(".creation-reference-remove"); const box = button.getBoundingClientRect(); const image = document.querySelector(".creation-reference").getBoundingClientRect(); return getComputedStyle(button).opacity === "1" && box.right <= image.right && box.top >= image.top && box.top < image.top + 8; })()'
+    Browser hover '.creation-heading' | Out-Null
+    Browser focus '.creation-reference-remove' | Out-Null
+    AssertJs 'getComputedStyle(document.querySelector(".creation-reference-remove")).opacity === "1"'
+    Browser click '.creation-reference-preview' | Out-Null
+    Browser wait '.preview-modal[open] img' | Out-Null
+    Browser press Escape | Out-Null
+    Browser upload 'input[type=file]' $replacementFile | Out-Null
+    AssertJs '(() => { window.replacedReferencePreview = document.querySelector(".creation-reference img").src; return document.querySelectorAll(".creation-reference").length === 1 && window.replacedReferencePreview !== window.firstReferencePreview; })()'
+    AssertJs '(() => { const input = document.querySelector("input[type=file]"); const dt = new DataTransfer(); dt.items.add(new File(["GIF89a"], "bad.gif", {type:"image/gif"})); input.files = dt.files; input.dispatchEvent(new Event("change", {bubbles:true})); return true; })()'
+    Browser wait '.creation-reference-error' | Out-Null
+    AssertJs 'document.querySelector(".creation-reference img").src === window.replacedReferencePreview'
+    AssertJs '(() => { const input = document.querySelector("input[type=file]"); const dt = new DataTransfer(); dt.items.add(new File([new Uint8Array(10485761)], "too-big.png", {type:"image/png"})); input.files = dt.files; input.dispatchEvent(new Event("change", {bubbles:true})); return true; })()'
+    AssertJs 'document.querySelector(".creation-reference-error").textContent.includes("10")'
+    Browser hover '.creation-reference' | Out-Null
+    Browser click '.creation-reference-remove' | Out-Null
+    AssertJs '!document.querySelector(".creation-reference") && !document.querySelector(".creation-reference-error")'
+    Browser upload 'input[type=file]' $referenceFile | Out-Null
+    foreach ($width in @(320, 390, 1440)) {
+        Browser set viewport $width 1000 | Out-Null
+        AssertJs 'document.documentElement.scrollWidth <= innerWidth && document.querySelector(".creation-reference-add").getBoundingClientRect().right <= document.querySelector(".creation-model-option").getBoundingClientRect().left'
+        AssertJs 'document.querySelector(".creation-ratio-trigger").getBoundingClientRect().height <= 44'
+        Browser screenshot (Join-Path $outputDir "reference-$width.png") | Out-Null
+    }
+    AssertJs '(() => { window.failReferenceOnce = true; return true; })()'
+    Browser click '.creation-submit' | Out-Null
+    Browser wait --fn 'document.querySelector(".creation-submit").title === "确认本次提交"' | Out-Null
+    AssertJs 'document.querySelector(".creation-reference-add").disabled && document.querySelector(".creation-reference-remove").disabled'
+    Browser click '.creation-submit' | Out-Null
+    Browser wait --fn 'document.querySelector(".creation-submit").title === "生成图片" && !document.querySelector(".creation-submit").disabled' | Out-Null
+    AssertJs 'window.referenceRequests.length === 2 && JSON.stringify(window.referenceRequests[0]) === JSON.stringify(window.referenceRequests[1]) && window.referenceRequests[0].contentType === null'
+    Browser hover '.creation-reference' | Out-Null
+    Browser click '.creation-reference-remove' | Out-Null
+    AssertJs '(() => { delete window.creationRequest; return true; })()'
+
     Browser click '#creation-size' | Out-Null
     Browser press ArrowRight | Out-Null
     AssertJs 'document.querySelector(".creation-ratio-option input:checked").value === "3:2" && document.querySelector("#creation-resolution input:checked").value === "1536x1024"'
@@ -124,8 +186,18 @@ try {
     }
     Browser screenshot (Join-Path $outputDir 'creation-resolutions-desktop.png') | Out-Null
     AssertJs '!document.querySelector("main > .creation-result") && !!document.querySelector(".creation-history-item img")'
+    AssertJs '(() => { sessionStorage.setItem("qa-hold-history", "1"); return true; })()'
     Browser reload | Out-Null
+    Browser wait '.creation-history-loading' | Out-Null
+    Browser wait --fn 'typeof window.releaseHistory === "function"' | Out-Null
+    AssertJs '(() => { window.historyPlaceholderHeight = document.querySelector(".creation-history-grid").getBoundingClientRect().height; return document.querySelector(".creation-history").getAttribute("aria-busy") === "true" && window.historyPlaceholderHeight > 350; })()'
+    Browser screenshot (Join-Path $outputDir 'creation-history-loading.png') | Out-Null
+    AssertJs '(() => { sessionStorage.removeItem("qa-hold-history"); window.releaseHistory(); return true; })()'
     Browser wait '.creation-history-item' | Out-Null
+    Browser wait --fn 'window.historyEntrances === 1 && document.querySelector(".creation-history-item").getAnimations().length === 0' | Out-Null
+    AssertJs 'Math.abs(document.querySelector(".creation-history-grid").getBoundingClientRect().height - window.historyPlaceholderHeight) < 3 && getComputedStyle(document.querySelector(".creation-history-item")).opacity === "1"'
+    Browser fill '#creation-prompt' '检查输入不会重复播放列表动画' | Out-Null
+    AssertJs 'window.historyEntrances === 1 && document.querySelector(".creation-history-item").getAnimations().length === 0'
     AssertJs '!document.querySelector(".creation-result") && !document.querySelector("dialog[open]")'
     Browser focus '.creation-history-item' | Out-Null
     Browser press Enter | Out-Null
@@ -135,7 +207,22 @@ try {
     AssertJs 'document.querySelector(".creation-detail-modal").scrollWidth <= document.querySelector(".creation-detail-modal").clientWidth'
     Browser screenshot (Join-Path $outputDir 'creation-detail-mobile.png') | Out-Null
     Browser set viewport 1440 1000 | Out-Null
+    Browser screenshot (Join-Path $outputDir 'creation-detail-edit-desktop.png') | Out-Null
+    Browser click '.creation-detail-edit' | Out-Null
+    Browser wait '.creation-reference' | Out-Null
+    AssertJs '!document.querySelector("dialog[open]") && document.querySelector(".creation-reference img").src === window.creationTask.image.preview && document.activeElement.id === "creation-prompt" && !window.creationRequest'
+    Browser click '.creation-reference-preview' | Out-Null
+    Browser wait '.preview-modal[open] img' | Out-Null
     Browser press Escape | Out-Null
+    Browser fill '#creation-prompt' '把背景改成海边，保留主体' | Out-Null
+    Browser click '.creation-submit' | Out-Null
+    Browser wait --fn 'window.creationRequest?.referenceImageId === "qa-image" && !document.querySelector(".creation-submit").disabled' | Out-Null
+    AssertJs '!window.creationRequest.reference && window.referenceRequests.length === 0'
+    Browser hover '.creation-reference' | Out-Null
+    Browser screenshot (Join-Path $outputDir 'creation-reference-edit-desktop.png') | Out-Null
+    Browser click '.creation-reference-remove' | Out-Null
+    Browser click '.creation-submit' | Out-Null
+    Browser wait --fn 'window.creationRequest && !window.creationRequest.referenceImageId && !document.querySelector(".creation-submit").disabled' | Out-Null
     foreach ($status in @('GENERATING', 'FAILED')) {
         AssertJs "(() => { window.creationTask.status = '$status'; window.creationTask.image = null; sessionStorage.setItem('qa-creation-task', JSON.stringify(window.creationTask)); return true; })()"
         Browser reload | Out-Null
@@ -153,7 +240,7 @@ try {
         Browser focus '.creation-history-item' | Out-Null
         Browser press Enter | Out-Null
         Browser wait '.creation-detail-modal[open]' | Out-Null
-        AssertJs '!!document.querySelector(".creation-detail-modal .creation-placeholder") && !document.querySelector("main > .creation-result")'
+        AssertJs '!!document.querySelector(".creation-detail-modal .creation-placeholder") && !document.querySelector("main > .creation-result") && !document.querySelector(".creation-detail-edit")'
         if ($status -eq 'FAILED') { AssertJs '!document.querySelector(".creation-detail-modal .creation-result-actions")' }
         Browser press Escape | Out-Null
         AssertJs '!document.querySelector(".creation-result") && !document.querySelector("dialog[open]")'
@@ -193,7 +280,7 @@ try {
     Browser wait '.creation-page canvas' | Out-Null
     AssertJs 'document.querySelectorAll(".creation-page canvas").length === 1 && !document.querySelector(".webgl-unavailable")'
     Browser screenshot (Join-Path $outputDir 'creation-home-desktop.png') --full | Out-Null
-    Write-Output 'PASS: AI homepage, 24 calculated ratio/resolution submissions, retained tiers and custom models, refresh without auto-opening tasks, history detail dialogs, active-task recovery, login and mobile layout.'
+    Write-Output 'PASS: Single reference preview/replace/remove, validation, multipart retry identity, responsive layout; AI homepage, 24 calculated ratio/resolution submissions, retained tiers and custom models, refresh without auto-opening tasks, history detail dialogs, active-task recovery, login and mobile layout.'
 } catch {
     Browser snapshot | Write-Output
     throw

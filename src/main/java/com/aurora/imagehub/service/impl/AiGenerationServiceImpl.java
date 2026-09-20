@@ -29,6 +29,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -62,6 +63,13 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
     /** 同请求编号返回原任务；数据库唯一约束覆盖多个进程之间的并发提交。 */
     @Override
     public GenerationVO submit(long userId, GenerationParam param) {
+        return submit(userId, param, null);
+    }
+
+    /** 新参考图临时缓存，图库参考图校验归属后复用云地址；同账号串行且重试幂等。 */
+    @Override
+    public GenerationVO submit(long userId, GenerationParam param, MultipartFile reference) {
+        if (reference != null && param.getReferenceImageId() != null) throw new BizException(400, "只能选择一张参考图");
         AiGeneration previous = byRequest(userId, param.getRequestId());
         if (previous != null) return task(userId, previous.getId());
         GenerationVO submitted = uploadQuotaCache.reserveGeneration(userId, () -> {
@@ -83,19 +91,62 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
             task.setModelName(model.getName());
             task.setModelCode(model.getModelCode());
             task.setBaseUrl(model.getBaseUrl());
-            task.setImagesPath(model.getImagesPath());
+            String imagesPath = model.getImagesPath();
+            if (reference != null || param.getReferenceImageId() != null) {
+                if (!imagesPath.endsWith("/generations") && !imagesPath.endsWith("/edits")) {
+                    throw new BizException(400, "参考图需要模型接口路径以 /generations 或 /edits 结尾");
+                }
+                imagesPath = imagesPath.replaceFirst("/generations$", "/edits");
+            }
+            if (param.getReferenceImageId() != null) {
+                // 只接受本人未删除的图片 ID，云地址取自服务端记录，避免客户端指定任意 URL。
+                ImageFile source = imageMapper.findOwned(userId, param.getReferenceImageId());
+                if (source == null) throw new BizException(404, "参考图不存在或已删除");
+                if (source.getSize() > 10 * 1024 * 1024) throw new BizException(413, "参考图不能超过 10 MB");
+                if (!List.of("JPG", "PNG", "WEBP").contains(source.getType())) {
+                    throw new BizException(400, "参考图仅支持 JPG、PNG、WEBP 格式");
+                }
+                task.setReferenceImageSource(source.getUrl());
+            }
+            task.setImagesPath(imagesPath);
             task.setApiKeyCiphertext(model.getApiKeyCiphertext());
             task.setPrompt(param.getPrompt().trim());
             task.setImageSize(param.getSize());
             task.setQuality(param.getQuality());
             task.setStatus(TaskStatus.QUEUED.name());
+            boolean cachedReference = false;
             try {
+                if (reference != null) {
+                    String mime = imageFileService.validateReference(reference);
+                    task.setReferenceImageSource("redis:" + mime);
+                    byte[] referenceBytes;
+                    try {
+                        referenceBytes = reference.getBytes();
+                    } catch (java.io.IOException e) {
+                        throw new BizException(400, "参考图读取失败，请重新选择图片", e);
+                    }
+                    // 参考图从提交起最多缓存 10 分钟；排队超时明确失败，工作线程已读取后不受过期影响。
+                    cachedReference = true;
+                    referenceBucket(task).set(referenceBytes, java.time.Duration.ofMinutes(10));
+                }
                 uploadQuotaCache.checkOwnership(userId);
                 aiGenerationMapper.insert(task);
-            } catch (DuplicateKeyException e) {
-                AiGeneration duplicate = byRequest(userId, param.getRequestId());
-                if (duplicate != null) return response(duplicate);
-                throw new BizException(409, "已有未完成的创作，请刷新任务");
+            } catch (RuntimeException e) {
+                // 写库结果不明时先查本任务；无法确认则交给 TTL，不能删掉已接收任务的参考图。
+                if (cachedReference) {
+                    try {
+                        AiGeneration saved = byRequest(userId, param.getRequestId());
+                        if (saved == null || !task.getId().equals(saved.getId())) discardReference(task);
+                    } catch (RuntimeException verification) {
+                        log.info("参考图入库状态无法确认，等待缓存过期：taskId={}", task.getId(), verification);
+                    }
+                }
+                if (e instanceof DuplicateKeyException) {
+                    AiGeneration duplicate = byRequest(userId, param.getRequestId());
+                    if (duplicate != null) return response(duplicate);
+                    throw new BizException(409, "已有未完成的创作，请刷新任务");
+                }
+                throw e;
             }
             return task(userId, task.getId());
         });
@@ -172,7 +223,20 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
             }
             TaskStage stage = TaskStage.MODEL_REQUEST;
             try {
-                byte[] bytes = aiImageClient.generate(task);
+                boolean cachedReference = task.getReferenceImageSource() != null && task.getReferenceImageSource().startsWith("redis:");
+                byte[] bytes;
+                try {
+                    if (cachedReference) {
+                        byte[] referenceBytes = referenceBucket(task).get();
+                        if (referenceBytes == null) throw new BizException(410, "参考图已过期或不可用，请重新选择图片并提交");
+                        // Redis 仅存原始字节；发送前才编码，不把图片内容更新到数据库。
+                        task.setReferenceImageSource("data:" + task.getReferenceImageSource().substring(6)
+                                + ";base64," + java.util.Base64.getEncoder().encodeToString(referenceBytes));
+                    }
+                    bytes = aiImageClient.generate(task);
+                } finally {
+                    if (cachedReference) discardReference(task);
+                }
                 stage = TaskStage.SAVE_IMAGE;
                 requireTaskLock(id);
                 long savingStarted = System.nanoTime();
@@ -247,6 +311,21 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
         imageFileService.discardGenerated(task.getPendingStorageInfo());
         requireTaskLock(task.getId());
         aiGenerationMapper.clearPendingUpload(task.getUserId(), task.getId());
+    }
+
+    /** 缓存定位只由可信任务归属和服务端 UUID 生成，不能用客户端指定的键访问缓存。 */
+    private org.redisson.api.RBucket<byte[]> referenceBucket(AiGeneration task) {
+        return redissonClient.getBucket("image-hub:reference:{" + task.getUserId() + "}:" + task.getId(),
+                org.redisson.client.codec.ByteArrayCodec.INSTANCE);
+    }
+
+    /** 模型调用结束即清理；Redis 暂不可用时由 TTL 兜底，不改变已经取得的生成结果。 */
+    private void discardReference(AiGeneration task) {
+        try {
+            referenceBucket(task).delete();
+        } catch (RuntimeException e) {
+            log.info("参考图缓存清理失败，等待自动过期：taskId={}", task.getId(), e);
+        }
     }
 
     private AiGeneration byRequest(long userId, String requestId) {

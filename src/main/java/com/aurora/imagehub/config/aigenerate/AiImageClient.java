@@ -87,9 +87,17 @@ public class AiImageClient {
                                 var objectMapper = new ObjectMapper();
                                 var requestBody = (com.fasterxml.jackson.databind.node.ObjectNode) objectMapper.readTree(   body);
                                 requestBody.put("moderation", "low");
+                                if (task.getReferenceImageSource() != null) {
+                                    requestBody.putArray("images").addObject().put("image_url", task.getReferenceImageSource());
+                                }
                                 byte[] payload = objectMapper.writeValueAsBytes(requestBody);
                                 request.getHeaders().setContentLength(payload.length);
-                                log.info("OpenAI 请求：taskId={}, 请求参数={}", task.getId(), new String(payload, StandardCharsets.UTF_8));
+                                // 图片内容随请求发送，但不复制进日志；仍保留其他请求参数便于排查。
+                                if (task.getReferenceImageSource() != null && task.getReferenceImageSource().startsWith("data:")) {
+                                    ((com.fasterxml.jackson.databind.node.ObjectNode) requestBody.withArray("images").get(0))
+                                            .put("image_url", "[参考图 Base64 内容已省略]");
+                                }
+                                log.info("OpenAI 请求：taskId={}, 请求参数={}", task.getId(), requestBody);
                                 ClientHttpResponse response = execution.execute(request, payload);
                                 httpStatus[0] = response.getStatusCode().value();
                                 return response.getStatusCode().is2xxSuccessful() ? limitResponse(response) : response;

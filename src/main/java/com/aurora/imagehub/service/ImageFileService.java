@@ -14,6 +14,9 @@ public interface ImageFileService extends IService<ImageFile> {
     /** 校验并上传单张图片，记录入库失败时补偿删除云端文件。 */
     ImageVO upload(long userId, MultipartFile file);
 
+    /** 校验单张 JPG/PNG/WEBP 参考图并返回真实 MIME，不上传云端、不扣额、不入库。 */
+    String validateReference(MultipartFile file);
+
     /** 分页图片及全部匹配图片的总大小；sort 为 desc 最新优先、asc 最早优先。 */
     ImageListVO list(long userId, String search, String type, String sourceType, int page, int pageSize, String sort);
 

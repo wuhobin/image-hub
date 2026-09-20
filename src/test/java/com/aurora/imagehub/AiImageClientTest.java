@@ -34,24 +34,30 @@ class AiImageClientTest {
 
     private org.apache.logging.log4j.core.appender.OutputStreamAppender outputStreamAppender;
 
-    private org.apache.logging.log4j.Level previousLevel;
+    private org.apache.logging.log4j.core.config.LoggerConfig previousLoggerConfig;
 
     @BeforeEach
     void captureDiagnostics() {
-        previousLevel = aiImageClientLogger.getLevel();
-        aiImageClientLogger.setLevel(org.apache.logging.log4j.Level.INFO);
+        var configuration = aiImageClientLogger.getContext().getConfiguration();
+        previousLoggerConfig = configuration.getLoggers().get(AiImageClient.class.getName());
         outputStreamAppender = org.apache.logging.log4j.core.appender.OutputStreamAppender.newBuilder()
                 .setName("AI-diagnostics-test").setTarget(logOutput)
                 .setLayout(org.apache.logging.log4j.core.layout.PatternLayout.newBuilder().withPattern("%level %message%n%throwable").build())
                 .build();
         outputStreamAppender.start();
-        aiImageClientLogger.addAppender(outputStreamAppender);
+        var loggerConfig = new org.apache.logging.log4j.core.config.LoggerConfig(AiImageClient.class.getName(),
+                org.apache.logging.log4j.Level.INFO, false);
+        loggerConfig.addAppender(outputStreamAppender, org.apache.logging.log4j.Level.INFO, null);
+        configuration.addLogger(AiImageClient.class.getName(), loggerConfig);
+        aiImageClientLogger.getContext().updateLoggers();
     }
 
     @AfterEach
     void restoreLogging() {
-        aiImageClientLogger.removeAppender(outputStreamAppender);
-        aiImageClientLogger.setLevel(previousLevel);
+        var configuration = aiImageClientLogger.getContext().getConfiguration();
+        configuration.removeLogger(AiImageClient.class.getName());
+        if (previousLoggerConfig != null) configuration.addLogger(AiImageClient.class.getName(), previousLoggerConfig);
+        aiImageClientLogger.getContext().updateLoggers();
         outputStreamAppender.stop();
     }
 
@@ -82,6 +88,56 @@ class AiImageClientTest {
             contextRunner.withPropertyValues("image-hub.ai.connect-timeout-seconds=" + invalid).run(context ->
                     assertThat(context).hasFailed().getFailure().hasRootCauseInstanceOf(IllegalArgumentException.class));
         }
+    }
+
+    /** 真实 HTTP 桩验证 edits JSON 参考图字段，且无参考图时保持原有文字生图请求。 */
+    @Test
+    void sendsReferenceImageToEditsWithoutChangingTextOnlyRequests() throws Exception {
+        var captured = new AtomicReference<String>();
+        var calls = new AtomicInteger();
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/images/", exchange -> {
+            captured.set(exchange.getRequestURI().getPath() + "\n"
+                    + new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            calls.incrementAndGet();
+            byte[] response = "{\"data\":[{\"b64_json\":\"AQID\"}]}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            try (var body = exchange.getResponseBody()) { body.write(response); }
+        });
+        server.start();
+        try {
+            var modelKeyCipher = new ModelKeyCipher("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+            var aiEndpointPolicy = mock(AiEndpointPolicy.class);
+            when(aiEndpointPolicy.requirePublicHttps(anyString())).thenAnswer(call -> URI.create(call.getArgument(0)));
+            var aiImageClient = new AiImageClient(modelKeyCipher, aiEndpointPolicy, new AiImageLimits("10MB"), 5, 30);
+            var task = new AiGeneration();
+            task.setId("reference-test");
+            task.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
+            task.setApiKeyCiphertext(modelKeyCipher.encrypt("test-only-key"));
+            task.setModelCode("gpt-image-2");
+            task.setPrompt("保留参考图主体，背景改成海边");
+            task.setImageSize("1024x1024");
+            task.setQuality("medium");
+            for (boolean withReference : new boolean[]{true, false}) {
+                task.setImagesPath(withReference ? "/v1/images/edits" : "/v1/images/generations");
+                task.setReferenceImageSource(withReference ? "data:image/png;base64,cHJpdmF0ZS1yZWZlcmVuY2U=" : null);
+                assertThat(aiImageClient.generate(task)).containsExactly(1, 2, 3);
+                String[] request = captured.get().split("\n", 2);
+                assertThat(request[0]).isEqualTo(task.getImagesPath());
+                var body = new ObjectMapper().readTree(request[1]);
+                assertThat(body.path("moderation").asText()).isEqualTo("low");
+                assertThat(body.path("n").asInt()).isEqualTo(1);
+                if (withReference) {
+                    assertThat(body.path("images").size()).isEqualTo(1);
+                    assertThat(body.path("images").get(0).path("image_url").asText()).isEqualTo(task.getReferenceImageSource());
+                    assertThat(diagnosticLogs()).contains("[参考图 Base64 内容已省略]").doesNotContain(task.getReferenceImageSource());
+                } else {
+                    assertThat(body.has("images")).isFalse();
+                }
+            }
+            assertThat(calls.get()).isEqualTo(2);
+        } finally { server.stop(0); }
     }
 
     @Test

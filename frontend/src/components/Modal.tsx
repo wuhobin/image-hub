@@ -1,9 +1,10 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useId, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { X } from '@phosphor-icons/react/dist/csr/X'
 
 export function Modal({ title, onClose, children, className = '' }: { title: string; onClose: () => void; children: ReactNode; className?: string }) {
   const ref = useRef<HTMLDialogElement>(null)
+  const titleId = useId()
   useEffect(() => {
     const dialog = ref.current!
     const previousFocus = document.activeElement
@@ -22,9 +23,9 @@ export function Modal({ title, onClose, children, className = '' }: { title: str
     }
   }, [])
   return <dialog ref={ref} className={`modal ${className}`} onCancel={onClose}
-    onClick={event => { if (event.target === event.currentTarget) onClose() }} aria-labelledby="modal-title">
+    onClick={event => { if (event.target === event.currentTarget) onClose() }} aria-labelledby={titleId}>
     <div className="modal-inner">
-      <div className="modal-header"><h2 id="modal-title">{title}</h2><button className="icon-button" onClick={onClose} aria-label="关闭弹窗"><X size={21} /></button></div>
+      <div className="modal-header"><h2 id={titleId}>{title}</h2><button className="icon-button" onClick={onClose} aria-label="关闭弹窗"><X size={21} /></button></div>
       {children}
     </div>
   </dialog>

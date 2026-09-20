@@ -12,6 +12,8 @@ import jakarta.validation.Valid;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.http.MediaType;
+import org.springframework.web.multipart.MultipartFile;
 
 /** AI 创作入口；用户身份仅从登录态读取，提交接口只建立持久化任务。 */
 @RestController
@@ -30,9 +32,17 @@ public class AiGenerationController {
     }
 
     /** 相同 requestId 返回原任务，防止网络重试重复提交。 */
-    @PostMapping
+    @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
     public Result<GenerationVO> submit(@Valid @RequestBody GenerationParam param) {
         return Result.data(aiGenerationService.submit(StpUtil.getLoginIdAsLong(), param));
+    }
+
+    /** 单张参考图与参数一并提交；身份取自登录态，不接受客户端指定参考图 URL。 */
+    @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Result<GenerationVO> submitWithReference(@Valid @RequestPart("param") GenerationParam param,
+                                                   @RequestPart("reference") List<MultipartFile> references) {
+        if (references.size() != 1) throw new com.aurora.starter.webmvc.exception.BizException(400, "一次只能上传一张参考图");
+        return Result.data(aiGenerationService.submit(StpUtil.getLoginIdAsLong(), param, references.getFirst()));
     }
 
     /** 返回本人历史，不包含模型密钥。 */

@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS hub_ai_generation (
     images_path VARCHAR(200) NOT NULL,
     api_key_ciphertext TEXT,
     prompt TEXT NOT NULL,
+    reference_image_url VARCHAR(2048) DEFAULT NULL COMMENT '单张参考图地址，随任务保留',
     image_size VARCHAR(20) NOT NULL,
     quality VARCHAR(20) NOT NULL,
     status VARCHAR(20) NOT NULL,
