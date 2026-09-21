@@ -8,9 +8,9 @@ import org.apache.ibatis.annotations.*;
 @Mapper
 public interface AiGenerationMapper extends BaseMapper<AiGeneration> {
 
-    /** 成功图片不再占用预留次数，防止状态恢复期间重复计费。 */
+    /** 按任务快照累计预留积分；成功图片不再预留，防止状态恢复期间重复计费。 */
     @Select("""
-            SELECT COUNT(*) FROM hub_ai_generation g
+            SELECT COALESCE(SUM(g.points_cost), 0) FROM hub_ai_generation g
             WHERE g.user_id = #{userId} AND g.active_user_id IS NOT NULL AND g.deleted = 0
               AND NOT EXISTS (SELECT 1 FROM hub_image i WHERE i.id = g.id AND i.user_id = g.user_id AND i.quota_charged = 1)
             """)
@@ -27,7 +27,7 @@ public interface AiGenerationMapper extends BaseMapper<AiGeneration> {
     /** 调用方先持有任务锁；仅释放已经超时且原工作线程不再持锁的任务。 */
     @Update("""
             UPDATE hub_ai_generation SET status = 'FAILED', active_user_id = NULL,
-              error_message = '生成或保存中断，额度已释放，请重新提交创作',
+              error_message = '生成或保存中断，积分已释放，请重新提交创作',
               api_key_ciphertext = NULL, work_token = NULL, work_deadline = NULL, update_time = CURRENT_TIMESTAMP
             WHERE id = #{id} AND user_id = #{userId} AND active_user_id = #{userId} AND deleted = 0
               AND status IN ('GENERATING', 'SAVING') AND work_deadline <= CURRENT_TIMESTAMP

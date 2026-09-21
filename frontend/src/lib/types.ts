@@ -45,7 +45,7 @@ export type QuotaUsage = {
 
 export type UploadQuota = { total: number; remaining: number; used: number; reserved: number }
 
-export type AiModel = { id: number; name: string; sizes: string[]; defaultSize: string; qualities: string[]; defaultQuality: string }
+export type AiModel = { id: number; name: string; sizes: string[]; defaultSize: string; qualities: string[]; defaultQuality: string; pointsCost: number }
 export type AiModelConfig = AiModel & { modelCode: string; baseUrl: string; imagesPath: string; keyConfigured: boolean; enabled: boolean; sortOrder: number; updateTime: string }
 export type Generation = {
   id: string; requestId: string; modelName: string; prompt: string; size: string; quality: string

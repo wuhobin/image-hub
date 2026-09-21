@@ -9,7 +9,7 @@ import { GENERATION_SIZES, generationResolution, imageAspectRatio } from '../../
 import './models.css'
 
 type Draft = Omit<AiModelConfig, 'id' | 'keyConfigured' | 'updateTime' | 'sizes' | 'qualities'> & { apiKey: string; sizes: string; qualities: string }
-const initial: Draft = { name: '', modelCode: 'gpt-image-2', baseUrl: 'https://api.openai.com', imagesPath: '/v1/images/generations', apiKey: '', sizes: GENERATION_SIZES.join(','), defaultSize: '1024x1024', qualities: 'low,medium,high,auto', defaultQuality: 'medium', sortOrder: 0, enabled: false }
+const initial: Draft = { name: '', modelCode: 'gpt-image-2', baseUrl: 'https://api.openai.com', imagesPath: '/v1/images/generations', apiKey: '', sizes: GENERATION_SIZES.join(','), defaultSize: '1024x1024', qualities: 'low,medium,high,auto', defaultQuality: 'medium', pointsCost: 1, sortOrder: 0, enabled: false }
 const message = (error: unknown) => error instanceof Error ? error.message : '请求失败，请稍后重试'
 const options = (value: string) => value.split(/[,，\s]+/).map(item => item.trim()).filter(Boolean)
 
@@ -52,14 +52,14 @@ export default function AdminModels() {
   }
 
   return <div className="admin-models-page">
-    <div className="admin-page-title"><div><span className="admin-eyebrow">AI 创作</span><h1>模型管理</h1><p>配置用户可选的生图模型，以及对应的尺寸与质量。</p></div><button className="button button-primary" onClick={() => setEditing('new')}><Plus size={17} />新增模型</button></div>
+    <div className="admin-page-title"><div><span className="admin-eyebrow">AI 创作</span><h1>模型管理</h1><p>配置用户可选的生图模型，以及对应的尺寸、质量与单张消耗积分。</p></div><button className="button button-primary" onClick={() => setEditing('new')}><Plus size={17} />新增模型</button></div>
     <p className="model-intro">支持 OpenAI Images 兼容接口。密钥仅用于服务端调用；停用或删除不影响已提交的任务。</p>
     {saved && <p className="model-saved" role="status">{saved}</p>}
     {error && <p className="admin-error" role="alert">{error}<button className="quiet-link" onClick={() => setRevision(value => value + 1)}>重新加载</button></p>}
     <div className="models-list" aria-busy={loading}>
       {loading ? <div className="admin-state" role="status">正在读取模型…</div> : !data?.records.length ? <div className="admin-state">暂无模型，添加一个模型开始配置。</div> : data.records.map(model => <article className="model-row" key={model.id}>
         <div className="model-row-main"><span className={'model-enabled' + (model.enabled ? ' is-enabled' : '')}>{model.enabled ? '已启用' : '已停用'}</span><h2>{model.name}</h2><code>{model.modelCode}</code><p>{model.baseUrl}</p></div>
-        <div className="model-row-options"><span>{model.sizes.length} 种尺寸 · {model.qualities.length} 种质量</span><span>默认 {imageAspectRatio(model.defaultSize)}（{model.defaultSize}）/ {model.defaultQuality}</span><span>{model.keyConfigured ? '密钥已配置' : '尚未配置密钥'}</span></div>
+        <div className="model-row-options"><span>每张 {model.pointsCost} 积分</span><span>{model.sizes.length} 种尺寸 · {model.qualities.length} 种质量</span><span>默认 {imageAspectRatio(model.defaultSize)}（{model.defaultSize}）/ {model.defaultQuality}</span><span>{model.keyConfigured ? '密钥已配置' : '尚未配置密钥'}</span></div>
         <div className="model-row-actions"><button className="button button-secondary" onClick={() => setEditing(model)}>编辑</button><button className="quiet-link" onClick={() => { setError(''); setDeleting(model) }}>删除</button></div>
       </article>)}
     </div>
@@ -91,7 +91,7 @@ function ModelEditor({ model, onClose, onSaved }: { model: AiModelConfig | 'new'
     try {
       await adminApi('/ai-models' + (model === 'new' ? '' : '/' + model.id), { method: model === 'new' ? 'POST' : 'PUT', body: JSON.stringify({
         name: draft.name.trim(), modelCode: draft.modelCode.trim(), baseUrl: draft.baseUrl.trim(), imagesPath: draft.imagesPath.trim(),
-        apiKey: draft.apiKey, sizes, qualities, defaultSize: draft.defaultSize, defaultQuality: draft.defaultQuality, enabled: draft.enabled, sortOrder: draft.sortOrder,
+        apiKey: draft.apiKey, sizes, qualities, defaultSize: draft.defaultSize, defaultQuality: draft.defaultQuality, enabled: draft.enabled, sortOrder: draft.sortOrder, pointsCost: draft.pointsCost,
       }) })
       setDraft(previous => ({ ...previous, apiKey: '' }))
       onSaved()
@@ -115,6 +115,8 @@ function ModelEditor({ model, onClose, onSaved }: { model: AiModelConfig | 'new'
           <div><label htmlFor="model-qualities">允许的质量（逗号分隔）</label><input id="model-qualities" value={draft.qualities} onChange={event => change('qualities', event.target.value)} required /><label htmlFor="model-default-quality">默认质量</label><select id="model-default-quality" value={draft.defaultQuality} onChange={event => change('defaultQuality', event.target.value)}>{[...new Set([...options(draft.qualities), draft.defaultQuality])].map(value => <option key={value}>{value}</option>)}</select></div>
         </div>
         <p className="creation-help">用户端按比例和分辨率展示；同一比例可配置多个像素尺寸（如 1280x720、2048x1152、3840x2160）。非预设尺寸显示为自定义。GPT-Image-2 的宽高须为 16 的倍数，长短边比例不超过 3:1，总像素为 655360～8294400，单边不超过 3840。质量选项：low、medium、high、auto。</p>
+        <label htmlFor="model-points-cost">单张消耗积分</label><input id="model-points-cost" type="number" min={1} max={2147483647} step={1} value={draft.pointsCost} onChange={event => change('pointsCost', Number(event.target.value))} required />
+        <p className="creation-help">填写正整数，默认 1 积分。提交时预留，生成并保存成功后扣除，失败释放。修改仅影响新提交的任务。</p>
         <div className="model-form-grid"><div><label htmlFor="model-sort">排序（数字越小越靠前）</label><input id="model-sort" type="number" min={0} max={9999} step={1} value={draft.sortOrder} onChange={event => change('sortOrder', Number(event.target.value))} required /></div><label className="model-check" htmlFor="model-enabled"><input id="model-enabled" type="checkbox" checked={draft.enabled} onChange={event => change('enabled', event.target.checked)} />启用模型，允许用户选择</label></div>
       </fieldset>
       {error && <p className="admin-error" role="alert">{error}</p>}

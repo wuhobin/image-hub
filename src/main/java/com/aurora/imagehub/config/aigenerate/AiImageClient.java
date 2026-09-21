@@ -160,7 +160,7 @@ public class AiImageClient {
                     connectTimeoutSeconds, timeoutSeconds, e);
             if (e instanceof BizException business) throw business;
             if (e instanceof InterruptedException) Thread.currentThread().interrupt();
-            throw new BizException(502, "生成请求超时或未取得有效结果，额度将释放，请重新提交");
+            throw new BizException(502, "生成请求超时或未取得有效结果，积分将释放，请重新提交");
         }
     }
 

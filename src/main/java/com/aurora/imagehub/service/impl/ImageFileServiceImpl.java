@@ -123,7 +123,7 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
         return ImageVO.from(saved);
     }
 
-    /** AI图片复用内容检测及元数据构建，事务与额度结算由任务服务统一完成。 */
+    /** AI图片复用内容检测及元数据构建，事务与积分结算由任务服务统一完成。 */
     @Override
     public ImageFile storeGenerated(long userId, String imageId, byte[] bytes, java.util.function.Consumer<String> beforeUpload) {
         // AI 文件已按独立大小配置解码并识别格式，文件名由服务端生成，不套用普通上传的 10 MB 限制。

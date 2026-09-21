@@ -9,7 +9,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 /** ImageFile 实体相关的上传、记录查询和删除服务。userId 必须来自可信登录态。 */
 public interface ImageFileService extends IService<ImageFile> {
-    /** 当前账号永久额度；历史上传不计费，删除不返还。 */
+    /** 当前账号永久积分；历史上传不计费，删除不返还。 */
     UploadQuotaVO quota(long userId);
     /** 校验并上传单张图片，记录入库失败时补偿删除云端文件。 */
     ImageVO upload(long userId, MultipartFile file);

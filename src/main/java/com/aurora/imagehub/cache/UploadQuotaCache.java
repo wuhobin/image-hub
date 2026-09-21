@@ -30,7 +30,7 @@ public class UploadQuotaCache {
 
     private final SystemSettingsService systemSettingsService;
 
-    /** 注册已持久化后尽力初始化，失败不回滚账号；不覆盖已被使用的额度。 */
+    /** 注册已持久化后尽力初始化，失败不回滚账号；不覆盖已被使用的积分。 */
     public void initialize(long userId) {
         try {
             bucket(userId).setIfAbsent("u:0");
@@ -56,7 +56,7 @@ public class UploadQuotaCache {
             }
             return result;
         } catch (RuntimeException e) {
-            throw new BizException(503, "剩余额度读取失败，请稍后重试", e);
+            throw new BizException(503, "剩余积分读取失败，请稍后重试", e);
         }
     }
 
@@ -68,7 +68,7 @@ public class UploadQuotaCache {
         return redissonClient.getLock("image-hub:quota:{" + userId + "}:lock");
     }
 
-    /** 查询当前额度；缓存缺失、格式无效或上传中断时，持锁按成功图片记录恢复消耗。 */
+    /** 查询当前积分；缓存缺失、格式无效或上传中断时，持锁按成功图片记录恢复消耗。 */
     public UploadQuotaVO get(long userId) {
         try {
             releaseInterruptedGeneration(userId);
@@ -81,14 +81,14 @@ public class UploadQuotaCache {
             if (!lock.tryLock()) {
                 // 进行中的上传已预占一次，展示可用余额；不等待网络上传完成。
                 if (used != null) return response(userId, total, used);
-                throw new BizException(503, "上传额度正在恢复，请稍后重试");
+                throw new BizException(503, "上传积分正在恢复，请稍后重试");
             }
             try { return response(userId, total, recover(userId, bucket)); }
             finally { unlock(lock); }
         } catch (BizException e) {
             throw e;
         } catch (RuntimeException e) {
-            throw new BizException(503, "上传额度暂时不可用，请稍后重试", e);
+            throw new BizException(503, "上传积分暂时不可用，请稍后重试", e);
         }
     }
 
@@ -104,27 +104,27 @@ public class UploadQuotaCache {
         } catch (BizException e) {
             throw e;
         } catch (RuntimeException e) {
-            throw new BizException(503, "上传额度暂时不可用，请稍后重试", e);
+            throw new BizException(503, "上传积分暂时不可用，请稍后重试", e);
         }
         try {
             try {
                 bucket = bucket(userId);
                 used = recover(userId, bucket);
                 if (used + aiGenerationMapper.reserved(userId) >= systemSettingsService.freeUploadQuota()) {
-                    throw new BizException(EXHAUSTED, "共享额度已用完");
+                    throw new BizException(EXHAUSTED, "共享积分已用完");
                 }
                 // 以预占时的配置判断准入，已准入上传可完成；配置变化不能覆盖累计消耗。
                 bucket.set("u:" + (used + 1) + ":" + imageId);
             } catch (BizException e) {
                 throw e;
             } catch (RuntimeException e) {
-                throw new BizException(503, "上传额度暂时不可用，请稍后重试", e);
+                throw new BizException(503, "上传积分暂时不可用，请稍后重试", e);
             }
             T result;
             try {
                 result = upload.get();
             } catch (RuntimeException e) {
-                // 包括入库成功但回读失败：以数据库成功记录为准，不能误退已消耗额度。
+                // 包括入库成功但回读失败：以数据库成功记录为准，不能误退已消耗积分。
                 try { if (lock.isHeldByCurrentThread()) rebuild(userId, bucket); }
                 catch (RuntimeException recovery) { log.warn("Quota recovery deferred: userId={}", userId, recovery); }
                 throw e;
@@ -143,7 +143,7 @@ public class UploadQuotaCache {
 
     /** 云上传后再次检查锁所有权，丢失锁时禁止落库并由上传服务补偿云文件。 */
     public void checkOwnership(long userId) {
-        if (!lock(userId).isHeldByCurrentThread()) throw new BizException(503, "上传额度校验已失效，请重试");
+        if (!lock(userId).isHeldByCurrentThread()) throw new BizException(503, "上传积分校验已失效，请重试");
     }
 
     /** 调用方持有用户锁后恢复消耗，避免覆盖正在进行的上传预占。 */
@@ -154,9 +154,9 @@ public class UploadQuotaCache {
         return rebuild(userId, bucket);
     }
 
-    /** 依据已计费图片重建累计消耗，统计包含已删除图片，防止删除后返还额度。 */
+    /** 依据已计费图片重建累计消耗，统计包含已删除图片，防止删除后返还积分。 */
     private long rebuild(long userId, RBucket<String> bucket) {
-        long used = imageMapper.countQuotaUploads(userId);
+        long used = imageMapper.sumConsumedPoints(userId);
         bucket.set("u:" + used);
         return used;
     }
@@ -189,17 +189,18 @@ public class UploadQuotaCache {
         return new UploadQuotaVO(total, remaining(total, used + reserved), used, reserved);
     }
 
-    /** 持锁后先返回重复请求，再检查新任务额度；模型网络调用不占用普通上传锁。 */
-    public <T> T reserveGeneration(long userId, Supplier<T> existingTask, Supplier<T> createTask) {
+    /** 持锁后先返回重复请求，再检查新任务积分；模型网络调用不占用普通上传锁。 */
+    public <T> T reserveGeneration(long userId, int pointsCost, Supplier<T> existingTask, Supplier<T> createTask) {
         releaseInterruptedGeneration(userId);
         RLock lock = lock(userId);
         if (!lock.tryLock()) throw new BizException(409, "当前账号正在保存图片，请稍后重试");
         try {
             T existing = existingTask.get();
             if (existing != null) return existing;
+            if (pointsCost < 1) throw new BizException(400, "模型积分配置无效");
             long used = recover(userId, bucket(userId));
-            if (used + aiGenerationMapper.reserved(userId) >= systemSettingsService.freeUploadQuota()) {
-                throw new BizException(EXHAUSTED, "共享额度已用完");
+            if (used + aiGenerationMapper.reserved(userId) + pointsCost > systemSettingsService.freeUploadQuota()) {
+                throw new BizException(EXHAUSTED, "积分不足，本次生成需要 " + pointsCost + " 积分");
             }
             return createTask.get();
         } finally {
@@ -207,7 +208,7 @@ public class UploadQuotaCache {
         }
     }
 
-    /** 已预占任务在保存期限内有限等待额度锁；取得锁后才进入事务，不重放生图或上传。 */
+    /** 已预占任务在保存期限内有限等待积分锁；取得锁后才进入事务，不重放生图或上传。 */
     public <T> T completeGeneration(long userId, long waitMillis, Supplier<T> persist) {
         RLock lock = lock(userId);
         try {
@@ -222,13 +223,13 @@ public class UploadQuotaCache {
         try {
             RBucket<String> bucket = bucket(userId);
             long used = recover(userId, bucket);
-            // 保存期间读者仍能看到正确的已用次数；标记用于中断后按数据库恢复。
+            // 保存期间读者仍能看到正确的已用积分；标记用于中断后按数据库恢复。
             bucket.set("u:" + used + ":ai-save");
             T result = persist.get();
             try {
                 if (lock.isHeldByCurrentThread()) rebuild(userId, bucket);
             } catch (RuntimeException e) {
-                log.warn("AI 创作额度刷新失败，等待后续恢复：userId={}", userId);
+                log.warn("AI 创作积分刷新失败，等待后续恢复：userId={}", userId);
             }
             return result;
         } finally {
@@ -237,7 +238,7 @@ public class UploadQuotaCache {
     }
 
     /**
-     * 用户查询或提交时释放本人的中断任务，避免取消定时恢复后额度永久占用。
+     * 用户查询或提交时释放本人的中断任务，避免取消定时恢复后积分永久占用。
      * 活工作线程仍持有任务锁时不处理；不访问七牛、不重新生成，遗留云文件记录交人工处理。
      */
     public void releaseInterruptedGeneration(long userId) {

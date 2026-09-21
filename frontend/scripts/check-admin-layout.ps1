@@ -70,10 +70,10 @@ try {
     AssertJs '!document.querySelector("dialog").open'
 
     Browser find role link click --name 配置管理 | Out-Null
-    Browser wait --text 免费总额度 | Out-Null
+    Browser wait --text 免费总积分 | Out-Null
     AssertJs 'location.pathname === "/admin/settings" && document.title === "ImgHub · 配置管理" && document.querySelector(".admin-sidebar [aria-current]").textContent.includes("配置管理")'
-    AssertJs 'document.querySelector("[role=tab][aria-selected=true]").textContent === "上传设置" && document.querySelector("[role=tabpanel]").getAttribute("aria-labelledby") === "settings-tab-upload"'
-    Browser find role tab click --name 上传设置 | Out-Null
+    AssertJs 'document.querySelector("[role=tab][aria-selected=true]").textContent === "积分设置" && document.querySelector("[role=tabpanel]").getAttribute("aria-labelledby") === "settings-tab-upload"'
+    Browser find role tab click --name 积分设置 | Out-Null
     Browser press ArrowRight | Out-Null
     AssertJs 'document.activeElement.id === "settings-tab-upload"'
     Browser press Home | Out-Null
@@ -82,39 +82,39 @@ try {
     AssertJs 'document.activeElement.getAttribute("role") === "tabpanel"'
     Browser press Tab | Out-Null
     AssertJs 'document.activeElement.id === "free-upload-quota"'
-    Browser find label 免费总额度 fill 200 | Out-Null
+    Browser find label 免费总积分 fill 200 | Out-Null
     Browser screenshot (Join-Path $outputDir 'admin-settings-desktop.png') | Out-Null
     Browser find role button click --name 保存修改 | Out-Null
     Browser wait --text 配置已保存 | Out-Null
     Browser reload | Out-Null
-    Browser wait --text 免费总额度 | Out-Null
+    Browser wait --text 免费总积分 | Out-Null
     AssertJs 'document.querySelector("#free-upload-quota").value === "200"'
-    Browser find label 免费总额度 fill 0 | Out-Null
+    Browser find label 免费总积分 fill 0 | Out-Null
     Browser wait --text 保存后将暂停普通用户上传 | Out-Null
     Browser set viewport 390 844 | Out-Null
     AssertJs 'document.documentElement.scrollWidth <= innerWidth'
     Browser screenshot (Join-Path $outputDir 'admin-settings-mobile.png') | Out-Null
     Browser find role button click --name 保存修改 | Out-Null
     Browser wait --text 配置已保存 | Out-Null
-    Browser find label 免费总额度 fill -1 | Out-Null
+    Browser find label 免费总积分 fill -1 | Out-Null
     AssertJs 'document.querySelector(".admin-settings-actions .button-primary").disabled'
-    Browser find label 免费总额度 fill 1.5 | Out-Null
+    Browser find label 免费总积分 fill 1.5 | Out-Null
     AssertJs 'document.querySelector(".admin-settings-actions .button-primary").disabled'
-    Browser find label 免费总额度 fill 2147483648 | Out-Null
+    Browser find label 免费总积分 fill 2147483648 | Out-Null
     AssertJs 'document.querySelector(".admin-settings-actions .button-primary").disabled'
-    Browser find label 免费总额度 fill 999 | Out-Null
+    Browser find label 免费总积分 fill 999 | Out-Null
     Browser find role button click --name 保存修改 | Out-Null
     Browser wait --text 配置缓存暂时不可用 | Out-Null
     AssertJs 'sessionStorage.getItem("qa.settings") === "0" && document.querySelector("#free-upload-quota").value === "999"'
     Browser find role button click --name 撤销修改 | Out-Null
     AssertJs 'document.querySelector("#free-upload-quota").value === "0"'
     Browser open "$BaseUrl/admin/settings?group=upload" | Out-Null
-    Browser wait --text 免费总额度 | Out-Null
+    Browser wait --text 免费总积分 | Out-Null
     Browser reload | Out-Null
-    Browser wait --text 免费总额度 | Out-Null
+    Browser wait --text 免费总积分 | Out-Null
     AssertJs 'new URL(location.href).searchParams.get("group") === "upload" && document.querySelector("#settings-tab-upload").getAttribute("aria-selected") === "true"'
     Browser open "$BaseUrl/admin/settings?group=unknown" | Out-Null
-    Browser wait --text 免费总额度 | Out-Null
+    Browser wait --text 免费总积分 | Out-Null
     AssertJs 'document.querySelector("#settings-tab-upload").getAttribute("aria-selected") === "true" && document.querySelector("#free-upload-quota").value === "0"'
     Browser set viewport 1440 1000 | Out-Null
 

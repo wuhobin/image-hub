@@ -7,7 +7,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.IService;
 import org.springframework.web.multipart.MultipartFile;
 
-/** 单图异步创作；用户ID来自登录态，生成请求幂等，只有图片持久化成功才消耗共享额度。 */
+/** 单图异步创作；用户ID来自登录态，生成请求幂等，只有图片持久化成功才消耗共享积分。 */
 public interface AiGenerationService extends IService<AiGeneration> {
 
     /** 可通过 referenceImageId 复用本人未删除的图库图片，不重复上传、不单独扣额。 */

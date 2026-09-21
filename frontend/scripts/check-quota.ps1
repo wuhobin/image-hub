@@ -33,7 +33,7 @@ window.fetch = (url, options = {}) => {
   let data;
   if (path.endsWith('/auth/me')) data = { username: 'Quota QA' };
   else if (path.endsWith('/auth/logout')) data = null;
-  else if (path.endsWith('/generations/models')) data = [{ id: 1, name: 'QA image model', sizes: ['1024x1024'], defaultSize: '1024x1024', qualities: ['medium'], defaultQuality: 'medium' }];
+  else if (path.endsWith('/generations/models')) data = [{ id: 1, name: 'QA image model', sizes: ['1024x1024'], defaultSize: '1024x1024', qualities: ['medium'], defaultQuality: 'medium', pointsCost: 1 }];
   else if (path.endsWith('/generations/active')) data = null;
   else if (path.endsWith('/generations')) data = { records: [], total: 0, current: 1, size: 12, pages: 0 };
   else throw new Error('Unexpected test API: ' + path);

@@ -1,5 +1,6 @@
 package com.aurora.imagehub.service.impl;
 
+import com.aurora.imagehub.cache.AiModelCache;
 import com.aurora.imagehub.config.aigenerate.AiEndpointPolicy;
 import com.aurora.imagehub.config.aigenerate.ModelKeyCipher;
 import com.aurora.imagehub.mapper.AiModelConfigMapper;
@@ -18,13 +19,16 @@ import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-/** 动态模型配置直接读库，修改立即作用于新任务，已提交任务使用自己的快照。 */
+/** 前台模型列表复用二级缓存，管理和任务提交直接读库；已提交任务使用自己的快照。 */
 @Service
 @RequiredArgsConstructor
 public class AiModelConfigServiceImpl extends ServiceImpl<AiModelConfigMapper, AiModelConfig> implements AiModelConfigService {
 
     private final AiModelConfigMapper aiModelConfigMapper;
+
+    private final AiModelCache aiModelCache;
 
     private final AdminAccountService adminAccountService;
 
@@ -35,8 +39,8 @@ public class AiModelConfigServiceImpl extends ServiceImpl<AiModelConfigMapper, A
     /** 不向普通用户返回地址和密钥；排序由管理员配置决定。 */
     @Override
     public List<AiModelVO> available() {
-        return list(Wrappers.<AiModelConfig>lambdaQuery().eq(AiModelConfig::getEnabled, true)
-                .orderByAsc(AiModelConfig::getSortOrder, AiModelConfig::getId)).stream().map(AiModelVO::from).toList();
+        return aiModelCache.get(() -> list(Wrappers.<AiModelConfig>lambdaQuery().eq(AiModelConfig::getEnabled, true)
+                .orderByAsc(AiModelConfig::getSortOrder, AiModelConfig::getId)).stream().map(AiModelVO::from).toList());
     }
 
     /** 管理分页继续使用平台原生分页结构。 */
@@ -50,6 +54,7 @@ public class AiModelConfigServiceImpl extends ServiceImpl<AiModelConfigMapper, A
 
     /** 默认值必须属于白名单；空 Key 保留原值，启用前必须具备可解密密钥。 */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public AiModelConfigVO saveModel(Long id, AiModelConfigParam param) {
         adminAccountService.currentAdmin();
         if (!param.getSizes().contains(param.getDefaultSize()) || !param.getQualities().contains(param.getDefaultQuality())) {
@@ -86,26 +91,41 @@ public class AiModelConfigServiceImpl extends ServiceImpl<AiModelConfigMapper, A
         model.setDefaultSize(param.getDefaultSize());
         model.setQualities(String.join(",", param.getQualities().stream().distinct().toList()));
         model.setDefaultQuality(param.getDefaultQuality());
+        model.setPointsCost(param.getPointsCost().intValueExact());
         model.setEnabled(param.getEnabled());
         model.setSortOrder(param.getSortOrder());
         if (Boolean.TRUE.equals(model.getEnabled())) {
             if (model.getApiKeyCiphertext() == null) throw new BizException(400, "启用前请填写 API Key");
             modelKeyCipher.decrypt(model.getApiKeyCiphertext());
         }
+        prepareModelUpdate();
         try {
             if (id == null) aiModelConfigMapper.insert(model);
             else if (aiModelConfigMapper.updateById(model) != 1) throw new BizException(409, "配置已变化，请刷新后重试");
         } catch (DuplicateKeyException e) {
             throw new BizException(409, "模型名称已被使用");
         }
+        aiModelCache.evictAfterCommit();
         return AiModelConfigVO.from(getById(model.getId()));
     }
 
     /** 逻辑删除不影响已提交任务的配置快照和历史记录。 */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public void archiveModel(long id) {
         adminAccountService.currentAdmin();
+        prepareModelUpdate();
         if (aiModelConfigMapper.archive(id) != 1) throw new BizException(404, "模型配置不存在");
+        aiModelCache.evictAfterCommit();
+    }
+
+    /** 沿用系统配置的故障策略：缓存已知不可用时拒绝写库，避免前台长期保留旧选项。 */
+    private void prepareModelUpdate() {
+        try {
+            aiModelCache.prepareUpdate();
+        } catch (RuntimeException e) {
+            throw new BizException(503, "模型缓存暂时不可用，未保存，请稍后重试", e);
+        }
     }
 
     /** 密钥与模型状态在创建任务时检查，运行中不再依赖可变模型配置。 */

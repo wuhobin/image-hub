@@ -22,7 +22,7 @@ public class ImageController {
 
     private final ImageFileService imageFileService;
 
-    /** 单文件入口，批量上传由客户端拆分，额度和云文件补偿交给业务层。 */
+    /** 单文件入口，批量上传由客户端拆分，积分和云文件补偿交给业务层。 */
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public Result<ImageVO> upload(MultipartHttpServletRequest request) {
         // 前端批量上传拆成单文件请求，以支持独立失败重试和真实进度。
@@ -42,7 +42,7 @@ public class ImageController {
         return Result.data(imageFileService.list(StpUtil.getLoginIdAsLong(), search, type, sourceType, page, pageSize, sort));
     }
 
-    /** 返回成功消耗、AI预留与当前可用共享额度。 */
+    /** 返回成功消耗、AI预留与当前可用共享积分。 */
     @GetMapping("/quota")
     public Result<UploadQuotaVO> quota() {
         return Result.data(imageFileService.quota(StpUtil.getLoginIdAsLong()));

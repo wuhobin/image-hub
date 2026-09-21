@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS hub_settings (
 
 -- 重复执行不能覆盖管理员已经保存的设置。
 INSERT INTO hub_settings (config_key, config_value, description)
-SELECT 'upload.free-total', '100', '所有用户的免费累计上传总额度，0暂停上传'
+SELECT 'upload.free-total', '100', '所有用户的免费累计上传总积分，0暂停上传'
 WHERE NOT EXISTS (SELECT 1 FROM hub_settings WHERE config_key = 'upload.free-total');
 
 CREATE TABLE IF NOT EXISTS hub_admin (
@@ -48,22 +48,24 @@ CREATE TABLE IF NOT EXISTS hub_image (
     width INT NOT NULL,
     height INT NOT NULL,
     storage_info TEXT NOT NULL,
-    quota_charged TINYINT NOT NULL DEFAULT 0 COMMENT '是否消耗新版上传额度：历史0，新上传1',
+    quota_charged TINYINT NOT NULL DEFAULT 0 COMMENT '是否消耗新版上传积分：历史0，新上传1',
+    points_cost INT NOT NULL DEFAULT 1 COMMENT '实际消耗积分，AI使用任务快照',
     `create_time` datetime DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     deleted TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除：0未删除，1已删除',
     KEY idx_hub_image_user_created (user_id, deleted, create_time, id),
     KEY idx_hub_image_user_quota (user_id, quota_charged),
-    CONSTRAINT fk_hub_image_user FOREIGN KEY (user_id) REFERENCES hub_user(id)
+    CONSTRAINT fk_hub_image_user FOREIGN KEY (user_id) REFERENCES hub_user(id),
+    CONSTRAINT chk_hub_image_points_cost CHECK (points_cost > 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 只记录功能启用后的实际消耗，不补录历史图片。
 CREATE TABLE IF NOT EXISTS hub_quota_usage (
     id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    user_id BIGINT NOT NULL COMMENT '消耗额度的用户',
+    user_id BIGINT NOT NULL COMMENT '消耗积分的用户',
     scene VARCHAR(32) NOT NULL COMMENT 'IMAGE_UPLOAD图片上传，AI_GENERATION AI创作',
     biz_id VARCHAR(36) NOT NULL COMMENT '图片ID或AI任务ID，作为业务防重编号',
-    amount INT NOT NULL COMMENT '实际消耗额度，正整数',
+    amount INT NOT NULL COMMENT '实际消耗积分，正整数',
     description VARCHAR(255) NOT NULL COMMENT '业务说明快照，图片删除后仍保留',
     create_time datetime DEFAULT CURRENT_TIMESTAMP COMMENT '消耗时间',
     update_time datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -85,12 +87,14 @@ CREATE TABLE IF NOT EXISTS hub_ai_model (
     default_size VARCHAR(20) NOT NULL,
     qualities VARCHAR(100) NOT NULL,
     default_quality VARCHAR(20) NOT NULL,
+    points_cost INT NOT NULL DEFAULT 1 COMMENT '每生成一张图片消耗的积分',
     enabled TINYINT NOT NULL DEFAULT 0,
     sort_order INT NOT NULL DEFAULT 0,
     create_time datetime DEFAULT CURRENT_TIMESTAMP,
     update_time datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     deleted TINYINT NOT NULL DEFAULT 0,
-    UNIQUE KEY uk_hub_ai_model_name (name)
+    UNIQUE KEY uk_hub_ai_model_name (name),
+    CONSTRAINT chk_hub_ai_model_points_cost CHECK (points_cost > 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 INSERT INTO hub_ai_model (name, model_code, base_url, images_path, sizes, default_size, qualities, default_quality)
@@ -104,6 +108,7 @@ CREATE TABLE IF NOT EXISTS hub_ai_generation (
     request_id VARCHAR(36) NOT NULL,
     active_user_id BIGINT DEFAULT NULL COMMENT '未完成时等于用户ID，终态NULL',
     model_id BIGINT NOT NULL,
+    points_cost INT NOT NULL DEFAULT 1 COMMENT '提交时的积分快照',
     model_name VARCHAR(80) NOT NULL,
     model_code VARCHAR(120) NOT NULL,
     base_url VARCHAR(500) NOT NULL,
@@ -125,5 +130,6 @@ CREATE TABLE IF NOT EXISTS hub_ai_generation (
     UNIQUE KEY uk_hub_ai_generation_request (user_id, request_id),
     UNIQUE KEY uk_hub_ai_generation_active (active_user_id),
     KEY idx_hub_ai_generation_user (user_id, deleted, create_time, id),
-    KEY idx_hub_ai_generation_work (deleted, status, work_token, create_time, id)
+    KEY idx_hub_ai_generation_work (deleted, status, work_token, create_time, id),
+    CONSTRAINT chk_hub_ai_generation_points_cost CHECK (points_cost > 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

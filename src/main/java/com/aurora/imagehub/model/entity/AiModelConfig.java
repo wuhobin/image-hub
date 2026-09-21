@@ -33,6 +33,9 @@ public class AiModelConfig {
 
     private String defaultQuality;
 
+    /** 每张图片消耗的积分，新任务提交时保存快照。 */
+    private Integer pointsCost = 1;
+
     private Boolean enabled = false;
 
     private Integer sortOrder = 0;

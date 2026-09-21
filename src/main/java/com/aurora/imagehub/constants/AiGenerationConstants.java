@@ -48,7 +48,7 @@ public final class AiGenerationConstants {
 
         UPLOAD_IMAGE("上传七牛"),
 
-        PERSIST_RESULT("入库与额度结算"),
+        PERSIST_RESULT("入库与积分结算"),
 
         TOTAL("总处理");
 

@@ -47,7 +47,7 @@
     calls.push(path)
     let data
     if (path === '/auth/me') data = { id: 'test-user', username: 'Polling test' }
-    else if (path === '/generations/models') data = [{ id: 1, name: 'Test model', sizes: ['1024x1024'], defaultSize: '1024x1024', qualities: ['medium'], defaultQuality: 'medium' }]
+    else if (path === '/generations/models') data = [{ id: 1, name: 'Test model', sizes: ['1024x1024'], defaultSize: '1024x1024', qualities: ['medium'], defaultQuality: 'medium', pointsCost: 1 }]
     else if (path === '/images/quota') data = { remaining: 9, total: 10, used: 1, reserved: task && task.status !== 'SUCCEEDED' ? 1 : 0 }
     else if (path === '/generations/active') {
       if (failActive) { failActive = false; throw new TypeError('模拟任务查询断网') }
@@ -89,7 +89,7 @@
     same(snapshot(), [2, 1, 2, 2, 0], '任务未变化时只轮询已知任务详情')
     task = { ...task, status: 'GENERATING' }
     await advance()
-    same(snapshot(), [2, 2, 2, 2, 0], '中间状态仅更新当前行，不重复读取额度和历史')
+    same(snapshot(), [2, 2, 2, 2, 0], '中间状态仅更新当前行，不重复读取积分和历史')
     failActive = true
     await advance()
     assert(timers.size === 1, '任务查询失败后应继续重试')

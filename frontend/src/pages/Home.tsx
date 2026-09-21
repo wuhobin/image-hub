@@ -59,7 +59,7 @@ export default function Home({ app }: { app: AppState }) {
               ? <button className="button button-primary button-upload" disabled aria-label="正在恢复登录"><span className="quota-placeholder" aria-hidden="true" /><ArrowUp size={17} /></button>
               : app.user
               ? <button className="button button-primary button-upload" disabled={!ready.length || app.busy || app.selecting || !app.quota || !!app.quotaError || app.quota.remaining === 0} onClick={app.upload}>
-                  {app.busy ? '上传中…' : app.quotaError ? '额度待更新' : app.quota?.remaining === 0 ? '额度已用完' : app.pending.some(item => item.status === 'error') ? '重试失败图片' : '开始上传'}<ArrowUp size={17} weight="bold" />
+                  {app.busy ? '上传中…' : app.quotaError ? '积分待更新' : app.quota?.remaining === 0 ? '积分已用完' : app.pending.some(item => item.status === 'error') ? '重试失败图片' : '开始上传'}<ArrowUp size={17} weight="bold" />
                 </button>
               : <Link to="/login" state={{ from: '/upload' }} className="button button-primary button-upload">登录后开始上传 <ArrowUpRight size={17} /></Link>}
           </div>

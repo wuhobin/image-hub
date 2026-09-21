@@ -33,6 +33,8 @@ public class AiModelConfigVO {
 
     private String defaultQuality;
 
+    private Integer pointsCost;
+
     private Boolean enabled;
 
     private Integer sortOrder;
@@ -52,6 +54,7 @@ public class AiModelConfigVO {
         result.setDefaultSize(model.getDefaultSize());
         result.setQualities(List.of(model.getQualities().split(",")));
         result.setDefaultQuality(model.getDefaultQuality());
+        result.setPointsCost(model.getPointsCost());
         result.setEnabled(model.getEnabled());
         result.setSortOrder(model.getSortOrder());
         result.setUpdateTime(model.getUpdateTime());

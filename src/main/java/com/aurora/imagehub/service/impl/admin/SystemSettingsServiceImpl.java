@@ -32,7 +32,7 @@ public class SystemSettingsServiceImpl extends ServiceImpl<SystemSettingsMapper,
         return systemSettingsCache.get(configKey, () -> requireSettings(configKey).getConfigValue());
     }
 
-    /** 将通用文本配置解析为额度，确保业务不会使用非法的负数或非整数额度。 */
+    /** 将通用文本配置解析为积分，确保业务不会使用非法的负数或非整数积分。 */
     @Override
     public int freeUploadQuota() {
         return parseFreeUploadQuota(getValue(FREE_UPLOAD_QUOTA));
@@ -46,7 +46,7 @@ public class SystemSettingsServiceImpl extends ServiceImpl<SystemSettingsMapper,
     }
 
     /**
-     * 修改全局免费总额度，不重置用户累计消耗。
+     * 修改全局免费总积分，不重置用户累计消耗。
      * 写库前清理缓存失败则拒绝保存；提交后刷新失败不撤销数据库修改。
      */
     @Override
@@ -54,11 +54,11 @@ public class SystemSettingsServiceImpl extends ServiceImpl<SystemSettingsMapper,
     public AdminSettingsVO updateSettings(int freeUploadQuota) {
         adminAccountService.currentAdmin();
         if (freeUploadQuota < 0) {
-            throw new BizException(400, "免费总额度不能小于 0");
+            throw new BizException(400, "免费总积分不能小于 0");
         }
         SystemSettings settings = requireSettings(FREE_UPLOAD_QUOTA);
 
-        // 预先拒绝已知缓存故障，避免明知无法同步仍修改全局额度。
+        // 预先拒绝已知缓存故障，避免明知无法同步仍修改全局积分。
         try {
             systemSettingsCache.prepareUpdate(FREE_UPLOAD_QUOTA);
         } catch (RuntimeException e) {
@@ -85,7 +85,7 @@ public class SystemSettingsServiceImpl extends ServiceImpl<SystemSettingsMapper,
         return settings;
     }
 
-    /** 组装管理响应并验证额度类型，更新时间使用数据库回读值。 */
+    /** 组装管理响应并验证积分类型，更新时间使用数据库回读值。 */
     private AdminSettingsVO response(SystemSettings settings) {
         return new AdminSettingsVO(parseFreeUploadQuota(settings.getConfigValue()), settings.getUpdateTime());
     }
@@ -98,8 +98,8 @@ public class SystemSettingsServiceImpl extends ServiceImpl<SystemSettingsMapper,
                 return total;
             }
         } catch (NumberFormatException ignored) {
-            // 数据库存储支持多种配置类型，额度仍必须验证为非负整数。
+            // 数据库存储支持多种配置类型，积分仍必须验证为非负整数。
         }
-        throw new BizException(503, "平台额度配置无效，请联系管理员");
+        throw new BizException(503, "平台积分配置无效，请联系管理员");
     }
 }

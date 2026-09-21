@@ -5,7 +5,7 @@ import java.util.Date;
 import lombok.Getter;
 import lombok.Setter;
 
-/** 实际额度消耗流水；独立保留业务快照，删除图片不删除流水或返还额度。 */
+/** 实际积分消耗流水；独立保留业务快照，删除图片不删除流水或返还积分。 */
 @Getter
 @Setter
 @TableName("hub_quota_usage")

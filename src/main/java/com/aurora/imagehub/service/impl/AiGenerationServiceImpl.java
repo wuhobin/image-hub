@@ -9,6 +9,7 @@ import com.aurora.imagehub.cache.UploadQuotaCache;
 import com.aurora.imagehub.mapper.AiGenerationMapper;
 import com.aurora.imagehub.mapper.ImageMapper;
 import com.aurora.imagehub.model.entity.AiGeneration;
+import com.aurora.imagehub.model.entity.AiModelConfig;
 import com.aurora.imagehub.model.entity.ImageFile;
 import com.aurora.imagehub.model.param.GenerationParam;
 import com.aurora.imagehub.model.vo.GenerationVO;
@@ -19,9 +20,11 @@ import com.aurora.starter.webmvc.exception.BizException;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+
 import java.util.List;
 import java.util.UUID;
 import java.util.function.Supplier;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RedissonClient;
@@ -33,7 +36,9 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-/** 持久化任务编排；网络操作在事务外，图片记录与成功终态在一个短事务内提交。 */
+/**
+ * 持久化任务编排；网络操作在事务外，图片记录与成功终态在一个短事务内提交。
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -62,23 +67,27 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
     @Value("${image-hub.ai.timeout-seconds:300}")
     private int timeoutSeconds;
 
-    /** 同请求编号返回原任务；数据库唯一约束覆盖多个进程之间的并发提交。 */
+    /**
+     * 同请求编号返回原任务；数据库唯一约束覆盖多个进程之间的并发提交。
+     */
     @Override
     public GenerationVO submit(long userId, GenerationParam param) {
         return submit(userId, param, null);
     }
 
-    /** 新参考图临时缓存，图库参考图校验归属后复用云地址；同账号串行且重试幂等。 */
+    /**
+     * 新参考图临时缓存，图库参考图校验归属后复用云地址；同账号串行且重试幂等。
+     */
     @Override
     public GenerationVO submit(long userId, GenerationParam param, MultipartFile reference) {
         if (reference != null && param.getReferenceImageId() != null) throw new BizException(400, "只能选择一张参考图");
         AiGeneration previous = byRequest(userId, param.getRequestId());
         if (previous != null) return task(userId, previous.getId());
-        GenerationVO submitted = uploadQuotaCache.reserveGeneration(userId, () -> {
+        AiModelConfig model = aiModelConfigService.requireEnabled(param.getModelId());
+        GenerationVO submitted = uploadQuotaCache.reserveGeneration(userId, model.getPointsCost(), () -> {
             AiGeneration existing = byRequest(userId, param.getRequestId());
             return existing == null ? null : response(existing);
         }, () -> {
-            var model = aiModelConfigService.requireEnabled(param.getModelId());
             if (!List.of(model.getSizes().split(",")).contains(param.getSize())
                     || !List.of(model.getQualities().split(",")).contains(param.getQuality())) {
                 throw new BizException(400, "所选尺寸或质量不属于该模型，请刷新选项");
@@ -92,6 +101,7 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
             task.setModelId(model.getId());
             task.setModelName(model.getName());
             task.setModelCode(model.getModelCode());
+            task.setPointsCost(model.getPointsCost());
             task.setBaseUrl(model.getBaseUrl());
             String imagesPath = model.getImagesPath();
             if (reference != null || param.getReferenceImageId() != null) {
@@ -152,7 +162,7 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
             }
             return task(userId, task.getId());
         });
-        // 持久化和额度预占均已完成，通知失败不能把已接收的请求变成提交失败。
+        // 持久化和积分预占均已完成，通知失败不能把已接收的请求变成提交失败。
         if (TaskStatus.QUEUED.name().equals(submitted.getStatus())) {
             try {
                 applicationEventPublisher.publishEvent(new AiGenerationQueuedEvent());
@@ -163,7 +173,9 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
         return submitted;
     }
 
-    /** 所有用户查询显式限定归属，避免通过任务编号读取他人提示词或图片。 */
+    /**
+     * 所有用户查询显式限定归属，避免通过任务编号读取他人提示词或图片。
+     */
     @Override
     public GenerationVO task(long userId, String id) {
         uploadQuotaCache.releaseInterruptedGeneration(userId);
@@ -194,21 +206,27 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
         return PageUtils.convert(tasks, task -> GenerationVO.from(task, images.get(task.getId())));
     }
 
-    /** 兼容旧客户端路径；结果不再暂存，校验归属后明确拒绝重试，不重新调用模型。 */
+    /**
+     * 兼容旧客户端路径；结果不再暂存，校验归属后明确拒绝重试，不重新调用模型。
+     */
     @Override
     public GenerationVO retrySave(long userId, String id) {
         requireOwned(userId, id);
         throw new BizException(409, "生成结果不再暂存，请重新提交创作");
     }
 
-    /** 兼容旧客户端路径；当前任务不再存在可放弃的暂存结果。 */
+    /**
+     * 兼容旧客户端路径；当前任务不再存在可放弃的暂存结果。
+     */
     @Override
     public void abandon(long userId, String id) {
         requireOwned(userId, id);
         throw new BizException(409, "没有可放弃的暂存结果");
     }
 
-    /** 一次领取完成生成与上传；图片字节仅存在于当前调用，不入库、不自动重新生成。 */
+    /**
+     * 一次领取完成生成与上传；图片字节仅存在于当前调用，不入库、不自动重新生成。
+     */
     @Override
     public void runTask(long userId, String id) {
         withTaskLock(id, () -> {
@@ -230,7 +248,8 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
                 try {
                     if (cachedReference) {
                         byte[] referenceBytes = referenceBucket(task).get();
-                        if (referenceBytes == null) throw new BizException(410, "参考图已过期或不可用，请重新选择图片并提交");
+                        if (referenceBytes == null)
+                            throw new BizException(410, "参考图已过期或不可用，请重新选择图片并提交");
                         // Redis 仅存原始字节；发送前才编码，不把图片内容更新到数据库。
                         task.setReferenceImageSource("data:" + task.getReferenceImageSource().substring(6)
                                 + ";base64," + java.util.Base64.getEncoder().encodeToString(referenceBytes));
@@ -252,12 +271,12 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
                     log.info("AI 创作处理失败：taskId={}, 阶段={}", id, stage.getDescription(), e);
                 }
                 String message = e instanceof BizException ? e.getMessage()
-                        : stage == TaskStage.MODEL_REQUEST ? "生成未取得结果，额度已释放，请重新提交"
-                        : "图片保存失败，额度已释放，请重新提交创作";
+                        : stage == TaskStage.MODEL_REQUEST ? "生成未取得结果，积分已释放，请重新提交"
+                          : "图片保存失败，积分已释放，请重新提交创作";
                 // 先确认任务未成功并记录失败；提交结果不明时不得删除可能已入库的云文件。
                 requireTaskLock(id);
                 int updated = aiGenerationMapper.generationFailed(userId, id, token, message, durationMillis);
-                log.info("AI 创作失败已记录：taskId={}, 预留额度已释放={}", id, updated == 1);
+                log.info("AI 创作失败已记录：taskId={}, 预留积分已释放={}", id, updated == 1);
                 if (updated == 1) {
                     try {
                         cleanupPendingUpload(requireOwned(userId, id));
@@ -274,7 +293,9 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
         });
     }
 
-    /** 直接上传当前内存结果，云请求在事务外；实测耗时与图片记录、成功状态在同一短事务提交。 */
+    /**
+     * 直接上传当前内存结果，云请求在事务外；实测耗时与图片记录、成功状态在同一短事务提交。
+     */
     private void saveResult(AiGeneration task, String token, byte[] bytes, long savingStarted, long taskStarted) {
         ImageFile image = imageFileService.storeGenerated(task.getUserId(), task.getId(), bytes, storageInfo -> {
             requireTaskLock(task.getId());
@@ -296,6 +317,7 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
                             (System.nanoTime() - taskStarted) / 1_000_000) != 1) {
                         throw new BizException(409, "任务执行期限已过，不能保存结果");
                     }
+                    image.setPointsCost(task.getPointsCost());
                     imageMapper.insert(image);
                     quotaUsageService.recordConsumption(image);
                     return null;
@@ -307,7 +329,9 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
         }
     }
 
-    /** 失败时仅即时补偿一次；删除失败保留文件定位供人工处理，不再定时扫描重试。 */
+    /**
+     * 失败时仅即时补偿一次；删除失败保留文件定位供人工处理，不再定时扫描重试。
+     */
     private void cleanupPendingUpload(AiGeneration task) {
         if (task.getPendingStorageInfo() == null || task.getWorkToken() != null) return;
         requireTaskLock(task.getId());
@@ -316,13 +340,17 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
         aiGenerationMapper.clearPendingUpload(task.getUserId(), task.getId());
     }
 
-    /** 缓存定位只由可信任务归属和服务端 UUID 生成，不能用客户端指定的键访问缓存。 */
+    /**
+     * 缓存定位只由可信任务归属和服务端 UUID 生成，不能用客户端指定的键访问缓存。
+     */
     private org.redisson.api.RBucket<byte[]> referenceBucket(AiGeneration task) {
         return redissonClient.getBucket("image-hub:reference:{" + task.getUserId() + "}:" + task.getId(),
                 org.redisson.client.codec.ByteArrayCodec.INSTANCE);
     }
 
-    /** 模型调用结束即清理；Redis 暂不可用时由 TTL 兜底，不改变已经取得的生成结果。 */
+    /**
+     * 模型调用结束即清理；Redis 暂不可用时由 TTL 兜底，不改变已经取得的生成结果。
+     */
     private void discardReference(AiGeneration task) {
         try {
             referenceBucket(task).delete();
@@ -350,15 +378,20 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
         return GenerationVO.from(task, image == null ? null : ImageVO.from(image));
     }
 
-    /** 使用任务独立锁；释放失败交给Redisson看门狗过期，不覆盖业务结果。 */
+    /**
+     * 使用任务独立锁；释放失败交给Redisson看门狗过期，不覆盖业务结果。
+     */
     private <T> T withTaskLock(String id, Supplier<T> operation) {
         var lock = redissonClient.getLock("image-hub:generation:" + id);
         if (!lock.tryLock()) throw new BizException(409, "任务正在处理，请稍后刷新");
         try {
             return operation.get();
         } finally {
-            try { if (lock.isHeldByCurrentThread()) lock.unlock(); }
-            catch (RuntimeException e) { log.warn("AI 创作任务锁释放失败，等待租期过期：taskId={}", id); }
+            try {
+                if (lock.isHeldByCurrentThread()) lock.unlock();
+            } catch (RuntimeException e) {
+                log.warn("AI 创作任务锁释放失败，等待租期过期：taskId={}", id);
+            }
         }
     }
 

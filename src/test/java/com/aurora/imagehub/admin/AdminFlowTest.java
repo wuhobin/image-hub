@@ -287,6 +287,7 @@ class AdminFlowTest {
         var result = post("/api/admin/ai-models", body, admin);
         assertThat(result.path("code").asInt()).isEqualTo(200);
         String id = result.path("data").path("id").asText();
+        assertThat(result.path("data").path("pointsCost").asInt()).isEqualTo(1);
         assertThat(result.path("data").path("keyConfigured").asBoolean()).isTrue();
         assertThat(result.toString()).doesNotContain("test-only-admin-key", "apiKeyCiphertext");
         String cipher = jdbcTemplate.queryForObject("SELECT api_key_ciphertext FROM hub_ai_model WHERE id=?", String.class, id);
@@ -302,7 +303,14 @@ class AdminFlowTest {
         assertThat(get("/api/admin/ai-models", admin).path("data").path("records").size()).isEqualTo(2);
 
         body.put("apiKey", "");
+        for (Object invalid : java.util.Arrays.asList(0, -1, 1.5, 2147483648L, null)) {
+            body.put("pointsCost", invalid);
+            assertThat(request("/api/admin/ai-models/" + id, HttpMethod.PUT, body, admin).path("code").asInt()).isEqualTo(400);
+        }
+        body.put("pointsCost", 6);
         assertThat(request("/api/admin/ai-models/" + id, HttpMethod.PUT, body, admin).path("code").asInt()).isEqualTo(200);
+        assertThat(jdbcTemplate.queryForObject("SELECT points_cost FROM hub_ai_model WHERE id=?", Integer.class, id)).isEqualTo(6);
+        assertThat(get("/api/app/generations/models", ordinary).path("data").get(0).path("pointsCost").asInt()).isEqualTo(6);
         assertThat(jdbcTemplate.queryForObject("SELECT api_key_ciphertext FROM hub_ai_model WHERE id=?", String.class, id)).isEqualTo(cipher);
         body.put("defaultSize", "512x512");
         assertThat(request("/api/admin/ai-models/" + id, HttpMethod.PUT, body, admin).path("code").asInt()).isEqualTo(400);

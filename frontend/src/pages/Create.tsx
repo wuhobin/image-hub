@@ -176,7 +176,7 @@ export default function Create({ app }: { app: AppState }) {
     let timer: ReturnType<typeof setTimeout>
     let lastTask = active
     let shouldPoll = !!active || !!pending.current
-    // 进入、主动刷新、切回页面或提交后读取额度；任务中间状态不改变额度。
+    // 进入、主动刷新、切回页面或提交后读取积分；任务中间状态不改变积分。
     void appRef.current.refreshQuota(controller.signal).catch(() => {})
 
     async function refresh() {
@@ -207,7 +207,7 @@ export default function Create({ app }: { app: AppState }) {
           setUncertain(false)
           setPage(1)
         }
-        // 完成/失败及不明确提交确认后才重新读列表与额度；中间状态直接更新当前行。
+        // 完成/失败及不明确提交确认后才重新读列表与积分；中间状态直接更新当前行。
         if ((lastTask && !current) || confirmed) {
           setHistoryRevision(value => value + 1)
           void appRef.current.refreshQuota(controller.signal).catch(() => {})
@@ -311,7 +311,7 @@ export default function Create({ app }: { app: AppState }) {
           <div className="creation-placeholder" aria-live="polite">
             <div className="creation-detail-loader"><Sparkle size={38} weight="thin" aria-hidden="true" /></div>
             <h3>{labels[task.status]}</h3>
-            <p>{task.status === 'GENERATING' || task.status === 'QUEUED' ? '你可以离开页面，任务会在后台继续。' : task.status === 'SAVING' ? '图片已生成，正在保存到你的图库。' : task.status === 'SUCCEEDED' ? '生成已完成，图片已被删除。' : task.errorMessage || '本次任务已结束，预留额度已释放。'}</p>
+            <p>{task.status === 'GENERATING' || task.status === 'QUEUED' ? '你可以离开页面，任务会在后台继续。' : task.status === 'SAVING' ? '图片已生成，正在保存到你的图库。' : task.status === 'SUCCEEDED' ? '生成已完成，图片已被删除。' : task.errorMessage || '本次任务已结束，预留积分已释放。'}</p>
           </div>}
       </div>
       <div className="creation-detail-panel">
@@ -389,20 +389,20 @@ export default function Create({ app }: { app: AppState }) {
               {model?.qualities.map(value => <option key={value} value={value}>{qualityNames[value] || value}</option>)}
             </select></div>
           </div>
-          {app.user ? <button className="creation-submit" title={uncertain ? '确认本次提交' : '生成图片'} aria-describedby="creation-submit-status" disabled={busy || loading || !!active || (!model && !uncertain) || !prompt.trim() || (!uncertain && (!app.quota || !!app.quotaError || app.quota.remaining < 1))}>
+          {app.user ? <button className="creation-submit" title={uncertain ? '确认本次提交' : '生成图片'} aria-describedby="creation-submit-status" disabled={busy || loading || !!active || (!model && !uncertain) || !prompt.trim() || (!uncertain && (!app.quota || !!app.quotaError || app.quota.remaining < (model?.pointsCost ?? 1)))}>
             <span className="visually-hidden">{uncertain ? '确认本次提交' : '生成图片'}</span><ArrowUp size={21} aria-hidden="true" />
           </button> : <button type="button" className="creation-submit" title="登录创作" onClick={() => navigate('/login', { state: { from: '/', creationPrompt: prompt } })}><span className="visually-hidden">登录创作</span><ArrowUp size={21} aria-hidden="true" /></button>}
         </div>
       </form>
     </div>
     <div className="creation-caption">
-      <div className="creation-quota"><span>单张生成 · 消耗 1 次</span><QuotaStatus app={app} /></div>
-      <span id="creation-submit-status" role="status">{!app.user ? '登录创作' : busy ? '正在提交…' : active ? '任务进行中' : uncertain ? '确认本次提交' : app.quotaError ? '额度待更新' : app.quota?.remaining === 0 ? '额度已用完' : '生成图片'}</span>
+      <div className="creation-quota"><span>{model ? `单张生成 · 消耗 ${model.pointsCost} 积分` : '选择模型查看消耗积分'}</span><QuotaStatus app={app} /></div>
+      <span id="creation-submit-status" role="status">{!app.user ? '登录创作' : busy ? '正在提交…' : active ? '任务进行中' : uncertain ? '确认本次提交' : app.quotaError ? '积分待更新' : app.quota && model && app.quota.remaining < model.pointsCost ? '积分不足' : '生成图片'}</span>
     </div>
     {sizeNotice && <p className="creation-help creation-notice" role="status">{sizeNotice}</p>}
     {modelsError && <div className="creation-error creation-alert" role="alert">{modelsError}<button className="quiet-link" onClick={() => setModelsRevision(value => value + 1)}>重新加载模型</button></div>}
     {app.user && !models.length && !modelsError && !modelsLoading && <p className="creation-help creation-notice">管理员配置并启用模型后，即可开始创作。</p>}
-    {app.user && <p className="creation-help creation-notice">与上传共用额度。生成并保存成功后扣除，失败返还预留额度。</p>}
+    {app.user && <p className="creation-help creation-notice">与上传共用积分。生成并保存成功后扣除，失败返还预留积分。</p>}
     {detail && <Modal title="创作记录详情" className="creation-detail-modal" onClose={() => setDetail(null)}>{renderResult(detail)}</Modal>}
     {error && <div className="creation-error creation-alert" role="alert">{error}<button className="quiet-link" onClick={() => setRevision(value => value + 1)}>刷新状态</button></div>}
     {historyError && <div className="creation-error creation-alert" role="alert">历史记录加载失败：{historyError}<button className="quiet-link" onClick={() => setHistoryRevision(value => value + 1)}>刷新历史</button></div>}

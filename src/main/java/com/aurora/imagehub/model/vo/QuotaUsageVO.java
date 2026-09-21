@@ -6,7 +6,7 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.NoArgsConstructor;
 
-/** 个人中心额度流水，不包含用户标识及内部存储定位。 */
+/** 个人中心积分流水，不包含用户标识及内部存储定位。 */
 @Getter
 @Setter
 @NoArgsConstructor

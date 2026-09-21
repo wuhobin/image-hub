@@ -79,6 +79,9 @@ platform:
         - name: imageHubSettings
           max-size: 16
           default-ttl: 3d
+        - name: imageHubModels
+          max-size: 1
+          default-ttl: 3d
   security:
     enabled: true
     token-name: Authorization

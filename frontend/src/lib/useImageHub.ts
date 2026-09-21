@@ -39,13 +39,13 @@ export function useImageHub(onUploadPage: boolean, onProfilePage: boolean) {
     const request = ++quotaRequest.current
     try {
       const result = await api<UploadQuota>('/images/quota', { signal })
-      // 焦点刷新、任务轮询和上传预检可能重叠；较早的响应不能覆盖新额度。
+      // 焦点刷新、任务轮询和上传预检可能重叠；较早的响应不能覆盖新积分。
       if (version === generation.current && request === quotaRequest.current && !signal?.aborted) { setQuota(result); setQuotaError('') }
       return result
     } catch (error) {
       if (version === generation.current && request === quotaRequest.current && !signal?.aborted) {
-        // 保留上次数字避免闪动；错误标记阻止用过期额度发起新的提交。
-        setQuotaError('额度读取失败，点击重试')
+        // 保留上次数字避免闪动；错误标记阻止用过期积分发起新的提交。
+        setQuotaError('积分读取失败，点击重试')
       }
       throw error
     }
@@ -195,12 +195,12 @@ export function useImageHub(onUploadPage: boolean, onProfilePage: boolean) {
     let succeeded = 0
     let quotaStopped = false
     try {
-      // 整批预检在任何文件发送前完成；后端仍逐张校验，防止另一设备抢占额度。
+      // 整批预检在任何文件发送前完成；后端仍逐张校验，防止另一设备抢占积分。
       const available = await refreshQuota(controller.signal)
       if (controller.signal.aborted || version !== generation.current) return
       if (items.length > available.remaining) {
-        notify(available.remaining === 0 ? '免费上传额度已用完'
-          : `剩余 ${available.remaining} 次额度，请将本次图片减少至 ${available.remaining} 张`, true)
+        notify(available.remaining === 0 ? '积分已用完'
+          : `剩余 ${available.remaining} 积分，请将本次图片减少至 ${available.remaining} 张`, true)
         return
       }
       for (const item of items) {
@@ -230,7 +230,7 @@ export function useImageHub(onUploadPage: boolean, onProfilePage: boolean) {
       if (!quotaStopped && version === generation.current) notify(succeeded === items.length
         ? `${succeeded} 张图片上传完成` : `${succeeded} 张成功，${items.length - succeeded} 张失败，可重试失败图片`, succeeded !== items.length)
     } catch (error) {
-      if (!controller.signal.aborted && version === generation.current) notify(error instanceof Error ? error.message : '额度校验失败，请重试', true)
+      if (!controller.signal.aborted && version === generation.current) notify(error instanceof Error ? error.message : '积分校验失败，请重试', true)
     } finally {
       if (version === generation.current) {
         uploadLock.current = false

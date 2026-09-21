@@ -27,6 +27,9 @@ public class AiGeneration {
 
     private String modelCode;
 
+    /** 提交时固定单张积分，预留、扣除和失败释放均使用此值。 */
+    private Integer pointsCost = 1;
+
     /** 提交时快照，停用或修改模型不会改变已接收任务。 */
     private String baseUrl;
 

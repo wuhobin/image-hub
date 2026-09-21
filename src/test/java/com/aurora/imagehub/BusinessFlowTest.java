@@ -99,6 +99,7 @@ class BusinessFlowTest {
         jdbcTemplate.update("DELETE FROM hub_quota_usage");
         jdbcTemplate.update("DELETE FROM hub_image");
         jdbcTemplate.update("DELETE FROM hub_ai_generation");
+        jdbcTemplate.update("UPDATE hub_ai_model SET points_cost=1");
         jdbcTemplate.update("DELETE FROM hub_user");
         codes.clear();
         quotaState.clear();
@@ -907,8 +908,8 @@ class BusinessFlowTest {
         var request = generationRequest(enableAiModel());
         String id = post("/api/app/generations", request, token).path("data").path("id").asText();
         assertThat(imageFileService.quota(userId).getRemaining()).isZero();
-        // 模拟首次查询之后其他请求已经提交；锁内发现重复时不能再按新任务检查额度。
-        String duplicate = uploadQuotaCache.reserveGeneration(userId, () -> id, () -> { throw new AssertionError("must not create again"); });
+        // 模拟首次查询之后其他请求已经提交；锁内发现重复时不能再按新任务检查积分。
+        String duplicate = uploadQuotaCache.reserveGeneration(userId, 1, () -> id, () -> { throw new AssertionError("must not create again"); });
         assertThat(duplicate).isEqualTo(id);
         assertThat(post("/api/app/generations", request, token).path("data").path("id").asText()).isEqualTo(id);
     }
@@ -974,7 +975,7 @@ class BusinessFlowTest {
         }
     }
 
-    /** 普通上传占用额度锁时，AI 保存等待释放后成功，不重新生成、不删除已上传结果。 */
+    /** 普通上传占用积分锁时，AI 保存等待释放后成功，不重新生成、不删除已上传结果。 */
     @Test
     void aiSaveWaitsForQuotaLockAndCommitsOnce() throws Exception {
         register("wait-ai", "wait-ai@example.test");
@@ -1078,7 +1079,7 @@ class BusinessFlowTest {
         verify(imageMapper, never()).selectList(any(com.baomidou.mybatisplus.core.conditions.Wrapper.class));
     }
 
-    /** 上游拒绝详情沿现有字段落库并返回，同时释放额度且不发起上传。 */
+    /** 上游拒绝详情沿现有字段落库并返回，同时释放积分且不发起上传。 */
     @Test
     void aiProviderErrorIsReturnedInTaskAndHistory() {
         register("provider-error", "provider-error@example.test");
@@ -1183,7 +1184,7 @@ class BusinessFlowTest {
         verify(storage, never()).of(any(MultipartFile.class));
     }
 
-    /** 编辑复用本人原图，不重复上传；跨用户、已删除、超限和双参考图请求不能预占额度。 */
+    /** 编辑复用本人原图，不重复上传；跨用户、已删除、超限和双参考图请求不能预占积分。 */
     @Test
     void editSavedImageReusesOwnedSourceAndRejectsInvalidReferences() throws Exception {
         register("edit-ai", "edit-ai@example.test");
@@ -1332,7 +1333,7 @@ class BusinessFlowTest {
                 userId, "IMAGE_UPLOAD", uploadId, 1, "duplicate")).isInstanceOf(org.springframework.dao.DuplicateKeyException.class);
     }
 
-    /** 写流水失败必须回滚计费图片与 AI 成功终态，额度恢复且补偿云文件。 */
+    /** 写流水失败必须回滚计费图片与 AI 成功终态，积分恢复且补偿云文件。 */
     @Test
     void quotaUsageWriteFailureRollsBackUploadAndGeneration() throws Exception {
         register("usage-fail", "usage-fail@example.test");
@@ -1352,6 +1353,60 @@ class BusinessFlowTest {
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_image WHERE user_id=?", Long.class, userId)).isZero();
         assertThat(get("/api/app/quota/records", token).path("data").path("total").asInt()).isZero();
         verify(ossTemplate, times(2)).delete(any(FileInfo.class));
+    }
+
+    /** 模型定价贯穿预留、快照结算、流水及缓存恢复；失败和中断释放完整积分。 */
+    @Test
+    void modelPointsCostIsSnapshottedAndChargedExactlyOnce() throws Exception {
+        register("priced-ai", "priced-ai@example.test");
+        String token = login("priced-ai");
+        long userId = userMapper.findByUsername("priced-ai").getId();
+        long modelId = enableAiModel();
+        jdbcTemplate.update("UPDATE hub_settings SET config_value='10' WHERE config_key='upload.free-total'");
+        jdbcTemplate.update("UPDATE hub_ai_model SET points_cost=6 WHERE id=?", modelId);
+        assertThat(get("/api/app/generations/models", token).path("data").get(0).path("pointsCost").asInt()).isEqualTo(6);
+
+        var request = new java.util.HashMap<>(generationRequest(modelId));
+        request.put("pointsCost", 1); // 客户端伪造费用不能覆盖服务端配置。
+        String id = post("/api/app/generations", request, token).path("data").path("id").asText();
+        assertThat(imageFileService.quota(userId).getReserved()).isEqualTo(6);
+        assertThat(imageFileService.quota(userId).getRemaining()).isEqualTo(4);
+        assertThat(upload(token, "normal.png", png()).path("code").asInt()).isEqualTo(200);
+        assertThat(imageFileService.quota(userId).getRemaining()).isEqualTo(3);
+        jdbcTemplate.update("UPDATE hub_ai_model SET points_cost=3 WHERE id=?", modelId);
+        assertThat(post("/api/app/generations", request, token).path("data").path("id").asText()).isEqualTo(id);
+        when(aiImageClient.generate(any())).thenReturn(png());
+        aiGenerationService.runTask(userId, id);
+        aiGenerationService.runTask(userId, id);
+        assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("SUCCEEDED");
+        verify(aiImageClient, times(1)).generate(argThat(task -> task.getPointsCost() == 6));
+        assertThat(imageFileService.quota(userId).getReserved()).isZero();
+        assertThat(imageFileService.quota(userId).getUsed()).isEqualTo(7);
+        assertThat(jdbcTemplate.queryForObject("SELECT amount FROM hub_quota_usage WHERE biz_id=?", Integer.class, id)).isEqualTo(6);
+        assertThat(jdbcTemplate.queryForObject("SELECT SUM(amount) FROM hub_quota_usage WHERE user_id=?", Long.class, userId)).isEqualTo(7);
+        assertThat(delete(id, token).path("code").asInt()).isEqualTo(200);
+        quotaState.clear();
+        assertThat(imageFileService.quota(userId).getUsed()).isEqualTo(7);
+
+        jdbcTemplate.update("UPDATE hub_ai_model SET points_cost=4 WHERE id=?", modelId);
+        assertThat(post("/api/app/generations", generationRequest(modelId), token).path("code").asInt()).isEqualTo(40301);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_ai_generation WHERE user_id=?", Long.class, userId)).isEqualTo(1);
+        jdbcTemplate.update("UPDATE hub_ai_model SET points_cost=3 WHERE id=?", modelId);
+        String failed = post("/api/app/generations", generationRequest(modelId), token).path("data").path("id").asText();
+        assertThat(imageFileService.quota(userId).getReserved()).isEqualTo(3);
+        assertThat(imageFileService.quota(userId).getRemaining()).isZero();
+        assertThat(upload(token, "blocked.png", png()).path("code").asInt()).isEqualTo(40301);
+        when(aiImageClient.generate(any())).thenThrow(new IllegalStateException("simulated provider failure"));
+        aiGenerationService.runTask(userId, failed);
+        assertThat(aiGenerationService.task(userId, failed).getStatus()).isEqualTo("FAILED");
+        assertThat(imageFileService.quota(userId).getReserved()).isZero();
+        assertThat(imageFileService.quota(userId).getRemaining()).isEqualTo(3);
+
+        String interrupted = post("/api/app/generations", generationRequest(modelId), token).path("data").path("id").asText();
+        jdbcTemplate.update("UPDATE hub_ai_generation SET status='GENERATING', work_token='stale', work_deadline=TIMESTAMPADD(SECOND,-1,CURRENT_TIMESTAMP) WHERE id=?", interrupted);
+        assertThat(imageFileService.quota(userId).getReserved()).isZero();
+        assertThat(imageFileService.quota(userId).getRemaining()).isEqualTo(3);
+        assertThat(get("/api/app/quota/records", token).path("data").path("total").asInt()).isEqualTo(2);
     }
 
     private String login(String username) {

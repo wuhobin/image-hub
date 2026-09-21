@@ -24,6 +24,8 @@ public class AiModelVO {
 
     private String defaultQuality;
 
+    private Integer pointsCost;
+
     /** 仅映射允许公开的选择项。 */
     public static AiModelVO from(AiModelConfig model) {
         AiModelVO result = new AiModelVO();
@@ -33,6 +35,7 @@ public class AiModelVO {
         result.setDefaultSize(model.getDefaultSize());
         result.setQualities(List.of(model.getQualities().split(",")));
         result.setDefaultQuality(model.getDefaultQuality());
+        result.setPointsCost(model.getPointsCost());
         return result;
     }
 }

@@ -35,15 +35,15 @@ export default function Profile({ app }: { app: AppState }) {
   const { quota, quotaError } = app
   const loading = app.initializing || (!quota && !quotaError) || retrying
   const metrics = [
-    { label: '剩余额度', value: quota?.remaining, note: '当前可用于上传与创作', tone: 'available' },
-    { label: '总额度', value: quota?.total, note: '账户累计可用额度', tone: 'total' },
-    { label: '已用额度', value: quota?.used, note: '上传与 AI 创作累计消耗', tone: 'used' },
-    { label: '预留额度', value: quota?.reserved, note: '生成中占用，失败后释放', tone: 'reserved' },
+    { label: '剩余积分', value: quota?.remaining, note: '当前可用于上传与创作', tone: 'available' },
+    { label: '总积分', value: quota?.total, note: '账户累计可用积分', tone: 'total' },
+    { label: '已用积分', value: quota?.used, note: '上传与 AI 创作累计消耗', tone: 'used' },
+    { label: '预留积分', value: quota?.reserved, note: '生成中占用，失败后释放', tone: 'reserved' },
   ]
 
   async function retry() {
     setRetrying(true)
-    try { await app.refreshQuota() } catch { /* 读取失败由共享额度状态展示。 */ }
+    try { await app.refreshQuota() } catch { /* 读取失败由共享积分状态展示。 */ }
     finally { setRetrying(false) }
   }
 
@@ -54,26 +54,26 @@ export default function Profile({ app }: { app: AppState }) {
         <div><h1 title={app.user || undefined}>{app.user || '个人中心'}</h1><p>个人中心 <span>·</span> 我的创作账户</p></div>
       </header>
       <section className="profile-quota" aria-labelledby="profile-quota-title" aria-busy={loading}>
-        <h2 id="profile-quota-title" className="visually-hidden">共享额度</h2>
+        <h2 id="profile-quota-title" className="visually-hidden">共享积分</h2>
         <dl className="profile-metrics">
           {metrics.map(({ label, value, note, tone }) => <div className={'profile-metric is-' + tone} key={label}>
             <dt>{label}</dt>
             <dd>{loading ? <span className="skeleton-block profile-quota-skeleton" aria-label="正在加载" />
-              : value == null ? '—' : <>{value}<span className="profile-quota-unit">次</span></>}
+              : value == null ? '—' : <>{value}<span className="profile-quota-unit">积分</span></>}
               <span className="profile-metric-note">{note}</span>
             </dd>
           </div>)}
         </dl>
         {(loading || quotaError || quota?.remaining === 0) && <div className="profile-quota-status" role="status">
-          {loading ? '正在读取额度…' : quotaError ? <button type="button" className="text-button" onClick={retry}>{quotaError} · 重试</button>
-            : '共享额度已用完。'}
+          {loading ? '正在读取积分…' : quotaError ? <button type="button" className="text-button" onClick={retry}>{quotaError} · 重试</button>
+            : '共享积分已用完。'}
         </div>}
       </section>
     </div>
     <div className="profile-dashboard">
     {app.user && <section className="profile-usage" aria-labelledby="profile-usage-title" aria-busy={recordsLoading}>
       <header>
-        <div><h2 id="profile-usage-title">额度消耗记录</h2><p>仅记录成功消耗，失败任务不扣费。</p></div>
+        <div><h2 id="profile-usage-title">积分消耗记录</h2><p>仅记录成功消耗，失败任务不扣积分。</p></div>
         <button type="button" className="profile-refresh" disabled={recordsLoading} onClick={() => setRevision(value => value + 1)}>
           <ArrowClockwise size={16} aria-hidden="true" />{recordsLoading ? '读取中' : '刷新记录'}
         </button>
@@ -82,11 +82,11 @@ export default function Profile({ app }: { app: AppState }) {
         : !records && recordsLoading ? <div className="profile-usage-state" role="status"><span className="profile-loading-dot" />正在读取消耗记录…</div>
         : !records?.records.length ? <div className="profile-usage-state">
           <span className="profile-empty-icon"><Sparkle size={24} aria-hidden="true" /></span>
-          <strong>暂无额度消耗记录</strong><p>上传图片或完成一次 AI 创作后，记录会出现在这里。</p>
+          <strong>暂无积分消耗记录</strong><p>上传图片或完成一次 AI 创作后，记录会出现在这里。</p>
           <Link className="quiet-link" to="/">开始创作<ArrowUpRight size={14} aria-hidden="true" /></Link>
         </div>
         : <>
-          <ul className="profile-usage-list" tabIndex={0} aria-label="当前账号的额度消耗明细">
+          <ul className="profile-usage-list" tabIndex={0} aria-label="当前账号的积分消耗明细">
             {records.records.map(record => <li key={record.id}>
               <div className="quota-usage-description">
                 <span className="quota-usage-scene">{record.scene === 'AI_GENERATION' ? 'AI 创作' : record.scene === 'IMAGE_UPLOAD' ? '图片上传' : record.scene}</span>
@@ -94,7 +94,7 @@ export default function Profile({ app }: { app: AppState }) {
                 <small className="visually-hidden">记录编号 {record.bizId}</small>
               </div>
               <div className="quota-usage-detail">
-                <span className="quota-usage-amount">−{record.amount}<span> 次</span></span>
+                <span className="quota-usage-amount">−{record.amount}<span> 积分</span></span>
                 <time dateTime={record.createTime?.replace(' ', 'T')} title={record.createTime}>{record.createTime?.slice(5, 16).replaceAll('-', '/') || '—'}</time>
               </div>
             </li>)}
@@ -109,7 +109,7 @@ export default function Profile({ app }: { app: AppState }) {
           </div>
         </>}
     </section>}
-      <aside className="profile-sidebar" aria-label="创作与额度说明">
+      <aside className="profile-sidebar" aria-label="创作与积分说明">
         <section className="profile-panel">
           <header><h2>创作空间</h2><span>从这里开始</span></header>
           <nav className="profile-shortcuts" aria-label="创作快捷入口">
@@ -119,11 +119,11 @@ export default function Profile({ app }: { app: AppState }) {
           <Link to="/history" className="profile-library-link">查看我的图片<ArrowUpRight size={15} aria-hidden="true" /></Link>
         </section>
         <section className="profile-panel profile-rules">
-          <header><h2>额度说明</h2><span>上传与创作共用</span></header>
+          <header><h2>积分说明</h2><span>上传与创作共用</span></header>
           <dl>
-            <div><dt>成功后扣除</dt><dd>每成功上传或生成一张图片，消耗 1 次额度。</dd></div>
-            <div><dt>生成时预留</dt><dd>剩余额度已扣除生成中的预留；任务失败后自动释放。</dd></div>
-            <div><dt>累计使用</dt><dd>额度不按天重置，删除图片不会返还已用额度。</dd></div>
+            <div><dt>成功后扣除</dt><dd>上传每张消耗 1 积分，AI 创作按所选模型扣除。</dd></div>
+            <div><dt>生成时预留</dt><dd>剩余积分已扣除生成中的预留；任务失败后自动释放。</dd></div>
+            <div><dt>累计使用</dt><dd>积分不按天重置，删除图片不会返还已用积分。</dd></div>
           </dl>
         </section>
       </aside>

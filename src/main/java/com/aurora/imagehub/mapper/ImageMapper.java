@@ -31,9 +31,9 @@ public interface ImageMapper extends BaseMapper<ImageFile> {
     long sumBytes(@Param("userId") long userId, @Param("search") String search, @Param("type") String type,
                   @Param("sourceType") String sourceType);
 
-    // 消耗历史必须包含已逻辑删除图片；普通列表的 deleted = 0 过滤不适用于额度恢复。
-    @Select("SELECT COUNT(*) FROM hub_image WHERE user_id = #{userId} AND quota_charged = 1")
-    long countQuotaUploads(long userId);
+    // 消耗历史必须包含已逻辑删除图片；普通列表的 deleted = 0 过滤不适用于积分恢复。
+    @Select("SELECT COALESCE(SUM(points_cost), 0) FROM hub_image WHERE user_id = #{userId} AND quota_charged = 1")
+    long sumConsumedPoints(long userId);
 
     // 逻辑删除会改变业务列，数据库 ON UPDATE 自动维护更新时间。
     @Update("UPDATE hub_image SET deleted = 1 WHERE id = #{id} AND user_id = #{userId} AND deleted = 0")

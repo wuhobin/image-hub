@@ -7,7 +7,7 @@ import { adminApi } from '../../lib/admin/api'
 import type { AdminSettings } from '../../lib/admin/api'
 
 // 仅注册已接入的配置分类；各分类组件独立负责表单、校验和保存。
-const settingsGroups = [{ key: 'upload', label: '上传设置', Panel: UploadSettings }]
+const settingsGroups = [{ key: 'upload', label: '积分设置', Panel: UploadSettings }]
 
 const message = (error: unknown) => error instanceof Error ? error.message : '配置读取失败，请稍后重试'
 
@@ -102,7 +102,7 @@ function UploadSettings({ tabs }: { tabs: ReactNode }) {
     return () => controller.abort()
   }, [retry])
 
-  /** 校验当前分组并阻止重复提交，保存不会重置用户已经消耗的额度。 */
+  /** 校验当前分组并阻止重复提交，保存不会重置用户已经消耗的积分。 */
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!changed || submitting.current) return
@@ -140,20 +140,20 @@ function UploadSettings({ tabs }: { tabs: ReactNode }) {
         : !settings ? <div className="admin-settings-state"><p role="alert">{error}</p><button className="button button-secondary" onClick={() => setRetry(count => count + 1)}>重新加载</button></div>
           : <form id="upload-settings-form" onSubmit={save} aria-busy={saving}>
             <section className="admin-settings-section" aria-labelledby="quota-settings-title">
-              <div className="admin-settings-section-heading"><h2 id="quota-settings-title">共享额度</h2><p>统一设置每位用户上传与 AI 创作可共用的免费累计次数。</p></div>
+              <div className="admin-settings-section-heading"><h2 id="quota-settings-title">共享积分</h2><p>统一设置每位用户上传与 AI 创作可共用的免费累计积分。</p></div>
               <div className="admin-settings-fields">
-                <label htmlFor="free-upload-quota">免费总额度</label>
+                <label htmlFor="free-upload-quota">免费总积分</label>
                 <div className="admin-settings-input">
                   <input id="free-upload-quota" type="number" inputMode="numeric" min="0" max="2147483647" step="1" required value={value} disabled={saving}
                     aria-describedby="quota-input-help quota-change-note" onChange={event => { setValue(event.target.value); setSaved(false); setError('') }} />
-                  <span>次 / 用户</span>
+                  <span>积分 / 用户</span>
                 </div>
-                <p id="quota-input-help" className="admin-settings-help">填写 0–2,147,483,647 之间的整数。设为 0 可暂停新上传。</p>
+                <p id="quota-input-help" className="admin-settings-help">填写 0–2,147,483,647 之间的整数。设为 0 可暂停新的上传与 AI 创作。</p>
                 <div className="admin-settings-change" id="quota-change-note" role="status">
-                  <span>当前 {settings.freeUploadQuota.toLocaleString()} 次</span><ArrowRight size={16} aria-hidden="true" /><strong>{valid ? total.toLocaleString() + ' 次' : '请输入有效额度'}</strong>
-                  <p>{valid && total === 0 ? '保存后将暂停普通用户上传，已有图片仍可查看和删除。'
-                    : changed && total < settings.freeUploadQuota ? '降低额度不会清除已用次数；已用次数达到新总额的用户将无法继续上传。'
-                      : '已用次数保持不变，剩余额度随新的总额度重新计算。'}</p>
+                  <span>当前 {settings.freeUploadQuota.toLocaleString()} 积分</span><ArrowRight size={16} aria-hidden="true" /><strong>{valid ? total.toLocaleString() + ' 积分' : '请输入有效积分'}</strong>
+                  <p>{valid && total === 0 ? '保存后将暂停普通用户上传与 AI 创作，已有图片仍可查看和删除。'
+                    : changed && total < settings.freeUploadQuota ? '降低积分不会清除已用积分；已用积分达到新总额的用户将无法继续上传或创作。'
+                      : '已用积分保持不变，剩余积分随新的总积分重新计算。'}</p>
                 </div>
                 {error && <p className="admin-error" role="alert">{error}</p>}
                 {saved && <span className="admin-settings-saved" role="status"><Check size={16} aria-hidden="true" />配置已保存</span>}
@@ -162,9 +162,9 @@ function UploadSettings({ tabs }: { tabs: ReactNode }) {
             <section className="admin-settings-section" aria-labelledby="quota-rules-title">
               <div className="admin-settings-section-heading"><h2 id="quota-rules-title">生效规则</h2><p>调整总额，保留已有消耗。</p></div>
               <div className="admin-settings-rules">
-                <p>对新用户和已有用户统一生效，不按天重置。上传或 AI 创作每成功保存一张图片消耗一次，删除图片不返还次数。AI 任务先预留一次额度，失败或放弃后释放。</p>
-                <div className="admin-settings-example"><span>例如，用户已上传 30 次</span><p>总额设为 <b>200</b><ArrowRight size={14} aria-hidden="true" />剩余 <b>170</b></p><p>总额设为 <b>20</b><ArrowRight size={14} aria-hidden="true" />剩余 <b>0</b></p></div>
-                <p>调高额度后可继续使用新增额度；已经开始的上传会继续完成。</p>
+                <p>对新用户和已有用户统一生效，不按天重置。上传每张消耗 1 积分，AI 创作按模型配置计费，删除图片不返还积分。AI 任务提交时预留对应积分，成功保存后扣除，失败释放。</p>
+                <div className="admin-settings-example"><span>例如，用户已消耗 30 积分</span><p>总额设为 <b>200</b><ArrowRight size={14} aria-hidden="true" />剩余 <b>170</b></p><p>总额设为 <b>20</b><ArrowRight size={14} aria-hidden="true" />剩余 <b>0</b></p></div>
+                <p>调高积分后可继续使用新增积分；已经开始的上传会继续完成。</p>
               </div>
             </section>
           </form>}

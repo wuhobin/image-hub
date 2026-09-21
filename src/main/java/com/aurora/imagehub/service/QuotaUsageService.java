@@ -6,7 +6,7 @@ import com.aurora.imagehub.model.vo.QuotaUsageVO;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.IService;
 
-/** 额度消耗账本；只记录已成功保存的计费图片，与业务入库共用事务。 */
+/** 积分消耗账本；只记录已成功保存的计费图片，与业务入库共用事务。 */
 public interface QuotaUsageService extends IService<QuotaUsage> {
 
     /** 仅供服务端成功保存路径调用；必须已处于事务中，唯一键防止同业务重复记账。 */

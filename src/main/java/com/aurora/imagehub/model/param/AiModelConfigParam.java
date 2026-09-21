@@ -1,6 +1,7 @@
 package com.aurora.imagehub.model.param;
 
 import jakarta.validation.constraints.*;
+import java.math.BigDecimal;
 import java.util.List;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -38,6 +39,12 @@ public class AiModelConfigParam {
 
     @NotBlank
     private String defaultQuality;
+
+    @NotNull(message = "请填写单张消耗积分")
+    @DecimalMin(value = "1", message = "单张消耗积分至少为1")
+    @DecimalMax(value = "2147483647", message = "单张消耗积分过大")
+    @Digits(integer = 10, fraction = 0, message = "单张消耗积分必须为整数")
+    private BigDecimal pointsCost = BigDecimal.ONE;
 
     @NotNull
     private Boolean enabled = false;

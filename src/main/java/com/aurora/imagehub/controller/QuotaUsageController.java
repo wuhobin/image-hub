@@ -8,7 +8,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
-/** 个人额度流水只读入口；用户身份来自登录态，没有前端记账或删除流水接口。 */
+/** 个人积分流水只读入口；用户身份来自登录态，没有前端记账或删除流水接口。 */
 @RestController
 @RequestMapping("/api/app/quota/records")
 @RequiredArgsConstructor
