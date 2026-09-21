@@ -1,16 +1,16 @@
-import { lazy, Suspense, useEffect, useRef } from 'react'
+import {lazy, Suspense, useEffect, useRef, useState} from 'react'
 import { Link, NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { ArrowUpRight } from '@phosphor-icons/react/dist/csr/ArrowUpRight'
 import { ImageSquare } from '@phosphor-icons/react/dist/csr/ImageSquare'
 import { SignOut } from '@phosphor-icons/react/dist/csr/SignOut'
 import { UserCircle } from '@phosphor-icons/react/dist/csr/UserCircle'
 import Create from './pages/Create'
-import Profile from './pages/Profile'
-import { ImagePreview } from './components/ImagePreview'
-import { NoticeToast } from './components/NoticeToast'
 import HistoryLoading from './components/HistoryLoading'
 import { useImageHub } from './lib/useImageHub'
 
+const NoticeToast = lazy(() => import('./components/NoticeToast').then(module => ({default: module.NoticeToast})))
+const ImagePreview = lazy(() => import('./components/ImagePreview').then(module => ({default: module.ImagePreview})))
+const Profile = lazy(() => import('./pages/Profile'))
 const History = lazy(() => import('./pages/History'))
 const Upload = lazy(() => import('./pages/Home'))
 const Auth = lazy(() => import('./pages/Auth'))
@@ -88,9 +88,23 @@ function Header({ app }: { app: AppState }) {
 export default function App() {
   const location = useLocation()
   const app = useImageHub(location.pathname === '/upload', location.pathname === '/profile')
+    const [noticesStarted, setNoticesStarted] = useState(false)
+    // 首次消息才加载提示组件；之后保持挂载，让消息清空时原有退出动画完整执行。
+    useEffect(() => {
+        if (app.notice) setNoticesStarted(true)
+    }, [app.notice])
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'instant' })
-    const titles: Record<string, string> = { '/': 'AI 创作', '/create': 'AI 创作', '/upload': '上传图片', '/history': '我的图片', '/profile': '个人中心', '/login': '登录', '/register': '注册' }
+      const titles: Record<string, string> = {
+          '/': 'AI 创作',
+          '/create': 'AI 创作',
+          '/upload': '上传图片',
+          '/history': '我的图片',
+          '/profile': '个人中心',
+          '/creations': '创作记录',
+          '/login': '登录',
+          '/register': '注册'
+      }
     document.title = `ImgHub · ${titles[location.pathname] || '页面未找到'}`
   }, [location.pathname])
 
@@ -99,7 +113,15 @@ export default function App() {
     <Header app={app} />
     <Suspense fallback={location.pathname === '/history' ? <HistoryLoading /> : <main id="main" className="empty-state" role="status">正在加载页面…</main>}>
     <Routes>
-      <Route path="/" element={app.initializing ? <main id="main" className="empty-state" role="status">正在恢复创作空间…</main> : <Create key={app.user ? 'user:' + app.user : 'guest'} app={app} />} />
+        <Route path="/" element={app.initializing ?
+            <main id="main" className="creation-page hero creation-loading" aria-busy="true">
+                <div className="starfield ambient-layer" aria-hidden="true"/>
+                <p role="status">正在恢复创作空间…</p></main> :
+            <Create key={app.user ? 'user:' + app.user : 'guest'} app={app}/>}/>
+        <Route path="/creations" element={app.initializing ?
+            <main id="main" className="empty-state" role="status">正在恢复创作记录…</main> : app.user ?
+                <Create key={'history:' + app.user} app={app} view="history"/> :
+                <Navigate to="/login" state={{from: '/creations'}} replace/>}/>
       <Route path="/create" element={<Navigate to="/" state={location.state} replace />} />
       <Route path="/upload" element={<Upload app={app} />} />
       <Route path="/history" element={app.initializing ? <HistoryLoading /> : app.user ? <History app={app} /> : <Navigate to="/login" state={{ from: '/history' }} replace />} />
@@ -114,7 +136,10 @@ export default function App() {
       <span>从一个想法，到一张图片。</span>
       <span className="demo-label">AI 创作 · 图片分享</span>
     </footer>
-    <NoticeToast notice={app.notice} onDismiss={() => app.setNotice(null)} />
-    {app.preview && <ImagePreview key={app.preview.url ?? app.preview.preview} image={app.preview} onClose={() => app.setPreview(null)} />}
+      {noticesStarted &&
+          <Suspense fallback={null}><NoticeToast notice={app.notice} onDismiss={() => app.setNotice(null)}/></Suspense>}
+      {app.preview &&
+          <Suspense fallback={null}><ImagePreview key={app.preview.url ?? app.preview.preview} image={app.preview}
+                                                  onClose={() => app.setPreview(null)}/></Suspense>}
   </>
 }

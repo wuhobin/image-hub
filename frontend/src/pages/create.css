@@ -1,5 +1,252 @@
-/* 创作与上传共用 hero 标题、星空和输入框宽度。 */
-.creation-page { min-height: calc(100svh - 150px); }
+/* 创作工作台只承载输入与本次结果，历史浏览独立成页。 */
+.creation-records-entry {
+    display: flex;
+    justify-content: center;
+    max-width: 738px;
+    margin: 24px auto 0;
+}
+
+.creation-records-entry a {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 40px;
+    padding: 8px 14px;
+    border-radius: 20px;
+    color: #9ba8bb;
+    font-size: 12px;
+}
+
+.creation-records-entry a:hover {
+    color: #e6edf8;
+    background: #ffffff08;
+}
+
+.creation-current-task {
+    max-width: 738px;
+    margin: 34px auto 0;
+    padding-top: 24px;
+    border-top: 1px solid #ffffff12;
+}
+
+.creation-current-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 20px;
+    margin-bottom: 20px;
+}
+
+.creation-current-heading > div > span {
+    color: #9ba8bb;
+    font-size: 11px;
+}
+
+.creation-current-heading h2 {
+    margin-top: 8px;
+    font-size: 22px;
+    font-weight: 500;
+    letter-spacing: -.4px;
+}
+
+.creation-current-heading > span {
+    color: #9ba8bb;
+    font-size: 11px;
+    text-align: right;
+}
+
+.creation-current-image {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: zoom-in;
+}
+
+.creation-current-image img {
+    max-width: 100%;
+    max-height: min(56svh, 520px);
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    border-radius: 12px;
+}
+
+.creation-current-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 220px;
+    padding: 32px 24px;
+    border: 1px solid #ffffff0d;
+    border-radius: 18px;
+    background: #10151cbb;
+    text-align: center;
+}
+
+.creation-current-placeholder .creation-detail-loader {
+    margin-bottom: 16px;
+}
+
+.creation-current-placeholder p {
+    max-width: 560px;
+    margin: 0;
+    color: #a3afc1;
+    font-size: 13px;
+    line-height: 1.9;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.creation-current-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 16px;
+    padding-top: 18px;
+}
+
+.creation-current-actions > span {
+    color: #a0adbe;
+    font-size: 11px;
+    line-height: 1.8;
+}
+
+.creation-current-actions > div {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+}
+
+.creation-current-actions .button {
+    min-height: 38px;
+    padding: 8px 12px;
+    font-size: 12px;
+}
+
+.creation-records-page {
+    max-width: 1200px;
+}
+
+.creation-records-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 24px;
+}
+
+.creation-records-heading h1 {
+    margin: 22px 0 12px;
+    font-size: 32px;
+    font-weight: 500;
+    letter-spacing: -1px;
+}
+
+.creation-records-heading p {
+    color: #9ba8bb;
+    font-size: 13px;
+    line-height: 1.8;
+}
+
+.creation-records-page .creation-history {
+    max-width: none;
+    margin-top: 40px;
+}
+
+.creation-records-page .creation-history h2 {
+    font-size: 16px;
+}
+
+.creation-loading {
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    /* 快速恢复时不闪现加载文案，慢请求仍有明确反馈。 */
+    .creation-loading > p {
+        animation: creation-history-enter .3s ease .6s backwards;
+    }
+
+    .creation-page .creation-heading {
+        animation: creation-history-enter .6s cubic-bezier(.22, 1, .36, 1) backwards;
+    }
+
+    .creation-caption, .creation-page > .creation-help, .creation-records-entry {
+        animation: creation-history-enter .5s cubic-bezier(.22, 1, .36, 1) .3s backwards;
+    }
+
+    /* 入场后不保留 transform，避免影响参数弹窗定位；普通状态更新不会重播。 */
+    .creation-workspace {
+        animation: creation-history-enter .6s cubic-bezier(.22, 1, .36, 1) .08s backwards;
+    }
+
+    .creation-form textarea {
+        animation: creation-history-enter .5s cubic-bezier(.22, 1, .36, 1) .16s backwards;
+    }
+
+    .creation-toolbar {
+        animation: creation-history-enter .5s cubic-bezier(.22, 1, .36, 1) .26s backwards;
+    }
+
+    .creation-current-task {
+        animation: creation-history-enter .45s cubic-bezier(.22, 1, .36, 1) backwards;
+    }
+}
+
+@media (max-width: 560px) {
+    .creation-current-heading h2 {
+        font-size: 20px;
+    }
+
+    .creation-current-actions > div {
+        width: 100%;
+    }
+
+    .creation-records-heading {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 18px;
+    }
+
+    .creation-records-heading h1 {
+        font-size: 28px;
+    }
+}
+
+/* 加载态与完整首屏共用高度，避免登录恢复后页脚上下跳动。 */
+.creation-page.hero {
+    min-height: max(700px, calc(100svh - 150px));
+}
+
+/* 有当前任务时缩小标题留白，让生成进度与结果更早进入视野。 */
+.creation-page.has-task {
+    padding-top: 42px;
+}
+
+.creation-page.has-task .creation-heading h1 {
+    margin: 14px 0;
+    font-size: clamp(28px, 3.2vw, 40px);
+    letter-spacing: -1.2px;
+}
+
+.creation-page.has-task .creation-workspace {
+    margin-top: 26px;
+}
+
+.creation-page.has-task .creation-records-entry {
+    margin-top: 14px;
+}
+
+.creation-page.has-task .creation-current-task {
+    margin-top: 20px;
+}
 .creation-heading { max-width: 960px; margin: 0 auto; }
 .creation-workspace { position: relative; max-width: 738px; margin: 46px auto 0; border: 1px solid #343a45; border-radius: 24px; background: #010203; box-shadow: 0 12px 40px #0003; transition: border-color .2s, box-shadow .2s; }
 .creation-workspace:focus-within { border-color: #7895bf; box-shadow: 0 0 0 3px #a8c9ff0c, 0 12px 40px #0003; }
@@ -161,10 +408,6 @@
 .creation-alert { max-width: 738px; margin: 18px auto 0; padding: 14px 18px; background: #39202b; border: 1px solid #784653; border-radius: 8px; }
 .creation-alert button { margin-left: 16px; }
 .creation-history { max-width: 1050px; margin: 60px auto 0; }
-.creation-upload-entry { display: flex; align-items: center; justify-content: space-between; gap: 24px; max-width: 1050px; margin: 65px auto 0; padding: 26px 0; border-top: 1px solid #253043; }
-.creation-upload-entry h2 { font-size: 16px; font-weight: 500; }
-.creation-upload-entry p { margin-top: 9px; color: #97a8c0; font-size: 12px; line-height: 1.8; }
-.creation-upload-entry > a { flex-shrink: 0; }
 .creation-history > header { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 24px; }
 .creation-history h2 { font-size: 22px; font-weight: 500; letter-spacing: -.03em; }
 .creation-history header p { margin-top: 8px; font-size: 12px; color: #8c96a5; }
@@ -218,7 +461,15 @@
 .creation-history-footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 12px; padding-top: 11px; border-top: 1px solid #ffffff09; color: #7f8a9c; font-size: 10px; font-variant-numeric: tabular-nums; }
 .creation-history-item:hover .creation-history-footer svg { color: #d3e1f5; }
 .creation-history-empty { padding: 44px; border: 1px dashed #303d51; border-radius: 16px; color: #9baac0; text-align: center; font-size: 13px; }
-.creation-page button.quiet-link, .admin-models-page button.quiet-link { background: transparent; border: 0; font-family: inherit; cursor: pointer; min-height: 36px; padding: 4px 0; }
+
+.creation-page button.quiet-link, .creation-records-page button.quiet-link, .admin-models-page button.quiet-link {
+    background: transparent;
+    border: 0;
+    font-family: inherit;
+    cursor: pointer;
+    min-height: 36px;
+    padding: 4px 0;
+}
 @media (max-width: 1050px) {
   .creation-history-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .creation-history-skeleton:nth-child(3) { display: none; }
@@ -244,7 +495,6 @@
   .creation-form select { min-height: 44px; padding-inline: 8px; }
   .creation-submit { grid-column: 2; }
   .creation-caption { padding-inline: 4px; gap: 8px; }
-  .creation-upload-entry { align-items: flex-start; flex-direction: column; gap: 16px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .creation-history-item.is-running .creation-history-thumb::before, .creation-history-item.is-running .creation-history-thumb::after, .creation-status-dots i, .is-running .creation-detail-loader::after, .creation-detail-modal[open] { animation: none; }

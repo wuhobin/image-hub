@@ -1,9 +1,16 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" style="color-scheme: dark; background: #090b10;">
   <head>
     <meta charset="UTF-8" />
+      <meta name="color-scheme" content="dark"/>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#090b10" />
+      <!-- 根节点在解析 head 前即声明深色；应用未挂载时也覆盖整个视口。 -->
+      <style>body {
+          margin: 0;
+          min-height: 100svh;
+          background: #090b10;
+      }</style>
     <meta name="description" content="ImgHub，以 AI 创作实现你的灵感。文字生成图片，保存分享作品，也支持上传和管理已有图片。" />
     <title>ImgHub · AI 创作</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />

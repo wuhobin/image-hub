@@ -6,6 +6,10 @@ public final class SystemSettingsConstants {
     /** 所有用户的免费累计上传总积分配置键。 */
     public static final String FREE_UPLOAD_QUOTA = "upload.free-total";
 
+    public static final String CHECK_IN_DAILY_POINTS = "check-in.daily-points";
+
+    public static final String CHECK_IN_BONUS_POINTS = "check-in.bonus-points";
+
     /** 父项目二级缓存实例名，与 application.yml 中的实例配置保持一致。 */
     public static final String CACHE_NAME = "imageHubSettings";
 

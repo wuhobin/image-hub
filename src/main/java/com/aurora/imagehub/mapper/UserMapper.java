@@ -7,6 +7,13 @@ import org.apache.ibatis.annotations.*;
 /** 用户账户持久化；唯一性由数据库约束兜底。 */
 @Mapper
 public interface UserMapper extends BaseMapper<UserAccount> {
+
+    /**
+     * 在签到事务内串行化同账号请求，跨后端实例仍只能领取一次。
+     */
+    @Select("SELECT id FROM hub_user WHERE id = #{id} AND deleted = 0 FOR UPDATE")
+    Long lockForCheckIn(long id);
+
     @Select("SELECT * FROM hub_user WHERE username = #{username} AND deleted = 0")
     UserAccount findByUsername(String username);
 

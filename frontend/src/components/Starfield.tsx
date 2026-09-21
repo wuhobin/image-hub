@@ -54,6 +54,7 @@ const pointFragment = `
 const skyFragment = `
   uniform sampler2D uStars;
   uniform float uHasBox;
+  uniform float uReveal;
   varying vec2 vUv;
   void main() {
     vec3 light = texture2D(uStars, vUv).rgb;
@@ -64,7 +65,7 @@ const skyFragment = `
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
     vec3 base = mix(vec3(0.035, 0.043, 0.063), vec3(0.002, 0.003, 0.005), uHasBox * bottomFade);
-    gl_FragColor.rgb = base + mix(ambient, gl_FragColor.rgb, uHasBox) * bottomFade;
+    gl_FragColor.rgb = base + mix(ambient, gl_FragColor.rgb, uHasBox) * bottomFade * uReveal;
   }
 `
 
@@ -81,12 +82,19 @@ export default memo(function Starfield({ target }: StarfieldProps) {
       if (!host) return
       let renderer: THREE.WebGLRenderer
       try {
-        renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, powerPreference: 'low-power' })
+          // Three.js r186 内部创建的上下文固定 alpha:true；显式创建才能保证画布不透明。
+          const canvas = document.createElement('canvas')
+          const context = canvas.getContext('webgl2', {
+              alpha: false, antialias: false, depth: false, stencil: false, powerPreference: 'low-power',
+          })
+          if (!context) return
+          // 星点采用加法混合，背景只有一个平面；无需深度、模板或保留绘图缓冲区。
+          renderer = new THREE.WebGLRenderer({canvas, context})
       } catch {
         // Keep the CSS background and all product interactions when WebGL is unavailable.
         return
       }
-      host.appendChild(renderer.domElement)
+        // 首帧提交前不把空画布插入页面。
       renderer.toneMapping = THREE.ReinhardToneMapping
       renderer.domElement.setAttribute('aria-hidden', 'true')
       const scene = new THREE.Scene()
@@ -125,7 +133,7 @@ export default memo(function Starfield({ target }: StarfieldProps) {
         vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }',
         fragmentShader: skyFragment,
         uniforms: {
-          uStars: { value: texture.texture }, uHasBox: { value: target ? 1 : 0 },
+            uStars: {value: texture.texture}, uHasBox: {value: target ? 1 : 0}, uReveal: {value: 0},
         },
       })
       postScene.add(new THREE.Mesh(postGeometry, material))
@@ -173,7 +181,8 @@ export default memo(function Starfield({ target }: StarfieldProps) {
       const uploadSurface = target?.current
       const entrance = { progress: 0 }
       const introMotion = gsap.timeline({ paused: true })
-        .from(renderer.domElement, { autoAlpha: 0, duration: 1.4, ease: 'sine.out' }, 0)
+          // 只渐亮星点，画布始终不透明，避免 WebGL 层参与 CSS 透明度动画。
+          .to(material.uniforms.uReveal, {value: 1, duration: 1.4, ease: 'sine.out'}, 0)
       // 创作页和上传页保持固定景深，其他页面沿用原有入场效果。
       if (!target) introMotion.to(entrance, { progress: 1, duration: 4.4, ease: 'power3.out' }, 0)
       const hoverMotion = gsap.timeline({ paused: true, defaults: { duration: 1, ease: 'none' } })
@@ -208,17 +217,21 @@ export default memo(function Starfield({ target }: StarfieldProps) {
       const resetStatic = () => { resetPointer(); renderedStatic = false; frameDirty = true; syncLoop() }
       reducedMotion.addEventListener('change', resetStatic)
       let accumulatedMs = 0
+        let frameBudgetMs = 0
       let sampleMs = 0
       let sampleFrames = 0
       const render = (_time: number, deltaMs: number) => {
         if (!visible || document.hidden || failed) return
         const still = reducedMotion.matches
         accumulatedMs += deltaMs
+          frameBudgetMs += deltaMs
         // 移动端背景最多 30 帧；只节流装饰，业务交互仍按浏览器正常帧率响应。
         const interval = width < 600 ? 1000 / 30 : 1000 / 60
-        if (!still && !sizeDirty && !frameDirty && accumulatedMs < interval - 1) return
+          if (!still && !sizeDirty && !frameDirty && frameBudgetMs < interval - 1) return
         const delta = Math.min(accumulatedMs / 1000, 0.1)
         accumulatedMs = 0
+          // 保留限帧余量，避免计时误差让 60Hz 屏幕频繁漏帧；运动仍按实际经过时间推进。
+          frameBudgetMs = Math.max(-1, Math.min(frameBudgetMs - interval, interval))
         // 连续慢帧才降低分辨率，避免一次网络回调或着色器准备影响画质。
         if (!still && deltaMs > 0) {
           sampleMs += deltaMs
@@ -286,6 +299,7 @@ export default memo(function Starfield({ target }: StarfieldProps) {
         renderer.render(scene, camera)
         renderer.setRenderTarget(null)
         renderer.render(postScene, postCamera)
+          if (!renderer.domElement.isConnected) host.appendChild(renderer.domElement)
         renderedStatic = still
       }
       // 减少动态效果、离屏和后台标签不保留空转 ticker；恢复时先同步几何边界。
@@ -297,7 +311,7 @@ export default memo(function Starfield({ target }: StarfieldProps) {
         const drawable = ready && !disposed && !failed && visible && !document.hidden
         const animate = drawable && !reducedMotion.matches
         if (animate && !running) {
-          accumulatedMs = 0
+            accumulatedMs = frameBudgetMs = 0
           frameDirty = true
           gsap.ticker.add(render)
           running = true

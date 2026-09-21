@@ -12,7 +12,9 @@ CREATE TABLE IF NOT EXISTS hub_settings (
 
 -- 重复执行不能覆盖管理员已经保存的设置。
 INSERT INTO hub_settings (config_key, config_value, description)
-SELECT 'upload.free-total', '100', '所有用户的免费累计上传总积分，0暂停上传'
+SELECT 'upload.free-total',
+       '100',
+       '所有用户的基础免费积分，签到收入另计'
 WHERE NOT EXISTS (SELECT 1 FROM hub_settings WHERE config_key = 'upload.free-total');
 
 CREATE TABLE IF NOT EXISTS hub_admin (
@@ -59,21 +61,150 @@ CREATE TABLE IF NOT EXISTS hub_image (
     CONSTRAINT chk_hub_image_points_cost CHECK (points_cost > 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 只记录功能启用后的实际消耗，不补录历史图片。
+-- 记录实际积分收支，预留和失败释放不记账，不补录历史图片。
 CREATE TABLE IF NOT EXISTS hub_quota_usage (
     id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    user_id BIGINT NOT NULL COMMENT '消耗积分的用户',
-    scene VARCHAR(32) NOT NULL COMMENT 'IMAGE_UPLOAD图片上传，AI_GENERATION AI创作',
-    biz_id VARCHAR(36) NOT NULL COMMENT '图片ID或AI任务ID，作为业务防重编号',
-    amount INT NOT NULL COMMENT '实际消耗积分，正整数',
+    user_id
+    BIGINT
+    NOT
+    NULL
+    COMMENT
+    '积分所属用户',
+    scene
+    VARCHAR
+(
+    32
+) NOT NULL COMMENT 'IMAGE_UPLOAD上传，AI_GENERATION创作，DAILY_CHECK_IN签到，CHECK_IN_BONUS连签奖励',
+    biz_id VARCHAR
+(
+    36
+) NOT NULL COMMENT '计费图片ID或签到日期，作为业务防重编号',
+    amount INT NOT NULL COMMENT '积分变动数量，正整数',
+    direction VARCHAR
+(
+    8
+) NOT NULL DEFAULT 'EXPENSE' COMMENT 'INCOME收入，EXPENSE支出',
     description VARCHAR(255) NOT NULL COMMENT '业务说明快照，图片删除后仍保留',
-    create_time datetime DEFAULT CURRENT_TIMESTAMP COMMENT '消耗时间',
+    create_time datetime DEFAULT CURRENT_TIMESTAMP COMMENT '收支时间',
     update_time datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     deleted TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除：0未删除，1已删除',
     UNIQUE KEY uk_hub_quota_usage_biz (user_id, scene, biz_id),
     KEY idx_hub_quota_usage_user_created (user_id, deleted, create_time, id),
-    CONSTRAINT chk_hub_quota_usage_amount CHECK (amount > 0)
+    KEY idx_hub_quota_usage_income
+(
+    user_id,
+    direction,
+    deleted
+),
+    CONSTRAINT chk_hub_quota_usage_amount CHECK
+(
+    amount >
+    0
+),
+    CONSTRAINT chk_hub_quota_usage_direction CHECK
+(
+    direction
+    IN
+(
+    'INCOME',
+    'EXPENSE'
+))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS hub_user_check_in
+(
+    id
+    BIGINT
+    NOT
+    NULL
+    AUTO_INCREMENT
+    PRIMARY
+    KEY,
+    user_id
+    BIGINT
+    NOT
+    NULL
+    COMMENT
+    '签到用户',
+    check_in_date
+    DATE
+    NOT
+    NULL
+    COMMENT
+    '北京时间签到日期',
+    consecutive_days
+    INT
+    NOT
+    NULL
+    COMMENT
+    '截至当日的连续签到天数',
+    daily_points
+    INT
+    NOT
+    NULL
+    COMMENT
+    '当日基础奖励快照',
+    bonus_points
+    INT
+    NOT
+    NULL
+    DEFAULT
+    0
+    COMMENT
+    '每连续七天额外奖励快照',
+    create_time
+    datetime
+    DEFAULT
+    CURRENT_TIMESTAMP
+    COMMENT
+    '创建时间',
+    update_time
+    datetime
+    DEFAULT
+    CURRENT_TIMESTAMP
+    ON
+    UPDATE
+    CURRENT_TIMESTAMP
+    COMMENT
+    '更新时间',
+    deleted
+    TINYINT
+    NOT
+    NULL
+    DEFAULT
+    0
+    COMMENT
+    '逻辑删除：0未删除，1已删除',
+    UNIQUE
+    KEY
+    uk_hub_user_check_in_day
+(
+    user_id,
+    check_in_date
+),
+    CONSTRAINT chk_hub_user_check_in_rewards CHECK
+(
+    consecutive_days >
+    0
+    AND
+    daily_points >
+    0
+    AND
+    bonus_points
+    >=
+    0
+)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE =utf8mb4_unicode_ci;
+
+INSERT INTO hub_settings (config_key, config_value, description)
+SELECT 'check-in.daily-points',
+       '10',
+       '每日签到奖励积分' WHERE NOT EXISTS (SELECT 1 FROM hub_settings WHERE config_key = 'check-in.daily-points');
+
+INSERT INTO hub_settings (config_key, config_value, description)
+SELECT 'check-in.bonus-points',
+       '30',
+       '每连续签到七天额外奖励积分' WHERE NOT EXISTS (SELECT 1 FROM hub_settings WHERE config_key = 'check-in.bonus-points');
 
 -- 模型配置只在后台开放；首次预置的模型未配置密钥，保持停用。
 CREATE TABLE IF NOT EXISTS hub_ai_model (

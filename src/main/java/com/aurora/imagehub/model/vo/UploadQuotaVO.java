@@ -11,16 +11,16 @@ import lombok.Setter;
 @NoArgsConstructor
 @AllArgsConstructor
 public class UploadQuotaVO {
-    private int total;
+    private long total;
 
-    private int remaining;
+    private long remaining;
 
     private long used;
 
     /** AI未完成任务预占，已从remaining扣除，但尚未记入used。 */
     private long reserved;
 
-    public UploadQuotaVO(int total, int remaining, long used) {
+    public UploadQuotaVO(long total, long remaining, long used) {
         this(total, remaining, used, 0);
     }
 }

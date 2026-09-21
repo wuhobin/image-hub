@@ -2,6 +2,7 @@ package com.aurora.imagehub.service.admin;
 
 import com.aurora.imagehub.model.entity.admin.SystemSettings;
 import com.aurora.imagehub.model.vo.admin.AdminSettingsVO;
+import com.aurora.imagehub.model.vo.admin.CheckInSettingsVO;
 import com.baomidou.mybatisplus.extension.service.IService;
 
 /** 全局配置：后台读写验证管理员，积分业务内部读取复用二级缓存。 */
@@ -18,4 +19,19 @@ public interface SystemSettingsService extends IService<SystemSettings> {
 
     /** 验证管理员并保存非负积分；保存前缓存故障终止写入，提交后的刷新失败不回滚数据库。 */
     AdminSettingsVO updateSettings(int freeUploadQuota);
+
+    /**
+     * 业务内部读取缓存中的奖励规则，不接受客户端指定积分。
+     */
+    CheckInSettingsVO checkInRewards();
+
+    /**
+     * 管理员直接读库查看签到配置。
+     */
+    CheckInSettingsVO checkInSettings();
+
+    /**
+     * 原子修改两项正整数奖励，提交后刷新对应二级缓存。
+     */
+    CheckInSettingsVO updateCheckInSettings(int dailyPoints, int bonusPoints);
 }

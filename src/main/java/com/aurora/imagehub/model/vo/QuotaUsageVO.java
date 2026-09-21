@@ -20,6 +20,8 @@ public class QuotaUsageVO {
 
     private Integer amount;
 
+    private String direction;
+
     private String description;
 
     private Date createTime;
@@ -31,6 +33,7 @@ public class QuotaUsageVO {
         result.setScene(usage.getScene());
         result.setBizId(usage.getBizId());
         result.setAmount(usage.getAmount());
+        result.setDirection(usage.getDirection());
         result.setDescription(usage.getDescription());
         result.setCreateTime(usage.getCreateTime());
         return result;

@@ -5,7 +5,9 @@ import java.util.Date;
 import lombok.Getter;
 import lombok.Setter;
 
-/** 实际积分消耗流水；独立保留业务快照，删除图片不删除流水或返还积分。 */
+/**
+ * 积分收支流水；保留奖励及消费快照，删除图片不删除流水或返还积分。
+ */
 @Getter
 @Setter
 @TableName("hub_quota_usage")
@@ -16,14 +18,19 @@ public class QuotaUsage {
 
     private Long userId;
 
-    /** IMAGE_UPLOAD 图片上传；AI_GENERATION AI 创作。 */
+    /** IMAGE_UPLOAD、AI_GENERATION 为消费，DAILY_CHECK_IN、CHECK_IN_BONUS 为签到奖励。 */
     private String scene;
 
-    /** 上传图片 ID 或 AI 任务 ID，同一用户、场景及业务编号只能记账一次。 */
+    /** 计费图片 ID 或签到日期，同一用户、场景及业务编号只能记账一次。 */
     private String bizId;
 
-    /** 实际消耗数量，正整数；预占与失败释放不写流水。 */
+    /** 实际收支数量，正整数；预占与失败释放不写流水。 */
     private Integer amount;
+
+    /**
+     * 金额保持正整数，由方向区分收入与支出，兼容原消费接口。
+     */
+    private String direction = "EXPENSE";
 
     private String description;
 

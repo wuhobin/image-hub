@@ -1,6 +1,8 @@
 package com.aurora.imagehub.controller.admin;
 
 import com.aurora.imagehub.model.param.admin.AdminSettingsParam;
+import com.aurora.imagehub.model.param.admin.CheckInSettingsParam;
+import com.aurora.imagehub.model.vo.admin.CheckInSettingsVO;
 import com.aurora.imagehub.model.vo.admin.AdminSettingsVO;
 import com.aurora.imagehub.service.admin.SystemSettingsService;
 import com.aurora.starter.webmvc.domain.response.Result;
@@ -15,6 +17,22 @@ import org.springframework.web.bind.annotation.*;
 public class AdminSettingsController {
 
     private final SystemSettingsService systemSettingsService;
+
+    /**
+     * 签到配置独立保存，不覆盖基础积分配置。
+     */
+    @GetMapping("/check-in")
+    public Result<CheckInSettingsVO> checkInSettings() {
+        return Result.data(systemSettingsService.checkInSettings());
+    }
+
+    /**
+     * 固定七天周期，仅开放奖励金额配置。
+     */
+    @PutMapping("/check-in")
+    public Result<CheckInSettingsVO> updateCheckInSettings(@Valid @RequestBody CheckInSettingsParam param) {
+        return Result.data(systemSettingsService.updateCheckInSettings(param.getDailyPoints().intValueExact(), param.getBonusPoints().intValueExact()));
+    }
 
     /** 返回管理页面所需的配置，管理员身份与配置有效性由业务层校验。 */
     @GetMapping

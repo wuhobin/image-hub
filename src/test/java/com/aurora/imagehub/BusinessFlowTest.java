@@ -84,6 +84,9 @@ class BusinessFlowTest {
 
     @MockitoSpyBean com.aurora.imagehub.mapper.QuotaUsageMapper quotaUsageMapper;
 
+    @MockitoBean
+    java.time.Clock clock;
+
     private final Map<String, String> codes = new ConcurrentHashMap<>();
     private FileStorageService storage;
     private FileInfo stored;
@@ -101,6 +104,10 @@ class BusinessFlowTest {
         jdbcTemplate.update("DELETE FROM hub_ai_generation");
         jdbcTemplate.update("UPDATE hub_ai_model SET points_cost=1");
         jdbcTemplate.update("DELETE FROM hub_user");
+        jdbcTemplate.update("DELETE FROM hub_user_check_in");
+        jdbcTemplate.update("UPDATE hub_settings SET config_value='10', deleted=0 WHERE config_key='check-in.daily-points'");
+        jdbcTemplate.update("UPDATE hub_settings SET config_value='30', deleted=0 WHERE config_key='check-in.bonus-points'");
+        when(clock.instant()).thenReturn(java.time.Instant.parse("2026-09-21T04:00:00Z"));
         codes.clear();
         quotaState.clear();
         referenceState.clear();
@@ -175,6 +182,102 @@ class BusinessFlowTest {
         });
         when(storage.exists(any(FileInfo.class))).thenReturn(true);
         when(ossTemplate.delete(any(FileInfo.class))).thenReturn(true);
+    }
+
+
+    /**
+     * 按北京时间跨日，第 7、14 天各发一次额外奖励，漏签后重新累计。
+     */
+    @Test
+    void checkInUsesShanghaiDaysAndRepeatingSevenDayRewards() {
+        assertThat(get("/api/app/check-in", null).path("code").asInt()).isEqualTo(401);
+        assertThat(post("/api/app/check-in", Map.of(), null).path("code").asInt()).isEqualTo(401);
+        register("checkin", "checkin@example.test");
+        String token = login("checkin");
+        var start = java.time.Instant.parse("2026-09-20T15:59:59Z");
+        when(clock.instant()).thenReturn(start);
+        assertThat(get("/api/app/check-in", token).path("data").path("signedIn").asBoolean()).isFalse();
+        for (int day = 1; day <= 14; day++) {
+            when(clock.instant()).thenReturn(day == 1 ? start : start.plusSeconds(1 + (day - 2) * 86400L));
+            JsonNode result = post("/api/app/check-in", Map.of("userId", -1, "dailyPoints", 9999), token);
+            assertThat(result.path("code").asInt()).isEqualTo(200);
+            assertThat(result.path("data").path("consecutiveDays").asInt()).isEqualTo(day);
+            assertThat(result.path("data").path("rewardPoints").asInt()).isEqualTo(day % 7 == 0 ? 40 : 10);
+            assertThat(post("/api/app/check-in", Map.of(), token).path("data")).isEqualTo(result.path("data"));
+            if (day == 2) assertThat(result.path("data").path("date").asText()).isEqualTo("2026-09-21");
+        }
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_user_check_in", Integer.class)).isEqualTo(14);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_quota_usage WHERE scene='CHECK_IN_BONUS'", Integer.class)).isEqualTo(2);
+        assertThat(get("/api/app/images/quota", token).path("data").path("total").asLong()).isEqualTo(300);
+        assertThat(get("/api/app/quota/records?page=1&pageSize=20", token).path("data").path("total").asInt()).isEqualTo(16);
+        when(clock.instant()).thenReturn(start.plusSeconds(16 * 86400L));
+        assertThat(get("/api/app/check-in", token).path("data").path("consecutiveDays").asInt()).isZero();
+        assertThat(post("/api/app/check-in", Map.of(), token).path("data").path("consecutiveDays").asInt()).isEqualTo(1);
+        register("checkin-other", "checkin-other@example.test");
+        String other = login("checkin-other");
+        assertThat(get("/api/app/check-in", other).path("data").path("signedIn").asBoolean()).isFalse();
+        assertThat(get("/api/app/quota/records", other).path("data").path("total").asInt()).isZero();
+    }
+
+    /**
+     * 并发签到只发一次；收入立即可消费，Redis 丢失不会丢掉收入。
+     */
+    @Test
+    void concurrentCheckInRewardsAreSpendableAndSurviveCacheLoss() throws Exception {
+        register("checkin-race", "checkin-race@example.test");
+        String token = login("checkin-race");
+        long userId = userMapper.findByUsername("checkin-race").getId();
+        jdbcTemplate.update("UPDATE hub_settings SET config_value='0' WHERE config_key='upload.free-total'");
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var start = new java.util.concurrent.CountDownLatch(1);
+            var first = executor.submit(() -> {
+                start.await();
+                return post("/api/app/check-in", Map.of(), token);
+            });
+            var second = executor.submit(() -> {
+                start.await();
+                return post("/api/app/check-in", Map.of(), token);
+            });
+            start.countDown();
+            assertThat(first.get(10, java.util.concurrent.TimeUnit.SECONDS).path("code").asInt()).isEqualTo(200);
+            assertThat(second.get(10, java.util.concurrent.TimeUnit.SECONDS).path("code").asInt()).isEqualTo(200);
+        }
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_user_check_in", Integer.class)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_quota_usage", Integer.class)).isEqualTo(1);
+        assertThat(upload(token, "earned.png", png()).path("code").asInt()).isEqualTo(200);
+        long modelId = enableAiModel();
+        jdbcTemplate.update("UPDATE hub_ai_model SET points_cost=6 WHERE id=?", modelId);
+        String id = post("/api/app/generations", generationRequest(modelId), token).path("data").path("id").asText();
+        when(aiImageClient.generate(any())).thenReturn(png());
+        aiGenerationService.runTask(userId, id);
+        assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("SUCCEEDED");
+        quotaState.clear();
+        assertThat(imageFileService.quota(userId).getRemaining()).isEqualTo(3);
+        assertThat(imageFileService.quota(userId).getTotal()).isEqualTo(10);
+    }
+
+    /**
+     * 第七天收入写入失败必须整体回滚，重试时使用当前配置并保留已领取快照。
+     */
+    @Test
+    void checkInRollsBackBothRewardsAndSnapshotsAmounts() {
+        register("checkin-rollback", "checkin-rollback@example.test");
+        String token = login("checkin-rollback");
+        long userId = userMapper.findByUsername("checkin-rollback").getId();
+        jdbcTemplate.update("INSERT INTO hub_user_check_in(user_id,check_in_date,consecutive_days,daily_points,bonus_points) VALUES(?, '2026-09-20', 6, 10, 0)", userId);
+        doThrow(new IllegalStateException("simulated bonus failure")).when(quotaUsageMapper).insert(
+                argThat((com.aurora.imagehub.model.entity.QuotaUsage usage) -> usage != null && "CHECK_IN_BONUS".equals(usage.getScene())));
+        assertThat(post("/api/app/check-in", Map.of(), token).path("code").asInt()).isNotEqualTo(200);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_user_check_in", Integer.class)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_quota_usage", Integer.class)).isZero();
+        reset(quotaUsageMapper);
+        jdbcTemplate.update("UPDATE hub_settings SET config_value='2147483647' WHERE config_key IN ('check-in.daily-points','check-in.bonus-points')");
+        assertThat(post("/api/app/check-in", Map.of(), token).path("data").path("rewardPoints").asLong()).isEqualTo(4294967294L);
+        jdbcTemplate.update("UPDATE hub_settings SET config_value='20' WHERE config_key='check-in.daily-points'");
+        assertThat(post("/api/app/check-in", Map.of(), token).path("data").path("rewardPoints").asLong()).isEqualTo(4294967294L);
+        assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asLong()).isEqualTo(4294967394L);
+        when(clock.instant()).thenReturn(java.time.Instant.parse("2026-09-22T04:00:00Z"));
+        assertThat(post("/api/app/check-in", Map.of(), token).path("data").path("rewardPoints").asInt()).isEqualTo(20);
     }
 
     @Test

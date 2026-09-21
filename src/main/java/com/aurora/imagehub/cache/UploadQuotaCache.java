@@ -1,6 +1,7 @@
 package com.aurora.imagehub.cache;
 
 import com.aurora.imagehub.mapper.ImageMapper;
+import com.aurora.imagehub.mapper.QuotaUsageMapper;
 import com.aurora.imagehub.mapper.AiGenerationMapper;
 import com.aurora.imagehub.service.admin.SystemSettingsService;
 import com.aurora.imagehub.model.vo.UploadQuotaVO;
@@ -14,7 +15,9 @@ import org.redisson.api.RedissonClient;
 import org.redisson.client.codec.StringCodec;
 import org.springframework.stereotype.Component;
 
-/** Redis 保存累计消耗；配置决定总额，中断预占按成功图片恢复，删除图片不返还。 */
+/**
+ * Redis 保存累计消耗；基础配置与签到收入决定总额，中断预占按成功图片恢复，删除图片不返还。
+ */
 @Component
 @RequiredArgsConstructor
 @Slf4j
@@ -25,6 +28,8 @@ public class UploadQuotaCache {
     private final RedissonClient redissonClient;
 
     private final ImageMapper imageMapper;
+
+    private final QuotaUsageMapper quotaUsageMapper;
 
     private final AiGenerationMapper aiGenerationMapper;
 
@@ -40,8 +45,8 @@ public class UploadQuotaCache {
     }
 
     /** 只读本页 Redis 余额，缺失或无效值返回空，不加锁、不触发数据库恢复。 */
-    public java.util.Map<Long, Integer> readRemaining(java.util.List<Long> userIds) {
-        var result = new java.util.HashMap<Long, Integer>();
+    public java.util.Map<Long, Long> readRemaining(java.util.List<Long> userIds) {
+        var result = new java.util.HashMap<Long, Long>();
         if (userIds.isEmpty()) return result;
         try {
             int total = systemSettingsService.freeUploadQuota();
@@ -52,7 +57,9 @@ public class UploadQuotaCache {
                 if (state == null) continue;
                 Long used = readUsed(state);
                 // ponytail: 管理分页最多100人，按人查询活动预占；规模扩大时改成一次分组查询。
-                if (used != null) result.put(userIds.get(i), remaining(total, used + aiGenerationMapper.reserved(userIds.get(i))));
+                if (used != null)
+                    result.put(userIds.get(i), remaining(total + quotaUsageMapper.sumIncome(userIds.get(i)),
+                            used + aiGenerationMapper.reserved(userIds.get(i))));
             }
             return result;
         } catch (RuntimeException e) {
@@ -72,7 +79,7 @@ public class UploadQuotaCache {
     public UploadQuotaVO get(long userId) {
         try {
             releaseInterruptedGeneration(userId);
-            int total = systemSettingsService.freeUploadQuota();
+            long total = totalPoints(userId);
             RBucket<String> bucket = bucket(userId);
             String state = bucket.get();
             Long used = readUsed(state);
@@ -110,7 +117,7 @@ public class UploadQuotaCache {
             try {
                 bucket = bucket(userId);
                 used = recover(userId, bucket);
-                if (used + aiGenerationMapper.reserved(userId) >= systemSettingsService.freeUploadQuota()) {
+                if (used + aiGenerationMapper.reserved(userId) >= totalPoints(userId)) {
                     throw new BizException(EXHAUSTED, "共享积分已用完");
                 }
                 // 以预占时的配置判断准入，已准入上传可完成；配置变化不能覆盖累计消耗。
@@ -180,11 +187,18 @@ public class UploadQuotaCache {
         return state.indexOf(':', 2) >= 0;
     }
 
-    private int remaining(int total, long used) {
-        return (int) Math.max(0L, total - used);
+    /**
+     * 签到收入永久追加，不通过减少 used 伪造余额，Redis 重建不会丢失奖励。
+     */
+    private long totalPoints(long userId) {
+        return (long) systemSettingsService.freeUploadQuota() + quotaUsageMapper.sumIncome(userId);
     }
 
-    private UploadQuotaVO response(long userId, int total, long used) {
+    private long remaining(long total, long used) {
+        return Math.max(0L, total - used);
+    }
+
+    private UploadQuotaVO response(long userId, long total, long used) {
         long reserved = aiGenerationMapper.reserved(userId);
         return new UploadQuotaVO(total, remaining(total, used + reserved), used, reserved);
     }
@@ -199,7 +213,7 @@ public class UploadQuotaCache {
             if (existing != null) return existing;
             if (pointsCost < 1) throw new BizException(400, "模型积分配置无效");
             long used = recover(userId, bucket(userId));
-            if (used + aiGenerationMapper.reserved(userId) + pointsCost > systemSettingsService.freeUploadQuota()) {
+            if (used + aiGenerationMapper.reserved(userId) + pointsCost > totalPoints(userId)) {
                 throw new BizException(EXHAUSTED, "积分不足，本次生成需要 " + pointsCost + " 积分");
             }
             return createTask.get();

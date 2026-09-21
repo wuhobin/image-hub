@@ -151,6 +151,10 @@
 .admin-settings-fields, .admin-settings-rules { width: 100%; max-width: 640px; min-width: 0; }
 .admin-settings-fields label { display: block; color: #cfdaeb; font-size: 13px; margin-bottom: 12px; }
 .admin-settings-input { display: flex; align-items: center; gap: 14px; }
+
+.admin-settings-input + label {
+    margin-top: 24px;
+}
 .admin-settings-input input { min-width: 0; width: 240px; min-height: 44px; padding: 10px 14px; border: 1px solid #3a485d; border-radius: 8px; background: #0b1017; color: #d9e7fd; font-size: 16px; font-variant-numeric: tabular-nums; }
 .admin-settings-input input:focus-visible { outline: 2px solid #9cbeef; outline-offset: 3px; }
 .admin-settings-input > span { white-space: nowrap; color: #91a0b6; font-size: 12px; }

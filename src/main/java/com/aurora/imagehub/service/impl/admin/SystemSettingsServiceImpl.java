@@ -4,6 +4,7 @@ import com.aurora.imagehub.cache.admin.SystemSettingsCache;
 import com.aurora.imagehub.mapper.admin.SystemSettingsMapper;
 import com.aurora.imagehub.model.entity.admin.SystemSettings;
 import com.aurora.imagehub.model.vo.admin.AdminSettingsVO;
+import com.aurora.imagehub.model.vo.admin.CheckInSettingsVO;
 import com.aurora.imagehub.service.admin.AdminAccountService;
 import com.aurora.imagehub.service.admin.SystemSettingsService;
 import com.aurora.starter.webmvc.exception.BizException;
@@ -14,6 +15,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import static com.aurora.imagehub.constants.SystemSettingsConstants.FREE_UPLOAD_QUOTA;
+import static com.aurora.imagehub.constants.SystemSettingsConstants.CHECK_IN_DAILY_POINTS;
+import static com.aurora.imagehub.constants.SystemSettingsConstants.CHECK_IN_BONUS_POINTS;
 
 /** 按配置键读取全局设置；管理接口只更新代码预置的配置项，不开放任意键值写入。 */
 @Service
@@ -73,6 +76,59 @@ public class SystemSettingsServiceImpl extends ServiceImpl<SystemSettingsMapper,
 
         // 时间由数据库维护，回读结果；提交后回调由父项目负责执行。
         return response(requireSettings(FREE_UPLOAD_QUOTA));
+    }
+
+    /**
+     * 发奖规则沿用配置二级缓存，已领取金额不随配置变化。
+     */
+    @Override
+    public CheckInSettingsVO checkInRewards() {
+        return new CheckInSettingsVO(positivePoints(getValue(CHECK_IN_DAILY_POINTS)), positivePoints(getValue(CHECK_IN_BONUS_POINTS)));
+    }
+
+    /**
+     * 后台展示始终读取数据库的真实配置。
+     */
+    @Override
+    public CheckInSettingsVO checkInSettings() {
+        adminAccountService.currentAdmin();
+        return new CheckInSettingsVO(positivePoints(requireSettings(CHECK_IN_DAILY_POINTS).getConfigValue()),
+                positivePoints(requireSettings(CHECK_IN_BONUS_POINTS).getConfigValue()));
+    }
+
+    /**
+     * 两个奖励金额在同一事务内保存，缓存故障的处理与基础积分设置一致。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public CheckInSettingsVO updateCheckInSettings(int dailyPoints, int bonusPoints) {
+        adminAccountService.currentAdmin();
+        if (dailyPoints < 1 || bonusPoints < 1) throw new BizException(400, "签到奖励必须为正整数");
+        SystemSettings daily = requireSettings(CHECK_IN_DAILY_POINTS);
+        SystemSettings bonus = requireSettings(CHECK_IN_BONUS_POINTS);
+        try {
+            systemSettingsCache.prepareUpdate(CHECK_IN_DAILY_POINTS);
+            systemSettingsCache.prepareUpdate(CHECK_IN_BONUS_POINTS);
+        } catch (RuntimeException e) {
+            throw new BizException(503, "配置缓存暂时不可用，未保存，请稍后重试", e);
+        }
+        daily.setConfigValue(Integer.toString(dailyPoints));
+        bonus.setConfigValue(Integer.toString(bonusPoints));
+        if (systemSettingsMapper.updateById(daily) != 1 || systemSettingsMapper.updateById(bonus) != 1) {
+            throw new BizException(409, "配置保存失败，请刷新后重试");
+        }
+        systemSettingsCache.refreshAfterCommit(CHECK_IN_DAILY_POINTS, daily.getConfigValue());
+        systemSettingsCache.refreshAfterCommit(CHECK_IN_BONUS_POINTS, bonus.getConfigValue());
+        return new CheckInSettingsVO(dailyPoints, bonusPoints);
+    }
+
+    /**
+     * 数据库误配置不能产生零积分或负积分奖励。
+     */
+    private int positivePoints(String value) {
+        int points = parseFreeUploadQuota(value);
+        if (points == 0) throw new BizException(503, "签到积分配置无效，请联系管理员");
+        return points;
     }
 
     /** 只读取未逻辑删除的预置配置；缺失或空值返回 503，避免默认值掩盖配置故障。 */

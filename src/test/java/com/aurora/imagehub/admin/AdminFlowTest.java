@@ -158,6 +158,37 @@ class AdminFlowTest {
         assertThat(get("/api/admin/users", token).path("code").asInt()).isEqualTo(503);
     }
 
+    /**
+     * 签到奖励仅管理员可改，校验整数边界，并复用配置缓存的提交后刷新。
+     */
+    @Test
+    void checkInSettingsValidateAndRefreshAtomically() {
+        jdbcTemplate.update("UPDATE hub_settings SET config_value='10' WHERE config_key='check-in.daily-points'");
+        jdbcTemplate.update("UPDATE hub_settings SET config_value='30' WHERE config_key='check-in.bonus-points'");
+        String path = "/api/admin/settings/check-in";
+        user(1, "ordinary", "ordinary@example.test", 0);
+        String ordinary = login("/api/app/auth/login", "ordinary");
+        assertThat(get(path, null).path("code").asInt()).isEqualTo(401);
+        assertThat(request(path, HttpMethod.PUT, Map.of("dailyPoints", 20, "bonusPoints", 50), ordinary).path("code").asInt()).isEqualTo(401);
+        String token = login("/api/admin/auth/login", "operator");
+        assertThat(get(path, token).path("data").path("dailyPoints").asInt()).isEqualTo(10);
+        for (Object invalid : List.of(0, -1, 1.5, 2147483648L, "invalid")) {
+            assertThat(request(path, HttpMethod.PUT, Map.of("dailyPoints", invalid, "bonusPoints", 30), token).path("code").asInt()).isEqualTo(400);
+            assertThat(request(path, HttpMethod.PUT, Map.of("dailyPoints", 10, "bonusPoints", invalid), token).path("code").asInt()).isEqualTo(400);
+        }
+        assertThat(request(path, HttpMethod.PUT, Map.of("dailyPoints", 10), token).path("code").asInt()).isEqualTo(400);
+        doThrow(new org.redisson.RedissonShutdownException("offline")).when(twoLevelCache).evict(anyString());
+        assertThat(request(path, HttpMethod.PUT, Map.of("dailyPoints", 20, "bonusPoints", 50), token).path("code").asInt()).isEqualTo(503);
+        assertThat(get(path, token).path("data").path("dailyPoints").asInt()).isEqualTo(10);
+        com.aurora.imagehub.SettingsCacheTestConfiguration.resetCache(twoLevelCache);
+        assertThat(request(path, HttpMethod.PUT, Map.of("dailyPoints", 20, "bonusPoints", 50), token).path("code").asInt()).isEqualTo(200);
+        assertThat(systemSettingsService.checkInRewards().getDailyPoints()).isEqualTo(20);
+        assertThat(systemSettingsService.checkInRewards().getBonusPoints()).isEqualTo(50);
+        assertThat(systemSettingsService.freeUploadQuota()).isEqualTo(100);
+        verify(twoLevelCache).set("image-hub:settings:check-in.daily-points", "20", 3L, java.util.concurrent.TimeUnit.DAYS);
+        verify(twoLevelCache).set("image-hub:settings:check-in.bonus-points", "50", 3L, java.util.concurrent.TimeUnit.DAYS);
+    }
+
     @Test
     void settingsRequireAdminValidateNumbersAndRefreshOnlyAfterCommit() {
         user(1, "ordinary", "ordinary@example.test", 0);

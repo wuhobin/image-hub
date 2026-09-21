@@ -13,5 +13,5 @@ public class AdminUserVO {
     private String username;
     private String email;
     private Date createTime;
-    private Integer remaining;
+    private Long remaining;
 }
