@@ -267,9 +267,27 @@ class AdminFlowTest {
 
     @Test
     void modelConfigurationProtectsKeysAndValidatesDefaultsAndAdminAccess() {
+        String cacheKey = "image-hub:models:available";
+        var cachedModels = new ConcurrentHashMap<String, Object>();
+        var loads = new java.util.concurrent.atomic.AtomicInteger();
+        // 使用父项目同款序列化器回读，验证 Redis 命中后仍为 VO 列表而非 Map。
+        var serializer = new org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer();
+        when(twoLevelCache.get(eq(cacheKey), any(java.util.function.Supplier.class), eq(3L), eq(java.util.concurrent.TimeUnit.DAYS)))
+                .thenAnswer(call -> cachedModels.computeIfAbsent(cacheKey, key -> {
+                    loads.incrementAndGet();
+                    Object value = call.getArgument(1, java.util.function.Supplier.class).get();
+                    return serializer.deserialize(serializer.serialize(value));
+                }));
+        doAnswer(call -> {
+            cachedModels.remove(cacheKey);
+            return null;
+        }).when(twoLevelCache).evict(cacheKey);
         user(1, "model-user", "model-user@example.test", 0);
         String ordinary = login("/api/app/auth/login", "model-user");
         String admin = login("/api/admin/auth/login", "operator");
+        assertThat(get("/api/app/generations/models", ordinary).path("data").size()).isZero();
+        assertThat(get("/api/app/generations/models", ordinary).path("data").size()).isZero();
+        assertThat(loads.get()).isEqualTo(1);
         var body = new HashMap<String, Object>();
         body.put("name", "Test model");
         body.put("modelCode", "gpt-image-2");
@@ -300,6 +318,8 @@ class AdminFlowTest {
             assertThat(available.path("data").get(0).path("sizes").get(i).asText()).isEqualTo(sizes.get(i));
         }
         assertThat(available.toString()).doesNotContain("baseUrl", "imagesPath", "apiKey", "test-only");
+        assertThat(get("/api/app/generations/models", ordinary).path("data")).isEqualTo(available.path("data"));
+        assertThat(loads.get()).isEqualTo(2);
         assertThat(get("/api/admin/ai-models", admin).path("data").path("records").size()).isEqualTo(2);
 
         body.put("apiKey", "");
@@ -308,9 +328,19 @@ class AdminFlowTest {
             assertThat(request("/api/admin/ai-models/" + id, HttpMethod.PUT, body, admin).path("code").asInt()).isEqualTo(400);
         }
         body.put("pointsCost", 6);
+        doThrow(new org.redisson.RedissonShutdownException("offline")).when(twoLevelCache).evict(cacheKey);
+        assertThat(request("/api/admin/ai-models/" + id, HttpMethod.PUT, body, admin).path("code").asInt()).isEqualTo(503);
+        assertThat(request("/api/admin/ai-models/" + id, HttpMethod.DELETE, null, admin).path("code").asInt()).isEqualTo(503);
+        assertThat(jdbcTemplate.queryForObject("SELECT points_cost FROM hub_ai_model WHERE id=?", Integer.class, id)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("SELECT deleted FROM hub_ai_model WHERE id=?", Integer.class, id)).isZero();
+        doAnswer(call -> {
+            cachedModels.remove(cacheKey);
+            return null;
+        }).when(twoLevelCache).evict(cacheKey);
         assertThat(request("/api/admin/ai-models/" + id, HttpMethod.PUT, body, admin).path("code").asInt()).isEqualTo(200);
         assertThat(jdbcTemplate.queryForObject("SELECT points_cost FROM hub_ai_model WHERE id=?", Integer.class, id)).isEqualTo(6);
         assertThat(get("/api/app/generations/models", ordinary).path("data").get(0).path("pointsCost").asInt()).isEqualTo(6);
+        assertThat(loads.get()).isEqualTo(3);
         assertThat(jdbcTemplate.queryForObject("SELECT api_key_ciphertext FROM hub_ai_model WHERE id=?", String.class, id)).isEqualTo(cipher);
         body.put("defaultSize", "512x512");
         assertThat(request("/api/admin/ai-models/" + id, HttpMethod.PUT, body, admin).path("code").asInt()).isEqualTo(400);
@@ -326,7 +356,18 @@ class AdminFlowTest {
         body.put("enabled", false);
         assertThat(request("/api/admin/ai-models/" + id, HttpMethod.PUT, body, admin).path("code").asInt()).isEqualTo(200);
         assertThat(get("/api/app/generations/models", ordinary).path("data").size()).isZero();
+        assertThat(loads.get()).isEqualTo(4);
+        body.put("enabled", true);
+        assertThat(request("/api/admin/ai-models/" + id, HttpMethod.PUT, body, admin).path("code").asInt()).isEqualTo(200);
+        assertThat(get("/api/app/generations/models", ordinary).path("data").size()).isEqualTo(1);
         assertThat(request("/api/admin/ai-models/" + id, HttpMethod.DELETE, null, admin).path("code").asInt()).isEqualTo(200);
+        assertThat(get("/api/app/generations/models", ordinary).path("data").size()).isZero();
+        assertThat(loads.get()).isEqualTo(6);
+        when(twoLevelCache.get(eq(cacheKey), any(java.util.function.Supplier.class), anyLong(), any()))
+                .thenThrow(new org.redisson.RedissonShutdownException("read offline"));
+        var fallback = get("/api/app/generations/models", ordinary);
+        assertThat(fallback.path("code").asInt()).isEqualTo(200);
+        assertThat(fallback.path("data").size()).isZero();
         assertThat(post("/api/admin/ai-models", body, admin).path("code").asInt()).isEqualTo(409);
         assertThat(jdbcTemplate.queryForObject("SELECT deleted FROM hub_ai_model WHERE id=?", Integer.class, id)).isEqualTo(1);
     }
