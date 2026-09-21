@@ -82,6 +82,8 @@ class BusinessFlowTest {
     @MockitoBean OssTemplate ossTemplate;
     @MockitoSpyBean com.aurora.imagehub.mapper.ImageMapper imageMapper;
 
+    @MockitoSpyBean com.aurora.imagehub.mapper.QuotaUsageMapper quotaUsageMapper;
+
     private final Map<String, String> codes = new ConcurrentHashMap<>();
     private FileStorageService storage;
     private FileInfo stored;
@@ -94,6 +96,7 @@ class BusinessFlowTest {
         SaManager.setSaTokenDao(saTokenDao);
         SettingsCacheTestConfiguration.resetCache(twoLevelCache);
         jdbcTemplate.update("UPDATE hub_settings SET config_value='100', deleted=0 WHERE config_key='upload.free-total'");
+        jdbcTemplate.update("DELETE FROM hub_quota_usage");
         jdbcTemplate.update("DELETE FROM hub_image");
         jdbcTemplate.update("DELETE FROM hub_ai_generation");
         jdbcTemplate.update("DELETE FROM hub_user");
@@ -1278,6 +1281,77 @@ class BusinessFlowTest {
         register("redis-down", "redis-down@example.test");
         assertThat(userMapper.findByUsername("redis-down")).isNotNull();
         assertThat(login("redis-down")).isNotBlank();
+    }
+
+    /** 流水只含真实成功消耗；任务重试、防越权、分页、删图后保留和 Redis 恢复共同验证。 */
+    @Test
+    void quotaUsageRecordsSuccessfulConsumptionWithOwnershipAndPagination() throws Exception {
+        register("usage", "usage@example.test");
+        String token = login("usage");
+        long userId = userMapper.findByUsername("usage").getId();
+        assertThat(get("/api/app/quota/records", null).path("code").asInt()).isEqualTo(401);
+        assertThat(get("/api/app/quota/records", token).path("data").path("total").asInt()).isZero();
+        String uploadId = upload(token, "first.png", png()).path("data").path("id").asText();
+        assertThat(get("/api/app/quota/records?page=0", token).path("code").asInt()).isEqualTo(400);
+        assertThat(get("/api/app/quota/records?pageSize=51", token).path("code").asInt()).isEqualTo(400);
+        var first = get("/api/app/quota/records", token).path("data").path("records").get(0);
+        assertThat(first.path("scene").asText()).isEqualTo("IMAGE_UPLOAD");
+        assertThat(first.path("bizId").asText()).isEqualTo(uploadId);
+        assertThat(first.path("amount").asInt()).isEqualTo(1);
+        assertThat(first.path("description").asText()).isEqualTo("first.png");
+        assertThat(first.path("createTime").asText()).isNotBlank();
+        assertThat(first.toString()).doesNotContain("userId", "storageInfo");
+
+        var request = generationRequest(enableAiModel());
+        String id = post("/api/app/generations", request, token).path("data").path("id").asText();
+        assertThat(get("/api/app/quota/records", token).path("data").path("total").asInt()).isEqualTo(1);
+        when(aiImageClient.generate(any())).thenReturn(png());
+        aiGenerationService.runTask(userId, id);
+        aiGenerationService.runTask(userId, id);
+        assertThat(post("/api/app/generations", request, token).path("data").path("id").asText()).isEqualTo(id);
+        var page = get("/api/app/quota/records?page=1&pageSize=1", token).path("data");
+        assertThat(page.path("total").asInt()).isEqualTo(2);
+        assertThat(page.path("pages").asInt()).isEqualTo(2);
+        assertThat(page.path("records").get(0).path("scene").asText()).isEqualTo("AI_GENERATION");
+        assertThat(page.path("records").get(0).path("bizId").asText()).isEqualTo(id);
+        assertThat(get("/api/app/quota/records?page=2&pageSize=1", token).path("data").path("records").get(0)
+                .path("bizId").asText()).isEqualTo(uploadId);
+        register("usage-other", "usage-other@example.test");
+        assertThat(get("/api/app/quota/records?userId=" + userId, login("usage-other"))
+                .path("data").path("total").asInt()).isZero();
+
+        when(aiImageClient.generate(any())).thenThrow(new IllegalStateException("simulated provider failure"));
+        String failedId = post("/api/app/generations", generationRequest(enableAiModel()), token).path("data").path("id").asText();
+        aiGenerationService.runTask(userId, failedId);
+        assertThat(delete(uploadId, token).path("code").asInt()).isEqualTo(200);
+        quotaState.clear();
+        assertThat(imageFileService.quota(userId).getUsed()).isEqualTo(2);
+        assertThat(get("/api/app/quota/records", token).path("data").path("total").asInt()).isEqualTo(2);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> jdbcTemplate.update(
+                "INSERT INTO hub_quota_usage (user_id,scene,biz_id,amount,description) VALUES (?,?,?,?,?)",
+                userId, "IMAGE_UPLOAD", uploadId, 1, "duplicate")).isInstanceOf(org.springframework.dao.DuplicateKeyException.class);
+    }
+
+    /** 写流水失败必须回滚计费图片与 AI 成功终态，额度恢复且补偿云文件。 */
+    @Test
+    void quotaUsageWriteFailureRollsBackUploadAndGeneration() throws Exception {
+        register("usage-fail", "usage-fail@example.test");
+        String token = login("usage-fail");
+        long userId = userMapper.findByUsername("usage-fail").getId();
+        doThrow(new org.springframework.dao.DataIntegrityViolationException("simulated ledger failure"))
+                .when(quotaUsageMapper).insert(any(com.aurora.imagehub.model.entity.QuotaUsage.class));
+        assertThat(upload(token, "failed.png", png()).path("code").asInt()).isEqualTo(500);
+        assertThat(imageFileService.quota(userId).getUsed()).isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_image WHERE user_id=?", Long.class, userId)).isZero();
+        String id = post("/api/app/generations", generationRequest(enableAiModel()), token).path("data").path("id").asText();
+        when(aiImageClient.generate(any())).thenReturn(png());
+        aiGenerationService.runTask(userId, id);
+        assertThat(aiGenerationService.task(userId, id).getStatus()).isEqualTo("FAILED");
+        assertThat(imageFileService.quota(userId).getUsed()).isZero();
+        assertThat(imageFileService.quota(userId).getReserved()).isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_image WHERE user_id=?", Long.class, userId)).isZero();
+        assertThat(get("/api/app/quota/records", token).path("data").path("total").asInt()).isZero();
+        verify(ossTemplate, times(2)).delete(any(FileInfo.class));
     }
 
     private String login(String username) {

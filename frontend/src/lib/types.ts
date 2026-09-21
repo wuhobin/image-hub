@@ -34,6 +34,15 @@ export type Page<T> = {
   pages: number
 }
 export type ImageList = { page: Page<ImageRecord>; totalBytes: number }
+export type QuotaUsage = {
+  id: number
+  scene: 'IMAGE_UPLOAD' | 'AI_GENERATION'
+  bizId: string
+  amount: number
+  description: string
+  createTime: string
+}
+
 export type UploadQuota = { total: number; remaining: number; used: number; reserved: number }
 
 export type AiModel = { id: number; name: string; sizes: string[]; defaultSize: string; qualities: string[]; defaultQuality: string }

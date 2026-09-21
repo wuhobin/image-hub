@@ -47,6 +47,8 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
 
     private final ImageMapper imageMapper;
 
+    private final QuotaUsageService quotaUsageService;
+
     private final UploadQuotaCache uploadQuotaCache;
 
     private final AiImageClient aiImageClient;
@@ -295,6 +297,7 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
                         throw new BizException(409, "任务执行期限已过，不能保存结果");
                     }
                     imageMapper.insert(image);
+                    quotaUsageService.recordConsumption(image);
                     return null;
                 });
             });

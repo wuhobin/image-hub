@@ -56,6 +56,10 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
 
     private final UploadQuotaCache uploadQuotaCache;
 
+    private final com.aurora.imagehub.service.QuotaUsageService quotaUsageService;
+
+    private final org.springframework.transaction.PlatformTransactionManager platformTransactionManager;
+
     @Override
     public UploadQuotaVO quota(long userId) {
         return uploadQuotaCache.get(userId);
@@ -94,11 +98,20 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
     private ImageVO uploadValidated(long userId, MultipartFile file, String mime, ImageDimensionsBO dimensions, String id) {
         ImageFile image = storeValidated(userId, file, mime, dimensions, id, "UPLOAD");
         try {
-            uploadQuotaCache.checkOwnership(userId);
-            imageMapper.insert(image);
+            // 网络上传已结束，计费图片和流水在同一短事务提交。
+            new org.springframework.transaction.support.TransactionTemplate(platformTransactionManager).executeWithoutResult(status -> {
+                uploadQuotaCache.checkOwnership(userId);
+                imageMapper.insert(image);
+                quotaUsageService.recordConsumption(image);
+            });
         } catch (Exception e) {
-            discardUncommitted(image);
-            throw new BizException(500, "上传记录保存失败，请稍后重试");
+            // 提交响应丢失时不能误删已经入库的文件；无法确认则保留文件并记录补偿线索。
+            try {
+                if (imageMapper.findOwned(userId, id) == null) discardUncommitted(image);
+            } catch (RuntimeException verification) {
+                log.warn("上传入库状态无法确认，保留云文件：imageId={}", id, verification);
+            }
+            throw new BizException(500, "上传记录保存失败，请稍后重试", e);
         }
         ImageFile saved;
         try {
