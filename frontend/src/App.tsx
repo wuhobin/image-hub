@@ -14,6 +14,8 @@ const Profile = lazy(() => import('./pages/Profile'))
 const History = lazy(() => import('./pages/History'))
 const Upload = lazy(() => import('./pages/Home'))
 const Auth = lazy(() => import('./pages/Auth'))
+const Explore = lazy(() => import('./pages/Explore'))
+const SharedCreation = lazy(() => import('./pages/SharedCreation'))
 export type AppState = ReturnType<typeof useImageHub>
 
 function Header({ app }: { app: AppState }) {
@@ -50,6 +52,7 @@ function Header({ app }: { app: AppState }) {
       </Link>
       {!authPage && <nav className="navigation" aria-label="主导航">
         <NavLink to="/" end>AI 创作</NavLink>
+          <NavLink to="/explore">作品广场</NavLink>
         <NavLink to="/upload">上传图片</NavLink>
         <NavLink to="/history">我的图片</NavLink>
       </nav>}
@@ -102,10 +105,11 @@ export default function App() {
           '/history': '我的图片',
           '/profile': '个人中心',
           '/creations': '创作记录',
+          '/explore': '作品广场',
           '/login': '登录',
           '/register': '注册'
       }
-    document.title = `ImgHub · ${titles[location.pathname] || '页面未找到'}`
+      document.title = `ImgHub · ${location.pathname.startsWith('/share/') ? '分享作品' : titles[location.pathname] || '页面未找到'}`
   }, [location.pathname])
 
   return <>
@@ -123,6 +127,8 @@ export default function App() {
                 <Create key={'history:' + app.user} app={app} view="history"/> :
                 <Navigate to="/login" state={{from: '/creations'}} replace/>}/>
       <Route path="/create" element={<Navigate to="/" state={location.state} replace />} />
+        <Route path="/explore" element={<Explore/>}/>
+        <Route path="/share/:shareId" element={<SharedCreation key={location.pathname} app={app}/>}/>
       <Route path="/upload" element={<Upload app={app} />} />
       <Route path="/history" element={app.initializing ? <HistoryLoading /> : app.user ? <History app={app} /> : <Navigate to="/login" state={{ from: '/history' }} replace />} />
       <Route path="/profile" element={app.initializing || app.user ? <Profile app={app} /> : <Navigate to="/login" state={{ from: '/profile' }} replace />} />

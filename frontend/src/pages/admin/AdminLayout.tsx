@@ -16,6 +16,7 @@ const navigation = [
   { to: '/admin/users', label: '用户管理', icon: Users },
   { to: '/admin/settings', label: '配置管理', icon: SlidersHorizontal },
   { to: '/admin/models', label: '模型管理', icon: Sparkle },
+    {to: '/admin/creations', label: '作品分享', icon: ImageSquare},
 ]
 
 type LayoutProps = { admin: Admin; loggingOut: boolean; logout: () => void; error: string }

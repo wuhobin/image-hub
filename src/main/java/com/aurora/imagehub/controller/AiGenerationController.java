@@ -2,6 +2,7 @@ package com.aurora.imagehub.controller;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.aurora.imagehub.model.param.GenerationParam;
+import com.aurora.imagehub.model.param.ShareCreationParam;
 import com.aurora.imagehub.model.vo.AiModelVO;
 import com.aurora.imagehub.model.vo.GenerationVO;
 import com.aurora.imagehub.service.AiGenerationService;
@@ -62,6 +63,23 @@ public class AiGenerationController {
     @GetMapping("/{id}")
     public Result<GenerationVO> task(@PathVariable String id) {
         return Result.data(aiGenerationService.task(StpUtil.getLoginIdAsLong(), id));
+    }
+
+    /**
+     * 发布本人成功作品或修改提示词可见性，用户身份仅取自登录态。
+     */
+    @PutMapping("/{id}/share")
+    public Result<GenerationVO> share(@PathVariable String id, @Valid @RequestBody ShareCreationParam param) {
+        return Result.data(aiGenerationService.share(StpUtil.getLoginIdAsLong(), id, param.getPromptPublic()));
+    }
+
+    /**
+     * 撤销本人分享；保留原作品，不删除存储文件。
+     */
+    @DeleteMapping("/{id}/share")
+    public Result<Void> revokeShare(@PathVariable String id) {
+        aiGenerationService.revokeShare(StpUtil.getLoginIdAsLong(), id);
+        return Result.success();
     }
 
     /** 兼容旧客户端路径，校验归属后返回不再支持暂存重试的提示。 */

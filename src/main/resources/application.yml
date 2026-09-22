@@ -95,6 +95,8 @@ platform:
       - /api/app/auth/login
       - /api/app/auth/register
       - /api/app/auth/email-code
+      - /api/app/public/creations
+      - /api/app/public/creations/*
   verification:
     key-prefix: image-hub:verification
     mail:

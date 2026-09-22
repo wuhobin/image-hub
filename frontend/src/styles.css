@@ -1152,3 +1152,40 @@ input::placeholder { color: #8c97aa; opacity: 1; }
   .brand-mark { display: none; }
 }
 .selected-image .field-error { font-size: 11px; line-height: 1.7; overflow-wrap: anywhere; }
+
+/* 四个主入口在手机上独占一行，避免中文导航被挤成两行字。 */
+@media (max-width: 600px) {
+    .header {
+        height: auto;
+    }
+
+    .header-inner {
+        flex-wrap: wrap;
+        gap: 0 20px;
+        padding-top: 6px;
+    }
+
+    .header-actions {
+        min-height: 44px;
+    }
+
+    .header .navigation {
+        order: 3;
+        flex: 0 0 100%;
+        height: 44px;
+        justify-content: space-between;
+        gap: 12px;
+    }
+
+    .header .navigation a {
+        white-space: nowrap;
+        min-height: 44px;
+    }
+
+    .header .login-link {
+        display: inline-flex;
+        align-items: center;
+        min-height: 44px;
+        white-space: nowrap;
+    }
+}

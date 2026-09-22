@@ -19,6 +19,7 @@ export default function Auth({ app, mode }: { app: AppState; mode: 'login' | 're
   const registering = mode === 'register'
     const destination = ['/', '/upload', '/history', '/profile', '/create', '/creations'].includes(location.state?.from) ? location.state.from : '/'
   const creationPrompt = typeof location.state?.creationPrompt === 'string' ? location.state.creationPrompt.slice(0, 4000) : ''
+    const creationPreset = location.state?.creationPreset
   const [showPassword, setShowPassword] = useState(false)
   const [email, setEmail] = useState('')
   const [sentEmail, setSentEmail] = useState('')
@@ -50,7 +51,7 @@ export default function Auth({ app, mode }: { app: AppState; mode: 'login' | 're
     return () => clearTimeout(timer)
   }, [countdown])
 
-  if (app.user) return <Navigate to={destination} state={{ creationPrompt }} replace />
+    if (app.user) return <Navigate to={destination} state={{creationPrompt, creationPreset}} replace/>
 
   async function sendCode() {
     if (sendingCode.current || countdown > 0) return
@@ -106,12 +107,12 @@ export default function Auth({ app, mode }: { app: AppState; mode: 'login' | 're
         await api<void>('/auth/register', { method: 'POST', body: JSON.stringify({ username, email: email.trim(), password, code: String(data.get('code')) }) })
         if (version !== requestVersion.current) return
         app.notify('注册成功，请输入用户名和密码登录')
-        navigate('/login', { replace: true, state: { from: destination, username, creationPrompt } })
+          navigate('/login', {replace: true, state: {from: destination, username, creationPrompt, creationPreset}})
       } else {
         await app.authenticate(username, password)
         if (version !== requestVersion.current) return
         app.notify(destination === '/upload' ? '登录成功，继续上传图片' : '登录成功，继续你的创作')
-        navigate(destination, { replace: true, state: { creationPrompt } })
+          navigate(destination, {replace: true, state: {creationPrompt, creationPreset}})
       }
     } catch (error) {
       if (version === requestVersion.current) setErrors(current => ({ ...current, form: error instanceof Error ? error.message : '请求失败，请重试' }))

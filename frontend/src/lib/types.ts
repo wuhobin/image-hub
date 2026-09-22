@@ -57,4 +57,15 @@ export type Generation = {
   id: string; requestId: string; modelName: string; prompt: string; size: string; quality: string
   status: 'QUEUED' | 'GENERATING' | 'SAVING' | 'SAVE_FAILED' | 'SUCCEEDED' | 'FAILED' | 'EXPIRED' | 'ABANDONED'
   errorMessage: string | null; createTime: string; durationSeconds: number | null; resultExpiresAt: string | null; image: ImageRecord | null
+    shareId: string | null;
+    shareStatus: 'PRIVATE' | 'PUBLIC' | 'BLOCKED';
+    promptPublic: boolean
 }
+
+export type SharedCreation = {
+    shareId: string; shareStatus: 'PUBLIC' | 'BLOCKED'; authorName: string
+    imageUrl: string; width: number; height: number; modelId: number; modelName: string
+    size: string; quality: string; promptPublic: boolean; prompt: string | null; publishedTime: string
+}
+
+export type CreationPreset = { modelId: number; size: string; quality: string }

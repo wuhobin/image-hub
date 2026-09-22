@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, ApiError, getToken, SESSION_EXPIRED, TOKEN_KEY, uploadImage } from './api'
+import {createQuotaCache} from './quotaCache'
 import { fileError, MAX_FILES } from './rules'
 import type { ImageRecord, LoginResult, PendingImage, UploadQuota, User } from './types'
 
@@ -24,26 +25,34 @@ export function useImageHub(onUploadPage: boolean, onProfilePage: boolean) {
   const activeUpload = useRef<AbortController | null>(null)
   const generation = useRef(0)
   const quotaRequest = useRef(0)
+    const [quotaCache] = useState(() => createQuotaCache(signal => api<UploadQuota>('/images/quota', {signal})))
 
   useEffect(() => {
     if (!user || !(onUploadPage || onProfilePage) || busy) return
     const controller = new AbortController()
-    void refreshQuota(controller.signal).catch(() => {})
-    const refresh = () => { if (!document.hidden) void refreshQuota(controller.signal).catch(() => {}) }
+      void refreshQuota(controller.signal, false).catch(() => {
+      })
+      const refresh = () => {
+          if (!document.hidden) void refreshQuota(controller.signal, false).catch(() => {
+          })
+      }
     window.addEventListener('focus', refresh)
     return () => { controller.abort(); window.removeEventListener('focus', refresh) }
   }, [user, onUploadPage, onProfilePage, busy])
 
-  async function refreshQuota(signal?: AbortSignal) {
+    async function refreshQuota(signal?: AbortSignal, force = true) {
+        signal?.throwIfAborted()
     const version = generation.current
     const request = ++quotaRequest.current
     try {
-      const result = await api<UploadQuota>('/images/quota', { signal })
+        const result = await quotaCache.read(force)
+        signal?.throwIfAborted()
       // 焦点刷新、任务轮询和上传预检可能重叠；较早的响应不能覆盖新积分。
       if (version === generation.current && request === quotaRequest.current && !signal?.aborted) { setQuota(result); setQuotaError('') }
       return result
     } catch (error) {
-      if (version === generation.current && request === quotaRequest.current && !signal?.aborted) {
+        if (version === generation.current && request === quotaRequest.current && !signal?.aborted
+            && !(error instanceof DOMException && error.name === 'AbortError')) {
         // 保留上次数字避免闪动；错误标记阻止用过期积分发起新的提交。
         setQuotaError('积分读取失败，点击重试')
       }
@@ -93,6 +102,7 @@ export function useImageHub(onUploadPage: boolean, onProfilePage: boolean) {
     return () => {
       controller.abort()
       generation.current++
+        quotaCache.reset()
       activeUpload.current?.abort()
       window.removeEventListener(SESSION_EXPIRED, expired)
       window.removeEventListener('storage', sync)
@@ -114,6 +124,7 @@ export function useImageHub(onUploadPage: boolean, onProfilePage: boolean) {
 
   function clearSession(clearSelection: boolean) {
     generation.current++
+      quotaCache.reset()
     activeUpload.current?.abort()
     uploadLock.current = false
     setBusy(false)
@@ -193,6 +204,7 @@ export function useImageHub(onUploadPage: boolean, onProfilePage: boolean) {
     activeUpload.current = controller
     const version = generation.current
     let succeeded = 0
+      let attemptedUpload = false
     let quotaStopped = false
     try {
       // 整批预检在任何文件发送前完成；后端仍逐张校验，防止另一设备抢占积分。
@@ -207,6 +219,7 @@ export function useImageHub(onUploadPage: boolean, onProfilePage: boolean) {
         if (controller.signal.aborted || version !== generation.current) break
         setPending(current => current.map(image => image.id === item.id ? { ...image, status: 'uploading', progress: 0, error: undefined } : image))
         try {
+            attemptedUpload = true
           const record = await uploadImage(item.file, progress => {
             if (version === generation.current) setPending(current => current.map(image => image.id === item.id ? { ...image, progress } : image))
           }, controller.signal)
@@ -236,12 +249,19 @@ export function useImageHub(onUploadPage: boolean, onProfilePage: boolean) {
         uploadLock.current = false
         setBusy(false)
         activeUpload.current = null
+          // 上传可能在响应丢失前已扣分，批次结束后始终查询真实余额。
+          if (attemptedUpload) void refreshQuota().catch(() => {
+          })
       }
     }
   }
 
   async function authenticate(username: string, password: string) {
     const result = await api<LoginResult>('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) })
+      generation.current++
+      quotaCache.reset()
+      setQuota(null)
+      setQuotaError('')
     localStorage.setItem(TOKEN_KEY, result.token)
     setUser(result.user.username)
     setInitializing(false)

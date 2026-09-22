@@ -191,6 +191,8 @@ Redis Key 为 `image-hub:quota:{用户ID}`，不设置过期时间；值为 `u:�
 
 ## 测试
 
+公开作品广场、分享控制、做同款及数据库迁移见 [作品分享说明](docs/creation-sharing.md)。
+
 ```shell
 mvn test
 ```

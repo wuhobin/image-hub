@@ -39,6 +39,12 @@ public class GenerationVO {
 
     private ImageVO image;
 
+    private String shareId;
+
+    private String shareStatus;
+
+    private Boolean promptPublic;
+
     /** 结果图片仅由调用方按当前用户归属查询后填入。 */
     public static GenerationVO from(AiGeneration task, ImageVO image) {
         GenerationVO result = new GenerationVO();
@@ -55,6 +61,9 @@ public class GenerationVO {
             result.setDurationSeconds(BigDecimal.valueOf(task.getDurationMillis(), 3));
         }
         result.setImage(image);
+        result.setShareId(image == null ? null : task.getShareId());
+        result.setShareStatus(image == null ? "PRIVATE" : task.getShareStatus());
+        result.setPromptPublic(task.getPromptPublic());
         return result;
     }
 }

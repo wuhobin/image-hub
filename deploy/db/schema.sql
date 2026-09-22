@@ -255,11 +255,33 @@ CREATE TABLE IF NOT EXISTS hub_ai_generation (
     work_token VARCHAR(36),
     work_deadline datetime,
     pending_storage_info TEXT COMMENT '上传前记录定位，入库成功或补偿删除后清空',
+    share_id VARCHAR
+(
+    36
+) DEFAULT NULL COMMENT '独立分享编号，撤销时清空',
+    share_status VARCHAR
+(
+    12
+) NOT NULL DEFAULT 'PRIVATE' COMMENT 'PRIVATE未公开，PUBLIC公开，BLOCKED管理员下架',
+    prompt_public TINYINT NOT NULL DEFAULT 1 COMMENT '是否公开提示词',
+    published_time datetime DEFAULT NULL COMMENT '最近一次发布时间',
     create_time datetime DEFAULT CURRENT_TIMESTAMP,
     update_time datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     deleted TINYINT NOT NULL DEFAULT 0,
     UNIQUE KEY uk_hub_ai_generation_request (user_id, request_id),
     UNIQUE KEY uk_hub_ai_generation_active (active_user_id),
+    UNIQUE KEY uk_hub_ai_generation_share
+(
+    share_id
+),
+    KEY idx_hub_ai_generation_shared
+(
+    share_status,
+    deleted,
+    status,
+    published_time,
+    share_id
+),
     KEY idx_hub_ai_generation_user (user_id, deleted, create_time, id),
     KEY idx_hub_ai_generation_work (deleted, status, work_token, create_time, id),
     CONSTRAINT chk_hub_ai_generation_points_cost CHECK (points_cost > 0)

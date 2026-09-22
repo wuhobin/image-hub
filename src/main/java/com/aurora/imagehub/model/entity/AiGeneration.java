@@ -62,6 +62,24 @@ public class AiGeneration {
     /** 上传前持久化的对象位置；成功事务或确认清理后才能清空，不对外返回。 */
     private String pendingStorageInfo;
 
+    /**
+     * 独立公开链接；撤销时清空，再次发布使用新链接。
+     */
+    private String shareId;
+
+    /**
+     * PRIVATE 未公开、PUBLIC 已公开、BLOCKED 管理员下架；下架不能由作者解除。
+     */
+    private String shareStatus = "PRIVATE";
+
+    private Boolean promptPublic = true;
+
+    /**
+     * 发布时由数据库记录；修改提示词可见性不刷新发布时间。
+     */
+    @TableField(insertStrategy = FieldStrategy.NEVER, updateStrategy = FieldStrategy.NEVER)
+    private Date publishedTime;
+
     /** 审计时间完全由数据库生成和维护。 */
     @TableField(insertStrategy = FieldStrategy.NEVER, updateStrategy = FieldStrategy.NEVER)
     private Date createTime;

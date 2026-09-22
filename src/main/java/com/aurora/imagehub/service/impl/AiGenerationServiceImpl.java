@@ -8,12 +8,16 @@ import org.springframework.context.ApplicationEventPublisher;
 import com.aurora.imagehub.cache.UploadQuotaCache;
 import com.aurora.imagehub.mapper.AiGenerationMapper;
 import com.aurora.imagehub.mapper.ImageMapper;
+import com.aurora.imagehub.mapper.UserMapper;
 import com.aurora.imagehub.model.entity.AiGeneration;
 import com.aurora.imagehub.model.entity.AiModelConfig;
 import com.aurora.imagehub.model.entity.ImageFile;
+import com.aurora.imagehub.model.entity.UserAccount;
 import com.aurora.imagehub.model.param.GenerationParam;
 import com.aurora.imagehub.model.vo.GenerationVO;
 import com.aurora.imagehub.model.vo.ImageVO;
+import com.aurora.imagehub.model.vo.SharedCreationVO;
+import com.aurora.imagehub.service.admin.AdminAccountService;
 import com.aurora.imagehub.service.*;
 import com.aurora.starter.mybatisplus.mybatis.PageUtils;
 import com.aurora.starter.webmvc.exception.BizException;
@@ -51,6 +55,10 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
     private final ImageFileService imageFileService;
 
     private final ImageMapper imageMapper;
+
+    private final UserMapper userMapper;
+
+    private final AdminAccountService adminAccountService;
 
     private final QuotaUsageService quotaUsageService;
 
@@ -213,6 +221,104 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
     public GenerationVO retrySave(long userId, String id) {
         requireOwned(userId, id);
         throw new BizException(409, "生成结果不再暂存，请重新提交创作");
+    }
+
+    /**
+     * 发布资格和下架状态由数据库条件更新兜底，不能依赖前端隐藏按钮。
+     */
+    @Override
+    public GenerationVO share(long userId, String id, boolean promptPublic) {
+        AiGeneration task = requireOwned(userId, id);
+        if ("BLOCKED".equals(task.getShareStatus())) throw new BizException(403, "作品已被管理员下架，不能重新发布");
+        if (aiGenerationMapper.share(userId, id, UUID.randomUUID().toString(), promptPublic) != 1) {
+            throw new BizException(409, "仅可分享生成成功且未删除、未下架的 AI 作品，请刷新后重试");
+        }
+        return response(requireOwned(userId, id));
+    }
+
+    /**
+     * 撤销为幂等操作；作品和积分不变，管理员下架标记不得被作者清除。
+     */
+    @Override
+    public void revokeShare(long userId, String id) {
+        requireOwned(userId, id);
+        aiGenerationMapper.revokeShare(userId, id);
+    }
+
+    /**
+     * 公开接口每次查库，不缓存可撤销的分享内容。
+     */
+    @Override
+    public Page<SharedCreationVO> publicCreations(int page, int pageSize) {
+        return sharedCreations(page, pageSize, null, false);
+    }
+
+    /**
+     * 缺失和不可见作品统一返回 404，避免枚举私有任务。
+     */
+    @Override
+    public SharedCreationVO publicCreation(String shareId) {
+        var result = sharedCreations(1, 1, shareId, false);
+        if (result.getRecords().isEmpty()) throw new BizException(404, "作品不存在或已停止分享");
+        return result.getRecords().getFirst();
+    }
+
+    /**
+     * 管理员必须仍然有效，普通用户 Token 不能用于管理分享。
+     */
+    @Override
+    public Page<SharedCreationVO> managedCreations(int page, int pageSize) {
+        adminAccountService.currentAdmin();
+        return sharedCreations(page, pageSize, null, true);
+    }
+
+    /**
+     * 下架保留作者原作品，更新状态后后续公开查询立即不可见。
+     */
+    @Override
+    public void blockShare(String shareId) {
+        var admin = adminAccountService.currentAdmin();
+        if (aiGenerationMapper.blockShare(shareId) != 1) throw new BizException(404, "分享不存在或已撤销");
+        log.info("管理员下架作品：adminId={}, shareId={}", admin.getId(), shareId);
+    }
+
+    /**
+     * 批量读取当前页图片和作者，转换白名单 VO；不复用含任务信息的本人详情响应。
+     */
+    private Page<SharedCreationVO> sharedCreations(int page, int pageSize, String shareId, boolean includeBlocked) {
+        if (page < 1 || pageSize < 1 || pageSize > 50) throw new BizException(400, "分页参数无效");
+        Page<AiGeneration> tasks = aiGenerationMapper.shared(PageUtils.buildPage(page, pageSize), shareId, includeBlocked);
+        if (tasks.getRecords().isEmpty()) return PageUtils.convert(tasks, task -> new SharedCreationVO());
+        var ids = tasks.getRecords().stream().map(AiGeneration::getId).toList();
+        var userIds = tasks.getRecords().stream().map(AiGeneration::getUserId).distinct().toList();
+        var images = imageMapper.selectList(Wrappers.<ImageFile>lambdaQuery()
+                        .select(ImageFile::getId, ImageFile::getUserId, ImageFile::getUrl, ImageFile::getWidth, ImageFile::getHeight)
+                        .in(ImageFile::getId, ids).in(ImageFile::getUserId, userIds))
+                .stream().collect(java.util.stream.Collectors.toMap(ImageFile::getId, image -> image));
+        var authors = userMapper.selectList(Wrappers.<UserAccount>lambdaQuery()
+                        .select(UserAccount::getId, UserAccount::getUsername).in(UserAccount::getId, userIds))
+                .stream().collect(java.util.stream.Collectors.toMap(UserAccount::getId, UserAccount::getUsername));
+        // 读取期间发生原图或作者删除时，也不返回失效作品；下一次分页会使用最新总数。
+        tasks.setRecords(tasks.getRecords().stream().filter(task -> images.containsKey(task.getId())
+                && task.getUserId().equals(images.get(task.getId()).getUserId()) && authors.containsKey(task.getUserId())).toList());
+        return PageUtils.convert(tasks, task -> {
+            ImageFile image = images.get(task.getId());
+            SharedCreationVO result = new SharedCreationVO();
+            result.setShareId(task.getShareId());
+            result.setShareStatus(task.getShareStatus());
+            result.setAuthorName(authors.get(task.getUserId()));
+            result.setImageUrl(image.getUrl());
+            result.setWidth(image.getWidth());
+            result.setHeight(image.getHeight());
+            result.setModelId(task.getModelId());
+            result.setModelName(task.getModelName());
+            result.setSize(task.getImageSize());
+            result.setQuality(task.getQuality());
+            result.setPromptPublic(task.getPromptPublic());
+            result.setPrompt(Boolean.TRUE.equals(task.getPromptPublic()) ? task.getPrompt() : null);
+            result.setPublishedTime(task.getPublishedTime());
+            return result;
+        });
     }
 
     /**

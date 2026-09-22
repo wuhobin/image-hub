@@ -3,6 +3,7 @@ package com.aurora.imagehub.service;
 import com.aurora.imagehub.model.entity.AiGeneration;
 import com.aurora.imagehub.model.param.GenerationParam;
 import com.aurora.imagehub.model.vo.GenerationVO;
+import com.aurora.imagehub.model.vo.SharedCreationVO;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.IService;
 import org.springframework.web.multipart.MultipartFile;
@@ -21,6 +22,36 @@ public interface AiGenerationService extends IService<AiGeneration> {
     GenerationVO active(long userId);
 
     Page<GenerationVO> history(long userId, int page, int pageSize);
+
+    /**
+     * 仅发布本人成功且未删除的 AI 作品；公开状态更新不能解除管理员下架。
+     */
+    GenerationVO share(long userId, String id, boolean promptPublic);
+
+    /**
+     * 撤销公开链接，保留原作品和已存在的云图片地址。
+     */
+    void revokeShare(long userId, String id);
+
+    /**
+     * 游客只读取当前公开且原图、作者均未删除的作品，提示词遵循作者开关。
+     */
+    Page<SharedCreationVO> publicCreations(int page, int pageSize);
+
+    /**
+     * 非公开、已删除和已下架链接均返回不存在，不透露作品状态。
+     */
+    SharedCreationVO publicCreation(String shareId);
+
+    /**
+     * 管理端读取公开与已下架作品；服务内再次校验有效管理员身份。
+     */
+    Page<SharedCreationVO> managedCreations(int page, int pageSize);
+
+    /**
+     * 下架后作者无法重新发布同一作品，不删除原文件或修改积分。
+     */
+    void blockShare(String shareId);
 
     /** 旧接口兼容入口；不再保留结果，校验归属后返回 409。 */
     GenerationVO retrySave(long userId, String id);

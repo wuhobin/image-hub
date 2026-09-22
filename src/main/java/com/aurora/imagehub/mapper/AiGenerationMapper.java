@@ -2,11 +2,70 @@ package com.aurora.imagehub.mapper;
 
 import com.aurora.imagehub.model.entity.AiGeneration;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import org.apache.ibatis.annotations.*;
 
 /** 任务只持久化状态及云文件定位；状态更新校验用户与令牌，图片字节不入库。 */
 @Mapper
 public interface AiGenerationMapper extends BaseMapper<AiGeneration> {
+
+    /**
+     * 公共列表和详情共用可见性条件；在 SQL 中隐藏提示词，避免误带入公开响应。
+     */
+    @Select("""
+            <script>
+            SELECT g.id, g.user_id, g.model_id, g.model_name, g.image_size, g.quality,
+                   g.share_id, g.share_status, g.prompt_public, g.published_time,
+                   CASE WHEN g.prompt_public = 1 THEN g.prompt ELSE NULL END AS prompt
+            FROM hub_ai_generation g
+            JOIN hub_image i ON i.id = g.id AND i.user_id = g.user_id AND i.deleted = 0 AND i.source_type = 'AI'
+            JOIN hub_user u ON u.id = g.user_id AND u.deleted = 0
+            WHERE g.deleted = 0 AND g.status = 'SUCCEEDED'
+            <choose>
+              <when test="includeBlocked">AND g.share_status IN ('PUBLIC', 'BLOCKED')</when>
+              <otherwise>AND g.share_status = 'PUBLIC'</otherwise>
+            </choose>
+            <if test="shareId != null">AND g.share_id = #{shareId}</if>
+            ORDER BY g.published_time DESC, g.share_id DESC
+            </script>
+            """)
+    Page<AiGeneration> shared(Page<AiGeneration> page, @Param("shareId") String shareId,
+                              @Param("includeBlocked") boolean includeBlocked);
+
+    /**
+     * 单条条件更新抵御发布与下架的竞争；重复保存保持链接和发布时间。
+     */
+    @Update("""
+            UPDATE hub_ai_generation SET
+              share_id = COALESCE(share_id, #{shareId}),
+              published_time = CASE WHEN share_status = 'PUBLIC' THEN published_time ELSE CURRENT_TIMESTAMP END,
+              prompt_public = #{promptPublic}, share_status = 'PUBLIC', update_time = CURRENT_TIMESTAMP
+            WHERE id = #{id} AND user_id = #{userId} AND deleted = 0
+              AND status = 'SUCCEEDED' AND share_status != 'BLOCKED'
+              AND EXISTS (SELECT 1 FROM hub_image i WHERE i.id = #{id} AND i.user_id = #{userId}
+                          AND i.deleted = 0 AND i.source_type = 'AI')
+            """)
+    int share(@Param("userId") long userId, @Param("id") String id,
+              @Param("shareId") String shareId, @Param("promptPublic") boolean promptPublic);
+
+    /**
+     * 清除分享标识令旧链接永久失效；不覆盖管理员下架状态。
+     */
+    @Update("""
+            UPDATE hub_ai_generation SET share_status = 'PRIVATE', share_id = NULL,
+              published_time = NULL, update_time = CURRENT_TIMESTAMP
+            WHERE id = #{id} AND user_id = #{userId} AND deleted = 0 AND share_status = 'PUBLIC'
+            """)
+    int revokeShare(@Param("userId") long userId, @Param("id") String id);
+
+    /**
+     * 仅管理业务可调用；下架标记保留，防止作者重新公开。
+     */
+    @Update("""
+            UPDATE hub_ai_generation SET share_status = 'BLOCKED', update_time = CURRENT_TIMESTAMP
+            WHERE share_id = #{shareId} AND deleted = 0 AND share_status IN ('PUBLIC', 'BLOCKED')
+            """)
+    int blockShare(String shareId);
 
     /** 按任务快照累计预留积分；成功图片不再预留，防止状态恢复期间重复计费。 */
     @Select("""

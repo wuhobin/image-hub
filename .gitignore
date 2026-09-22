@@ -15,3 +15,4 @@
 !/frontend/scripts/check-creation-home.ps1
 !/frontend/scripts/check-creation-polling.js
 !/frontend/scripts/check-quota.ps1
+!/frontend/scripts/check-creation-sharing.ps1

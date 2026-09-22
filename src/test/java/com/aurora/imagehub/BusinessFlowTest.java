@@ -1519,6 +1519,109 @@ class BusinessFlowTest {
         return result.path("data").path("token").asText();
     }
 
+    /**
+     * 实际 HTTP 与 SQL 覆盖游客读取、提示词隐私、作者隔离、撤销、删除及管理员下架。
+     */
+    @Test
+    void publicSharingRespectsVisibilityOwnershipDeletionAndAdminTakedown() throws Exception {
+        register("share-author", "share-author@example.test");
+        register("share-other", "share-other@example.test");
+        String author = login("share-author");
+        String other = login("share-other");
+        long userId = userMapper.findByUsername("share-author").getId();
+        long modelId = enableAiModel();
+        String publicPath = "/api/app/public/creations";
+        assertThat(get(publicPath, null).path("data").path("total").asInt()).isZero();
+        assertThat(get(publicPath + "?page=0", null).path("code").asInt()).isEqualTo(400);
+        assertThat(get(publicPath + "?pageSize=51", null).path("code").asInt()).isEqualTo(400);
+        String id = post("/api/app/generations", generationRequest(modelId), author).path("data").path("id").asText();
+        String path = "/api/app/generations/" + id + "/share";
+        assertThat(sharingRequest(path, HttpMethod.PUT, Map.of(), null).path("code").asInt()).isEqualTo(401);
+        assertThat(sharingRequest(path, HttpMethod.PUT, Map.of(), other).path("code").asInt()).isEqualTo(404);
+        assertThat(sharingRequest(path, HttpMethod.PUT, Map.of(), author).path("code").asInt()).isEqualTo(409);
+        when(aiImageClient.generate(any())).thenReturn(png());
+        aiGenerationService.runTask(userId, id);
+        // 原参考图、供应商地址、任务请求和账户信息都不得进入匿名响应。
+        jdbcTemplate.update("UPDATE hub_ai_generation SET reference_image_url='private-reference-secret' WHERE id=?", id);
+        String uploadId = upload(author, "ordinary.png", png()).path("data").path("id").asText();
+        assertThat(sharingRequest("/api/app/generations/" + uploadId + "/share", HttpMethod.PUT, Map.of(), author)
+                .path("code").asInt()).isEqualTo(404);
+        assertThat(get(publicPath, null).path("data").path("total").asInt()).isZero();
+        JsonNode published = sharingRequest(path, HttpMethod.PUT, Map.of(), author);
+        assertThat(published.path("code").asInt()).isEqualTo(200);
+        assertThat(published.path("data").path("promptPublic").asBoolean()).isTrue();
+        String shareId = published.path("data").path("shareId").asText();
+        assertThat(shareId).isNotBlank().isNotEqualTo(id);
+        assertThat(get(publicPath + "/" + id, null).path("code").asInt()).isEqualTo(404);
+        var response = testRestTemplate.getForEntity(publicPath + "/" + shareId, JsonNode.class);
+        assertThat(response.getHeaders().getCacheControl()).isEqualTo("no-store");
+        JsonNode detail = response.getBody().path("data");
+        assertThat(detail.path("authorName").asText()).isEqualTo("share-author");
+        assertThat(detail.path("prompt").asText()).isEqualTo("海边书店");
+        assertThat(detail.path("modelId").asLong()).isEqualTo(modelId);
+        assertThat(detail.toString()).doesNotContain("userId", "email", "password", "requestId", "baseUrl",
+                "apiKey", "storageInfo", "reference", "private-reference-secret");
+        assertThat(get(publicPath, other).path("data").path("total").asInt()).isEqualTo(1);
+        String publishedTime = detail.path("publishedTime").asText();
+        JsonNode hidden = sharingRequest(path, HttpMethod.PUT, Map.of("promptPublic", false), author);
+        assertThat(hidden.path("data").path("shareId").asText()).isEqualTo(shareId);
+        assertThat(get(publicPath + "/" + shareId, null).toString()).doesNotContain("海边书店");
+        assertThat(get(publicPath, null).toString()).doesNotContain("海边书店");
+        assertThat(get(publicPath + "/" + shareId, null).path("data").path("publishedTime").asText()).isEqualTo(publishedTime);
+        assertThat(get("/api/app/generations/" + id, author).path("data").path("prompt").asText()).isEqualTo("海边书店");
+        assertThat(sharingRequest(path, HttpMethod.PUT, java.util.Collections.singletonMap("promptPublic", null), author)
+                .path("code").asInt()).isEqualTo(400);
+        assertThat(sharingRequest(path, HttpMethod.DELETE, null, other).path("code").asInt()).isEqualTo(404);
+        assertThat(sharingRequest(path, HttpMethod.DELETE, null, author).path("code").asInt()).isEqualTo(200);
+        assertThat(sharingRequest(path, HttpMethod.DELETE, null, author).path("code").asInt()).isEqualTo(200);
+        assertThat(get(publicPath + "/" + shareId, null).path("code").asInt()).isEqualTo(404);
+        assertThat(get(publicPath, null).path("data").path("total").asInt()).isZero();
+        String nextId = sharingRequest(path, HttpMethod.PUT, Map.of("promptPublic", true), author).path("data").path("shareId").asText();
+        assertThat(nextId).isNotEqualTo(shareId);
+        assertThat(get(publicPath + "/" + shareId, null).path("code").asInt()).isEqualTo(404);
+
+        jdbcTemplate.update("INSERT INTO hub_admin(username,password_hash) VALUES('share-admin',?)",
+                BCrypt.hashpw("test-only-admin-password", BCrypt.gensalt(4)));
+        String admin = post("/api/admin/auth/login", Map.of("username", "share-admin", "password", "test-only-admin-password"), null)
+                .path("data").path("token").asText();
+        assertThat(get("/api/admin/creations", null).path("code").asInt()).isEqualTo(401);
+        assertThat(get("/api/admin/creations", author).path("code").asInt()).isEqualTo(401);
+        assertThat(post("/api/admin/creations/" + nextId + "/block", Map.of(), author).path("code").asInt()).isEqualTo(401);
+        assertThat(sharingRequest(path, HttpMethod.PUT, Map.of(), admin).path("code").asInt()).isEqualTo(401);
+        assertThat(get("/api/admin/creations", admin).path("data").path("total").asInt()).isEqualTo(1);
+        assertThat(post("/api/admin/creations/" + nextId + "/block", Map.of(), admin).path("code").asInt()).isEqualTo(200);
+        assertThat(get(publicPath + "?includeBlocked=true", null).path("data").path("total").asInt()).isZero();
+        assertThat(get(publicPath + "/" + nextId, null).path("code").asInt()).isEqualTo(404);
+        assertThat(sharingRequest(path, HttpMethod.DELETE, null, author).path("code").asInt()).isEqualTo(200);
+        assertThat(sharingRequest(path, HttpMethod.PUT, Map.of(), author).path("code").asInt()).isEqualTo(403);
+        assertThat(get("/api/app/generations/" + id, author).path("data").path("image").isNull()).isFalse();
+        assertThat(get("/api/admin/creations", admin).path("data").path("records").get(0).path("shareStatus").asText()).isEqualTo("BLOCKED");
+        jdbcTemplate.update("UPDATE hub_admin SET deleted=1 WHERE username='share-admin'");
+        assertThat(get("/api/admin/creations", admin).path("code").asInt()).isEqualTo(401);
+
+        String second = post("/api/app/generations", generationRequest(modelId), author).path("data").path("id").asText();
+        aiGenerationService.runTask(userId, second);
+        String secondPath = "/api/app/generations/" + second + "/share";
+        String secondShare = sharingRequest(secondPath, HttpMethod.PUT, Map.of(), author).path("data").path("shareId").asText();
+        long used = imageFileService.quota(userId).getUsed();
+        when(ossTemplate.delete(any(FileInfo.class))).thenReturn(false);
+        assertThat(delete(second, author).path("code").asInt()).isEqualTo(502);
+        assertThat(get(publicPath + "/" + secondShare, null).path("code").asInt()).isEqualTo(200);
+        when(ossTemplate.delete(any(FileInfo.class))).thenReturn(true);
+        assertThat(delete(second, author).path("code").asInt()).isEqualTo(200);
+        assertThat(get(publicPath + "/" + secondShare, null).path("code").asInt()).isEqualTo(404);
+        assertThat(get(publicPath, null).path("data").path("total").asInt()).isZero();
+        assertThat(sharingRequest(secondPath, HttpMethod.PUT, Map.of(), author).path("code").asInt()).isEqualTo(409);
+        assertThat(imageFileService.quota(userId).getUsed()).isEqualTo(used);
+    }
+
+    /**
+     * 使用实际 HTTP 请求验证分享写接口，不绕过鉴权和参数校验。
+     */
+    private JsonNode sharingRequest(String path, HttpMethod method, Object body, String token) {
+        return testRestTemplate.exchange(path, method, new HttpEntity<>(body, headers(token)), JsonNode.class).getBody();
+    }
+
     private HttpHeaders headers(String token) {
         var headers = new HttpHeaders();
         if (token != null) headers.setBearerAuth(token);

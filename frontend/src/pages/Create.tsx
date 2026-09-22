@@ -2,15 +2,13 @@ import {lazy, Suspense, useEffect, useRef, useState} from 'react'
 import type { FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {ClockCounterClockwise} from '@phosphor-icons/react/dist/csr/ClockCounterClockwise'
-import { Sparkle } from '@phosphor-icons/react/dist/csr/Sparkle'
 import { ArrowUpRight } from '@phosphor-icons/react/dist/csr/ArrowUpRight'
 import { ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp'
 import { ImageSquare } from '@phosphor-icons/react/dist/csr/ImageSquare'
 import { X } from '@phosphor-icons/react/dist/csr/X'
-import { DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple'
 import { ArrowUUpLeft } from '@phosphor-icons/react/dist/csr/ArrowUUpLeft'
 import type { AppState } from '../App'
-import type { AiModel, Generation, ImageRecord, Page } from '../lib/types'
+import type {AiModel, CreationPreset, Generation, ImageRecord, Page} from '../lib/types'
 import { api, ApiError } from '../lib/api'
 import { MAX_BYTES, fileError, generationResolution, generationSizeForRatio, imageAspectRatio } from '../lib/rules'
 import { Ambient } from '../components/Ambient'
@@ -18,6 +16,7 @@ import { QuotaStatus } from '../components/QuotaStatus'
 import { CreationRatioPicker } from '../components/CreationRatioPicker'
 import './create.css'
 
+const CreationCurrent = lazy(() => import('../components/CreationCurrent'))
 const CreationRecords = lazy(() => import('../components/CreationRecords'))
 const CreationDetail = lazy(() => import('../components/CreationDetail'))
 
@@ -45,6 +44,7 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
     const historyView = view === 'history'
   const location = useLocation()
   const navigate = useNavigate()
+    const creationPreset = useRef<CreationPreset | undefined>(location.state?.creationPreset)
   const workspace = useRef<HTMLDivElement>(null)
   const referenceInput = useRef<HTMLInputElement>(null)
     const [reference, setReference] = useState<ReferenceImage | null>(() => {
@@ -132,7 +132,18 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
     void api<AiModel[]>('/generations/models', { signal: controller.signal }).then(items => {
       if (controller.signal.aborted) return
       setModels(items)
-      setModelId(previous => items.some(item => String(item.id) === previous) ? previous : String(items[0]?.id || ''))
+        const preset = creationPreset.current
+        const selected = preset ? items.find(item => item.id === preset.modelId) || items[0] : undefined
+        if (preset && selected) {
+            setModelId(String(selected.id))
+            setSize(selected.sizes.includes(preset.size) ? preset.size : selected.defaultSize)
+            setQuality(selected.qualities.includes(preset.quality) ? preset.quality : selected.defaultQuality)
+            setSizeNotice(selected.id !== preset.modelId || !selected.sizes.includes(preset.size) || !selected.qualities.includes(preset.quality)
+                ? '原作品的部分模型或参数已不可用，已选择当前可用选项，请确认后生成。' : '已带入公开提示词和生成参数，请确认后生成。')
+            creationPreset.current = undefined
+        } else {
+            setModelId(previous => items.some(item => String(item.id) === previous) ? previous : String(items[0]?.id || ''))
+        }
     }).catch(error => { if (!controller.signal.aborted) setModelsError(message(error)) })
       .finally(() => { if (!controller.signal.aborted) setModelsLoading(false) })
     return () => controller.abort()
@@ -185,8 +196,9 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
     let timer: ReturnType<typeof setTimeout>
     let lastTask = active
     let shouldPoll = !!active || !!pending.current
-    // 进入、主动刷新、切回页面或提交后读取积分；任务中间状态不改变积分。
-    void appRef.current.refreshQuota(controller.signal).catch(() => {})
+      // 进入或切回页面优先复用 30 秒内的积分；业务变化另行强制刷新。
+      void appRef.current.refreshQuota(controller.signal, false).catch(() => {
+      })
 
     async function refresh() {
       if (document.hidden) { timer = setTimeout(refresh, 5000); return }
@@ -274,6 +286,9 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
       setError(unknown ? '尚未确认提交结果。请点击“确认本次提交”，会沿用同一请求，不会重复生成。' : message(error))
       setRevision(value => value + 1)
     } finally {
+        // 提交会预留积分；即使用户已切页或提交结果不明确，也不能继续使用旧余额。
+        if (appRef.current.user) void appRef.current.refreshQuota().catch(() => {
+        })
       submitting.current = false
       if (mounted.current) setBusy(false)
     }
@@ -310,8 +325,6 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
 
 
     const currentRunning = currentTask && runningStatuses.includes(currentTask.status)
-    const currentDownload = currentTask?.image ? new URL(currentTask.image.url) : null
-    if (currentTask?.image && currentDownload) currentDownload.searchParams.set('attname', currentTask.image.name)
 
     return <main id="main"
                  className={historyView ? 'creation-records-page history-page' : 'creation-page hero' + (currentTask ? ' has-task' : '')}>
@@ -379,39 +392,13 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
                                                                                                  aria-hidden="true"/>创作记录<ArrowUpRight
                     size={14} aria-hidden="true"/></Link>
             </nav>
-            {currentTask && <section className={'creation-current-task' + (currentRunning ? ' is-running' : '')}
-                                     aria-labelledby="creation-current-title" key={currentTask.id}>
-                <header className="creation-current-heading">
-                    <div><span>本次创作</span><h2 id="creation-current-title"
-                                                  role="status">{currentTask.image ? '你的想法，已成画面。' : labels[currentTask.status]}</h2>
-                    </div>
-                    <span>{currentTask.modelName} · {imageAspectRatio(currentTask.size)}</span>
-                </header>
-                {currentTask.image ?
-                    <button type="button" className="creation-current-image" aria-label="预览本次生成图片"
-                            aria-haspopup="dialog" onClick={() => app.setPreview(currentTask.image!)}>
-                        <img src={currentTask.image.url} alt={currentTask.prompt}/>
-                    </button> : <div className="creation-current-placeholder">
-                        <div className="creation-detail-loader"><Sparkle size={34} weight="thin" aria-hidden="true"/>
-                        </div>
-                        <p>{currentRunning ? currentTask.status === 'SAVING' ? '画面已生成，正在保存到你的图片库。' : '画面正在慢慢成形，你可以离开页面，任务会继续。'
-                            : currentTask.errorMessage || (currentTask.status === 'SUCCEEDED' ? '图片已被删除，可重新使用这段描述创作。' : '本次任务已结束，预留积分已释放。')}</p>
-                    </div>}
-                <footer className="creation-current-actions">
-                    <span>{currentTask.image ? '已保存到我的图片' : currentRunning ? '完成后会在这里展示图片' : '你可以修改描述后重新生成'}{currentTask.durationSeconds != null && ' · ' + currentTask.durationSeconds + ' 秒'}</span>
-                    <div>
-                        {currentTask.image && <><a className="button button-secondary" href={currentDownload?.href}
-                                                   download={currentTask.image.name}><DownloadSimple size={16}
-                                                                                                     aria-hidden="true"/>下载</a>
-                            <button className="button creation-detail-reuse" disabled={busy || uncertain}
-                                    onClick={() => editImage(currentTask)}><ImageSquare size={16} aria-hidden="true"/>编辑图片
-                            </button>
-                        </>}
-                        <button className="quiet-link" onClick={() => setDetail(currentTask)}
-                                aria-haspopup="dialog">查看详情<ArrowUpRight size={14} aria-hidden="true"/></button>
-        </div>
-                </footer>
-    </section>}
+            {currentTask && <Suspense fallback={null}>
+                <CreationCurrent key={currentTask.id} task={currentTask} running={!!currentRunning}
+                                 statusLabel={labels[currentTask.status]}
+                                 qualityLabel={qualityNames[currentTask.quality] || currentTask.quality}
+                                 disabled={busy || uncertain} onPreview={() => app.setPreview(currentTask.image!)}
+                                 onEdit={() => editImage(currentTask)} onDetail={() => setDetail(currentTask)}/>
+            </Suspense>}
         </>}
         {historyView && <header className="creation-records-heading">
             <div><Link className="quiet-link" to="/"><ArrowUUpLeft size={16} aria-hidden="true"/>返回创作</Link>
@@ -424,6 +411,14 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
                                                              qualityLabel={qualityNames[detail.quality] || detail.quality}
                                                              disabled={busy || uncertain}
                                                              onReuse={reuse} onEdit={editImage}
+                                                             onChanged={updated => {
+                                                                 setDetail(previous => previous?.id === updated.id ? updated : previous)
+                                                                 setLatestTask(previous => previous?.id === updated.id ? updated : previous)
+                                                                 setHistory(previous => previous ? {
+                                                                     ...previous,
+                                                                     records: previous.records.map(item => item.id === updated.id ? updated : item)
+                                                                 } : previous)
+                                                             }}
                                                              onClose={() => setDetail(null)}/></Suspense>}
         {error && <div className="creation-error creation-alert" role="alert">{error}
             <button className="quiet-link" onClick={() => setRevision(value => value + 1)}>刷新状态</button>

@@ -32,6 +32,15 @@ abstract class InfrastructureTestSupport {
     protected com.aurora.imagehub.mapper.ImageMapper imageMapper;
 
     @MockitoBean
+    protected com.aurora.imagehub.mapper.QuotaUsageMapper quotaUsageMapper;
+
+    @MockitoBean
+    protected com.aurora.imagehub.mapper.UserCheckInMapper userCheckInMapper;
+
+    @MockitoBean
+    protected org.springframework.transaction.PlatformTransactionManager platformTransactionManager;
+
+    @MockitoBean
     protected RedissonClient redissonClient;
 
     @MockitoBean
