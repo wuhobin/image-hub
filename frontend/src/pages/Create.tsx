@@ -424,10 +424,21 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
               disabled={!app.user || busy || uncertain} onClick={() => referenceInput.current?.click()}><ImageSquare size={19} /></button>
             <div className="creation-model-option">
               <label className="visually-hidden" htmlFor="creation-model">生成模型</label>
-              <select className="format-select" id="creation-model" value={modelId} onChange={event => { setModelId(event.target.value); setSizeNotice('') }} disabled={!app.user || !models.length || busy || uncertain}>
+                <select className="format-select creation-model-select" id="creation-model" value={modelId}
+                        title={model ? `${model.name} · ${model.pointsCost} 积分/张` : undefined} onChange={event => {
+                    setModelId(event.target.value);
+                    setSizeNotice('')
+                }} disabled={!app.user || !models.length || busy || uncertain}>
+                    {model && <button type="button">
+                        <span className="creation-model-name">{model.name}</span>{' '}
+                        <span className="creation-model-cost">{model.pointsCost} 积分/张</span>
+                    </button>}
                   {!models.length && <option
                       value="">{app.initializing ? '正在加载模型…' : !app.user ? '登录后选择模型' : modelsLoading ? '正在加载模型…' : '暂无可用模型'}</option>}
-                {models.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                    {models.map(item => <option key={item.id} value={item.id}>
+                        <span className="creation-model-name">{item.name}</span>{' '}
+                        <span className="creation-model-cost">{item.pointsCost} 积分/张</span>
+                    </option>)}
               </select>
             </div>
             <CreationRatioPicker value={ratio} options={ratios} size={size} sizes={ratioSizes} onChange={changeRatio}

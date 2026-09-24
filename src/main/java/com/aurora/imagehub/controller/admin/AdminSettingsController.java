@@ -1,6 +1,8 @@
 package com.aurora.imagehub.controller.admin;
 
 import com.aurora.imagehub.model.param.admin.AdminSettingsParam;
+import com.aurora.imagehub.model.param.admin.InvitationSettingsParam;
+import com.aurora.imagehub.model.vo.InvitationSettingsVO;
 import com.aurora.imagehub.model.param.admin.CheckInSettingsParam;
 import com.aurora.imagehub.model.vo.admin.CheckInSettingsVO;
 import com.aurora.imagehub.model.vo.admin.AdminSettingsVO;
@@ -32,6 +34,23 @@ public class AdminSettingsController {
     @PutMapping("/check-in")
     public Result<CheckInSettingsVO> updateCheckInSettings(@Valid @RequestBody CheckInSettingsParam param) {
         return Result.data(systemSettingsService.updateCheckInSettings(param.getDailyPoints().intValueExact(), param.getBonusPoints().intValueExact()));
+    }
+
+    /**
+     * 读取邀请开关及双方奖励。
+     */
+    @GetMapping("/invitation")
+    public Result<InvitationSettingsVO> invitationSettings() {
+        return Result.data(systemSettingsService.invitationSettings());
+    }
+
+    /**
+     * 配置校验整数边界，保存不重算既有奖励。
+     */
+    @PutMapping("/invitation")
+    public Result<InvitationSettingsVO> updateInvitationSettings(@Valid @RequestBody InvitationSettingsParam param) {
+        return Result.data(systemSettingsService.updateInvitationSettings(param.getEnabled(),
+                param.getInviterPoints().intValueExact(), param.getInviteePoints().intValueExact()));
     }
 
     /** 返回管理页面所需的配置，管理员身份与配置有效性由业务层校验。 */

@@ -26,6 +26,9 @@ abstract class InfrastructureTestSupport {
 
     // Infrastructure-only contexts deliberately exclude database auto-configuration.
     @MockitoBean
+    protected com.aurora.imagehub.mapper.UserInvitationMapper userInvitationMapper;
+
+    @MockitoBean
     protected com.aurora.imagehub.mapper.UserMapper userMapper;
 
     @MockitoBean

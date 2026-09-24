@@ -5,6 +5,10 @@ import com.aurora.imagehub.mapper.admin.SystemSettingsMapper;
 import com.aurora.imagehub.model.entity.admin.SystemSettings;
 import com.aurora.imagehub.model.vo.admin.AdminSettingsVO;
 import com.aurora.imagehub.model.vo.admin.CheckInSettingsVO;
+import com.aurora.imagehub.model.vo.InvitationSettingsVO;
+
+import java.util.Map;
+import java.util.stream.Collectors;
 import com.aurora.imagehub.service.admin.AdminAccountService;
 import com.aurora.imagehub.service.admin.SystemSettingsService;
 import com.aurora.starter.webmvc.exception.BizException;
@@ -17,6 +21,9 @@ import org.springframework.transaction.annotation.Transactional;
 import static com.aurora.imagehub.constants.SystemSettingsConstants.FREE_UPLOAD_QUOTA;
 import static com.aurora.imagehub.constants.SystemSettingsConstants.CHECK_IN_DAILY_POINTS;
 import static com.aurora.imagehub.constants.SystemSettingsConstants.CHECK_IN_BONUS_POINTS;
+import static com.aurora.imagehub.constants.SystemSettingsConstants.INVITATION_ENABLED;
+import static com.aurora.imagehub.constants.SystemSettingsConstants.INVITATION_INVITER_POINTS;
+import static com.aurora.imagehub.constants.SystemSettingsConstants.INVITATION_INVITEE_POINTS;
 
 /** 按配置键读取全局设置；管理接口只更新代码预置的配置项，不开放任意键值写入。 */
 @Service
@@ -123,11 +130,58 @@ public class SystemSettingsServiceImpl extends ServiceImpl<SystemSettingsMapper,
     }
 
     /**
+     * 三项规则由同一查询读取，避免并发调价得到不同版本的双方金额；总开关无需等待缓存过期。
+     */
+    @Override
+    public InvitationSettingsVO invitationRewards() {
+        Map<String, String> values = list(Wrappers.<SystemSettings>lambdaQuery()
+                .in(SystemSettings::getConfigKey, INVITATION_ENABLED, INVITATION_INVITER_POINTS, INVITATION_INVITEE_POINTS))
+                .stream().collect(Collectors.toMap(SystemSettings::getConfigKey, SystemSettings::getConfigValue));
+        if (values.size() != 3 || !java.util.Set.of("true", "false").contains(values.get(INVITATION_ENABLED))) {
+            throw new BizException(503, "邀请配置缺失或无效，请联系管理员");
+        }
+        InvitationSettingsVO result = new InvitationSettingsVO();
+        result.setEnabled(Boolean.parseBoolean(values.get(INVITATION_ENABLED)));
+        result.setInviterPoints(positivePoints(values.get(INVITATION_INVITER_POINTS)));
+        result.setInviteePoints(positivePoints(values.get(INVITATION_INVITEE_POINTS)));
+        return result;
+    }
+
+    /**
+     * 管理端与注册读取同一份数据库配置。
+     */
+    @Override
+    public InvitationSettingsVO invitationSettings() {
+        adminAccountService.currentAdmin();
+        return invitationRewards();
+    }
+
+    /**
+     * 三项在同一事务内更新；邀请配置直接读库，无需写入二级缓存。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public InvitationSettingsVO updateInvitationSettings(boolean enabled, int inviterPoints, int inviteePoints) {
+        adminAccountService.currentAdmin();
+        if (inviterPoints < 1 || inviteePoints < 1) throw new BizException(400, "邀请奖励必须为正整数");
+        // 固定更新顺序，多个管理员并发保存时避免反向加锁。
+        String[] keys = {INVITATION_ENABLED, INVITATION_INVITER_POINTS, INVITATION_INVITEE_POINTS};
+        String[] values = {Boolean.toString(enabled), Integer.toString(inviterPoints), Integer.toString(inviteePoints)};
+        for (int index = 0; index < keys.length; index++) {
+            SystemSettings settings = requireSettings(keys[index]);
+            settings.setConfigValue(values[index]);
+            if (systemSettingsMapper.updateById(settings) != 1)
+                throw new BizException(409, "配置保存失败，请刷新后重试");
+        }
+        return invitationRewards();
+    }
+
+    /**
      * 数据库误配置不能产生零积分或负积分奖励。
      */
     private int positivePoints(String value) {
         int points = parseFreeUploadQuota(value);
-        if (points == 0) throw new BizException(503, "签到积分配置无效，请联系管理员");
+        if (points == 0) throw new BizException(503, "奖励积分配置无效，请联系管理员");
         return points;
     }
 

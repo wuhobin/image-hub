@@ -15,6 +15,7 @@ import AdminUsers from './AdminUsers'
 import AdminSettings from './AdminSettings'
 import AdminModels from './AdminModels'
 import AdminCreations from './AdminCreations'
+import AdminInvitations from './AdminInvitations'
 import './admin.css'
 
 const message = (error: unknown) => error instanceof Error ? error.message : '请求失败，请稍后重试'
@@ -75,6 +76,7 @@ export default function AdminApp() {
       <Route path="settings" element={<AdminSettings />} />
       <Route path="models" element={<AdminModels />} />
         <Route path="creations" element={<AdminCreations/>}/>
+        <Route path="invitations" element={<AdminInvitations/>}/>
       <Route path="*" element={<div className="admin-state"><h1>页面未找到</h1><p>这个管理页面不存在。</p><Link className="button button-primary" to="/admin/users">返回用户管理</Link></div>} />
     </Route>
   </Routes>

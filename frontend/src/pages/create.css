@@ -513,7 +513,11 @@ body:has(.creation-records-page) {
 .creation-reference-preview:focus-visible img {
     opacity: .6;
 }
-.creation-model-option { flex: 0 1 auto; max-width: 176px; }
+
+.creation-model-option {
+    flex: 0 1 auto;
+    max-width: min(300px, 100%);
+}
 .creation-resolution-panel { margin-top: 14px; padding-top: 14px; border-top: 1px solid #ffffff12; }
 .creation-resolution-heading { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 10px; color: #a6a6a6; font-size: 11px; font-variant-numeric: tabular-nums; }
 .creation-resolution-tiers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
@@ -536,6 +540,63 @@ body:has(.creation-records-page) {
   .creation-form select { appearance: none; }
 }
 @supports (appearance: base-select) {
+    /* 复用原生模型选择，支持富文本时将实际价格独立呈现；其余浏览器仍显示完整选项文字。 */
+    .creation-form .creation-model-select::picker(select) {
+        min-width: min(320px, calc(100vw - 24px));
+        max-width: calc(100vw - 24px);
+        padding: 6px;
+        border-radius: 12px;
+    }
+
+    .creation-model-select option {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 12px;
+        border-radius: 8px;
+    }
+
+    .creation-model-select .creation-model-name {
+        flex: 1;
+        min-width: 0;
+        overflow-wrap: anywhere;
+        white-space: normal;
+    }
+
+    .creation-model-select .creation-model-cost {
+        flex-shrink: 0;
+        padding: 4px 8px;
+        border-radius: 6px;
+        background: #9bd7ba12;
+        color: #b5d9c7;
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
+
+    .creation-model-select > button {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        min-width: 0;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        text-align: left;
+    }
+
+    .creation-model-select > button .creation-model-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .creation-form .creation-model-select option::checkmark {
+        order: 3;
+        color: #b5d9c7;
+    }
   .creation-form select::picker(select) { background: #0c0d0f; border-color: #292b30; color: #d4d6da; }
   .creation-form select option:checked { background: #222428; color: #f0f3f9; }
   .creation-form select option:hover, .creation-form select option:focus { background: #2c2e33; color: #fff; }

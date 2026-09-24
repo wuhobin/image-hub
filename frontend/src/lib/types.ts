@@ -36,7 +36,7 @@ export type Page<T> = {
 export type ImageList = { page: Page<ImageRecord>; totalBytes: number }
 export type QuotaUsage = {
   id: number
-    scene: 'IMAGE_UPLOAD' | 'AI_GENERATION' | 'DAILY_CHECK_IN' | 'CHECK_IN_BONUS'
+    scene: 'IMAGE_UPLOAD' | 'AI_GENERATION' | 'DAILY_CHECK_IN' | 'CHECK_IN_BONUS' | 'INVITATION_REWARD' | 'INVITEE_REWARD'
     direction: 'INCOME' | 'EXPENSE'
   bizId: string
   amount: number
@@ -75,3 +75,34 @@ export type SharedCreation = {
 }
 
 export type CreationPreset = { modelId: number; size: string; quality: string }
+
+export type InvitationSettings = { enabled: boolean; inviterPoints: number; inviteePoints: number }
+export type InvitationInfo = { inviteCode: string | null; inviterName: string | null; rewards: InvitationSettings }
+export type InvitationStatus = 'PAID' | 'PENDING' | 'REJECTED' | 'DISABLED'
+export const invitationStatusLabels: Record<InvitationStatus, string> = {
+    PENDING: '待审核', PAID: '已到账', REJECTED: '未通过', DISABLED: '活动暂停',
+}
+export type InvitationRecord = {
+    id: string;
+    counterpartyName: string | null;
+    inviter: boolean;
+    points: number;
+    status: InvitationStatus;
+    createTime: string
+}
+export type AdminInvitation = {
+    id: string;
+    inviterId: string;
+    inviteeId: string;
+    inviterName: string | null;
+    inviteeName: string | null
+    registerIp: string;
+    inviterPoints: number;
+    inviteePoints: number;
+    status: InvitationStatus;
+    riskReason: string | null
+    reviewerId: string | null;
+    reviewNote: string | null;
+    createTime: string;
+    updateTime: string
+}

@@ -5,13 +5,14 @@ import { ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight'
 import { Check } from '@phosphor-icons/react/dist/csr/Check'
 import { adminApi } from '../../lib/admin/api'
 import type { AdminSettings } from '../../lib/admin/api'
+import {InvitationSettings} from './InvitationSettings'
 
 // 仅注册已接入的配置分类；各分类组件独立负责表单、校验和保存。
 const settingsGroups = [{key: 'upload', label: '积分设置', Panel: UploadSettings}, {
     key: 'check-in',
     label: '签到设置',
     Panel: CheckInSettings
-}]
+}, {key: 'invitation', label: '邀请设置', Panel: InvitationSettings}]
 
 const message = (error: unknown) => error instanceof Error ? error.message : '配置读取失败，请稍后重试'
 

@@ -1,5 +1,5 @@
 import type { ImageRecord } from './types'
-import {fileError} from './rules'
+import {fileError} from './rules.ts'
 
 export const TOKEN_KEY = 'imagehub.token'
 export const SESSION_EXPIRED = 'imagehub:session-expired'

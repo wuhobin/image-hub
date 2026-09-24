@@ -8,6 +8,7 @@ import com.aurora.imagehub.mapper.ImageMapper;
 import com.aurora.imagehub.model.entity.ImageFile;
 import com.aurora.imagehub.service.ImageFileService;
 import com.aurora.imagehub.service.UserAccountService;
+import com.aurora.imagehub.service.UserInvitationService;
 import com.aurora.imagehub.ratelimit.AttemptLimiter;
 import com.aurora.imagehub.cache.UploadQuotaCache;
 import com.aurora.imagehub.model.vo.LoginVO;
@@ -37,12 +38,19 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class UserAccountServiceImpl extends ServiceImpl<UserMapper, UserAccount> implements UserAccountService {
     private static final VerificationScene REGISTER = () -> "IMAGE_HUB_REGISTER";
+
     // 不存在的账户也执行 BCrypt 校验，减少用户名是否存在带来的耗时差异。
     private static final String DUMMY_HASH = BCrypt.hashpw("not-a-user-password", BCrypt.gensalt(12));
+
     private final UserMapper userMapper;
+
     private final ObjectProvider<MailVerificationService> mailVerificationServiceProvider;
+
     private final AttemptLimiter attemptLimiter;
+
     private final UploadQuotaCache uploadQuotaCache;
+
+    private final UserInvitationService userInvitationService;
 
     private final ImageMapper imageMapper;
 
@@ -61,14 +69,18 @@ public class UserAccountServiceImpl extends ServiceImpl<UserMapper, UserAccount>
                 MailContentType.TEXT));
     }
 
+    /**
+     * 邀请码错误不消费验证码；持久化任一步失败均回滚账号及奖励，缓存初始化在提交后尽力执行。
+     */
     @Override
-    public void register(String username, String email, String password, String code) {
+    public void register(String username, String email, String password, String code, String inviteCode, String clientIp) {
         username = username.trim();
         email = normalizeEmail(email);
         validatePassword(password);
         if (userMapper.countByUsername(username) > 0 || userMapper.countByEmail(email) > 0) {
             throw new BizException(409, "用户名或邮箱已被注册");
         }
+        userInvitationService.validateCode(inviteCode);
         attemptLimiter.check("register", email, 10, 300);
         if (!mailService().verifyAndConsume(new MailVerificationVerifyRequest(email, REGISTER, code))) {
             throw new BizException(400, "验证码错误或已过期，请重新获取");
@@ -77,11 +89,14 @@ public class UserAccountServiceImpl extends ServiceImpl<UserMapper, UserAccount>
         user.setUsername(username);
         user.setEmail(email);
         user.setPasswordHash(BCrypt.hashpw(password, BCrypt.gensalt(12)));
-        try {
-            userMapper.insert(user);
-        } catch (DuplicateKeyException e) {
-            throw new BizException(409, "用户名或邮箱已被注册");
-        }
+        new TransactionTemplate(platformTransactionManager).executeWithoutResult(status -> {
+            try {
+                userMapper.insert(user);
+            } catch (DuplicateKeyException e) {
+                throw new BizException(409, "用户名或邮箱已被注册");
+            }
+            userInvitationService.recordRegistration(user.getId(), inviteCode, clientIp);
+        });
         uploadQuotaCache.initialize(user.getId());
     }
 

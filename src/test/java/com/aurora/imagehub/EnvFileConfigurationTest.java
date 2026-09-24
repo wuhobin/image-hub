@@ -52,6 +52,28 @@ class EnvFileConfigurationTest {
                 });
     }
 
+
+    /**
+     * 生产环境只信任回环或显式指定的代理，防止任意客户端转发头影响注册 IP。
+     */
+    @Test
+    void productionProxyTrustIsExplicit() throws IOException {
+        runner(writeEnv()).withPropertyValues("spring.profiles.active=prod").run(context -> {
+            assertThat(context.getEnvironment().getProperty("server.forward-headers-strategy")).isEqualTo("native");
+            var trusted = java.util.regex.Pattern.compile(context.getEnvironment().getRequiredProperty("server.tomcat.remoteip.internal-proxies"));
+            assertThat(trusted.matcher("127.0.0.1").matches()).isTrue();
+            assertThat(trusted.matcher("::1").matches()).isTrue();
+            assertThat(trusted.matcher("127x0x0x1").matches()).isFalse();
+            assertThat(trusted.matcher("198.51.100.8").matches()).isFalse();
+            assertThat(trusted.matcher("172.19.0.1").matches()).isFalse();
+        });
+        runner(writeEnv()).withPropertyValues("spring.profiles.active=prod", "TRUSTED_PROXY_REGEX=172[.]19[.]0[.]1").run(context -> {
+            var trusted = java.util.regex.Pattern.compile(context.getEnvironment().getRequiredProperty("server.tomcat.remoteip.internal-proxies"));
+            assertThat(trusted.matcher("172.19.0.1").matches()).isTrue();
+            assertThat(trusted.matcher("172.19.0.2").matches()).isFalse();
+        });
+    }
+
     private Path writeEnv() throws IOException {
         return Files.writeString(directory.resolve("test.env"), """
                 SERVER_PORT=19090

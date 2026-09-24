@@ -22,4 +22,10 @@ public class RegisterParam {
 
     @NotBlank @Pattern(regexp = "[0-9]{6}")
     private String code;
+
+    /**
+     * 选填；具体有效性由服务层校验，错误时保留邮箱验证码供纠正。
+     */
+    @Size(max = 64)
+    private String inviteCode;
 }

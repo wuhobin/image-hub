@@ -9,6 +9,11 @@ spring:
       add-mappings: false
 
 server:
+  # 仅信任显式配置的代理地址；Nginx 必须覆盖 X-Forwarded-For，禁止信任任意客户端头。
+  forward-headers-strategy: native
+  tomcat:
+    remoteip:
+      internal-proxies: '${TRUSTED_PROXY_REGEX:127[.]0[.]0[.]1|0:0:0:0:0:0:0:1|::1}'
   error:
     include-message: never
     include-binding-errors: never

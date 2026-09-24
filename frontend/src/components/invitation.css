@@ -1,0 +1,255 @@
+.profile-invitation {
+    --profile-accent: var(--profile-income);
+    --accent: var(--profile-income);
+    padding: 24px 26px;
+    border-radius: 0 0 16px 16px;
+}
+
+.invitation-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 18px;
+}
+
+.invitation-heading h2 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 10px;
+    font-size: 15px;
+    font-weight: 500;
+}
+
+.invitation-heading h2 svg {
+    color: var(--accent);
+}
+
+.invitation-heading p, .invitation-help, .invitation-empty {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.8;
+}
+
+.invitation-heading p {
+    margin: 0;
+    text-wrap: pretty;
+}
+
+.invitation-heading button {
+    white-space: nowrap;
+    padding: 2px 0;
+    font-size: 11px;
+    color: var(--accent);
+}
+
+.invitation-share {
+    display: grid;
+    gap: 18px;
+    margin: 24px 0 18px;
+    padding: 20px;
+    border: 1px solid var(--profile-border);
+    border-radius: 12px;
+    background: var(--profile-raised);
+}
+
+.invitation-share label {
+    display: block;
+    color: var(--muted);
+    font-size: 11px;
+    margin-bottom: 9px;
+}
+
+.invitation-copy {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.invitation-copy input {
+    min-width: 0;
+    width: 100%;
+    height: 40px;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 11px;
+    border: 0;
+    outline: none;
+    box-shadow: none;
+    background: var(--bg);
+    color: var(--profile-text);
+    border-radius: 7px;
+    padding: 10px 12px;
+    transition: background-color .2s, color .2s;
+}
+
+.invitation-copy input:focus-visible {
+    background: #30363f;
+    color: #fff;
+}
+
+.invitation-copy input::selection {
+    background: #9bd7ba;
+    color: #12271e;
+}
+
+.invitation-copy button {
+    flex-shrink: 0;
+    min-height: 40px;
+    padding: 9px 12px;
+    font-size: 11px;
+    gap: 7px;
+    background: var(--profile-surface);
+    color: var(--accent);
+    border-color: var(--profile-border);
+}
+
+.invitation-copy button:is(:hover, :focus-visible):not(:disabled) {
+    background: #30363f;
+    border-color: #ffffff30;
+    color: var(--accent);
+}
+
+.invitation-notice {
+    margin: 10px 0;
+    font-size: 12px;
+    color: var(--accent);
+}
+
+.invitation-help {
+    font-size: 11px;
+}
+
+.profile-invitation h3 {
+    font-size: 12px;
+    font-weight: 500;
+    margin: 26px 0 6px;
+}
+
+.invitation-empty {
+    padding: 24px 0;
+}
+
+.invitation-records {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.invitation-records li {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 16px 0;
+    border-bottom: 1px solid var(--profile-divider);
+    font-size: 12px;
+}
+
+.invitation-records li > div {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    min-width: 0;
+}
+
+.invitation-records li > div:last-child {
+    text-align: right;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+}
+
+.invitation-records strong {
+    overflow-wrap: anywhere;
+    font-weight: 400;
+}
+
+.invitation-records time {
+    color: var(--muted);
+    font-size: 10px;
+}
+
+.invitation-status {
+    font-size: 11px;
+}
+
+.invitation-status.is-paid {
+    color: var(--profile-income);
+}
+
+.invitation-status.is-pending {
+    color: #e8c689;
+}
+
+.invitation-status.is-rejected, .invitation-status.is-disabled {
+    color: var(--muted);
+}
+
+.invitation-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-top: 16px;
+    font-size: 11px;
+}
+
+.invitation-pagination > span:first-child {
+    margin-right: auto;
+    color: var(--muted);
+}
+
+.invitation-pagination .text-button {
+    font-size: 11px;
+    padding: 7px 2px;
+}
+
+.invitation-loading {
+    display: grid;
+    gap: 16px;
+    padding: 26px 0;
+}
+
+.invitation-loading .skeleton-block {
+    height: 40px;
+    width: 100%;
+}
+
+.auth-invitation-summary {
+    font-size: 12px;
+    line-height: 1.8;
+    color: var(--muted);
+}
+
+@media (max-width: 540px) {
+    .profile-invitation {
+        padding: 22px 20px;
+    }
+
+    .invitation-heading {
+        gap: 10px;
+    }
+
+    .invitation-share {
+        padding: 14px;
+        margin-inline: -2px;
+    }
+
+    .invitation-copy {
+        gap: 8px;
+    }
+
+    .invitation-copy input {
+        padding: 9px;
+    }
+
+    .invitation-copy button {
+        padding: 9px;
+    }
+
+    .invitation-copy button svg {
+        display: none;
+    }
+
+    .invitation-pagination {
+        gap: 9px;
+    }
+}

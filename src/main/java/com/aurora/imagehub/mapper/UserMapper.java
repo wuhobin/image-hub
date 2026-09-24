@@ -38,4 +38,22 @@ public interface UserMapper extends BaseMapper<UserAccount> {
     @Select("SELECT COUNT(*) FROM hub_user WHERE email = #{email}")
     long countByEmail(String email);
 
+    /**
+     * 查询有效邀请人，无效邀请码不允许继续提交注册。
+     */
+    @Select("SELECT * FROM hub_user WHERE invite_code = #{code} AND deleted = 0")
+    UserAccount findByInviteCode(String code);
+
+    /**
+     * 注册事务内锁定邀请人，串行化集中注册计数，不能在事务外调用。
+     */
+    @Select("SELECT * FROM hub_user WHERE invite_code = #{code} AND deleted = 0 FOR UPDATE")
+    UserAccount lockByInviteCode(String code);
+
+    /**
+     * 只填充空邀请码，已有邀请码永不覆盖；唯一性包括已删除账号。
+     */
+    @Update("UPDATE hub_user SET invite_code = #{code}, update_time = CURRENT_TIMESTAMP WHERE id = #{id} AND invite_code IS NULL AND deleted = 0")
+    int initializeInviteCode(@Param("id") long id, @Param("code") String code);
+
 }

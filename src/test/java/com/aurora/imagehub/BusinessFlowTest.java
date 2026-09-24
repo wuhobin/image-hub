@@ -100,6 +100,9 @@ class BusinessFlowTest {
         SettingsCacheTestConfiguration.resetCache(twoLevelCache);
         jdbcTemplate.update("UPDATE hub_settings SET config_value='100', deleted=0 WHERE config_key='upload.free-total'");
         jdbcTemplate.update("DELETE FROM hub_quota_usage");
+        jdbcTemplate.update("DELETE FROM hub_user_invitation");
+        jdbcTemplate.update("UPDATE hub_settings SET config_value='true', deleted=0 WHERE config_key='invitation.enabled'");
+        jdbcTemplate.update("UPDATE hub_settings SET config_value='20', deleted=0 WHERE config_key IN ('invitation.inviter-points','invitation.invitee-points')");
         jdbcTemplate.update("DELETE FROM hub_image");
         jdbcTemplate.update("DELETE FROM hub_ai_generation");
         jdbcTemplate.update("UPDATE hub_ai_model SET points_cost=1");
@@ -1873,6 +1876,158 @@ class BusinessFlowTest {
         var requestHeaders = headers(token);
         requestHeaders.setContentType(MediaType.MULTIPART_FORM_DATA);
         return testRestTemplate.postForObject("/api/app/auth/avatar", new HttpEntity<>(body, requestHeaders), JsonNode.class);
+    }
+
+
+    /**
+     * 注册、奖励和归属同事务；无效码保留验证码，普通用户只看本人的记录。
+     */
+    @Test
+    void invitationRegistrationIsAtomicAndPrivate() {
+        register("invite-owner", "invite-owner@example.test");
+        String owner = login("invite-owner");
+        String code = get("/api/app/invitations", owner).path("data").path("inviteCode").asText();
+        assertThat(code).matches("[a-f0-9]{32}");
+        assertThat(get("/api/app/invitations", owner).path("data").path("inviteCode").asText()).isEqualTo(code);
+        assertThat(get("/api/app/auth/invitation?code=" + code, null).path("data").path("inviterName").asText()).isEqualTo("invite-owner");
+        assertThat(get("/api/app/invitations", null).path("code").asInt()).isEqualTo(401);
+
+        String email = "invite-new@example.test";
+        post("/api/app/auth/email-code", Map.of("email", email), null);
+        var request = new java.util.HashMap<String, Object>(Map.of("username", "invite-new", "email", email,
+                "password", "secret123", "code", "654321", "inviteCode", "invalid"));
+        assertThat(post("/api/app/auth/register", request, null).path("code").asInt()).isEqualTo(40021);
+        assertThat(userMapper.findByUsername("invite-new")).isNull();
+        assertThat(codes).containsKey(email);
+        request.put("inviteCode", code.toUpperCase(java.util.Locale.ROOT));
+        request.put("inviterPoints", 999999);
+        request.put("clientIp", "forged");
+        assertThat(post("/api/app/auth/register", request, null).path("code").asInt()).isEqualTo(200);
+        assertThat(post("/api/app/auth/register", request, null).path("code").asInt()).isEqualTo(409);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_user_invitation", Long.class)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_quota_usage WHERE scene IN ('INVITATION_REWARD','INVITEE_REWARD')", Long.class)).isEqualTo(2);
+        assertThat(jdbcTemplate.queryForObject("SELECT register_ip FROM hub_user_invitation", String.class)).isNotEqualTo("forged");
+        String invited = login("invite-new");
+        for (String token : List.of(owner, invited)) {
+            assertThat(get("/api/app/images/quota", token).path("data").path("total").asInt()).isEqualTo(120);
+            JsonNode history = get("/api/app/invitations/records", token).path("data");
+            assertThat(history.path("total").asInt()).isEqualTo(1);
+            assertThat(history.path("records").get(0).path("points").asInt()).isEqualTo(20);
+            assertThat(history.toString()).doesNotContain("registerIp", "email", "password", "reviewerId");
+        }
+        assertThat(get("/api/app/invitations/records?page=0", owner).path("code").asInt()).isEqualTo(400);
+        register("invite-outsider", "invite-outsider@example.test");
+        assertThat(get("/api/app/invitations/records", login("invite-outsider")).path("data").path("total").asInt()).isZero();
+        assertThat(post("/api/app/invitations", Map.of("inviteCode", code), invited).path("code").asInt()).isNotEqualTo(200);
+        assertThat(get("/api/admin/invitations", owner).path("code").asInt()).isEqualTo(401);
+
+        doThrow(new org.springframework.dao.DataAccessResourceFailureException("simulated second income failure"))
+                .when(quotaUsageMapper).insert(argThat((com.aurora.imagehub.model.entity.QuotaUsage usage) -> "INVITEE_REWARD".equals(usage.getScene())));
+        assertThat(invitedRegistration("invite-rollback", code).path("code").asInt()).isEqualTo(500);
+        assertThat(userMapper.findByUsername("invite-rollback")).isNull();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_user_invitation", Long.class)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_quota_usage", Long.class)).isEqualTo(2);
+        reset(quotaUsageMapper);
+        assertThat(invitedRegistration("invite-rollback", code).path("code").asInt()).isEqualTo(200);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_quota_usage", Long.class)).isEqualTo(4);
+    }
+
+    /**
+     * 集中注册进入审核；调价和停用不修改历史快照，重复审批不会重复发奖，拒绝仍保留账号。
+     */
+    @Test
+    void invitationReviewUsesSnapshotsAndIsIdempotent() {
+        register("review-owner", "review-owner@example.test");
+        String owner = login("review-owner");
+        String code = get("/api/app/invitations", owner).path("data").path("inviteCode").asText();
+        for (int index = 1; index <= 4; index++)
+            assertThat(invitedRegistration("review-new-" + index, code).path("code").asInt()).isEqualTo(200);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_user_invitation WHERE status='PAID'", Long.class)).isEqualTo(2);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_user_invitation WHERE status='PENDING'", Long.class)).isEqualTo(2);
+        assertThat(get("/api/app/images/quota", login("review-new-3")).path("data").path("total").asInt()).isEqualTo(100);
+        jdbcTemplate.update("DELETE FROM hub_admin WHERE username='invite-review-admin'");
+        jdbcTemplate.update("INSERT INTO hub_admin(username,password_hash) VALUES('invite-review-admin',?)", BCrypt.hashpw("secret123", BCrypt.gensalt(4)));
+        String admin = post("/api/admin/auth/login", Map.of("username", "invite-review-admin", "password", "secret123"), null).path("data").path("token").asText();
+        String path = "/api/admin/settings/invitation";
+        assertThat(sharingRequest(path, HttpMethod.PUT, Map.of("enabled", true, "inviterPoints", 0, "inviteePoints", 20), admin).path("code").asInt()).isEqualTo(400);
+        assertThat(sharingRequest(path, HttpMethod.PUT, Map.of("enabled", true, "inviterPoints", 1.5, "inviteePoints", 20), admin).path("code").asInt()).isEqualTo(400);
+        assertThat(sharingRequest(path, HttpMethod.PUT, Map.of("enabled", true, "inviterPoints", 2147483648L, "inviteePoints", 20), admin).path("code").asInt()).isEqualTo(400);
+        assertThat(sharingRequest(path, HttpMethod.PUT, Map.of("enabled", false, "inviterPoints", 70, "inviteePoints", 80), owner).path("code").asInt()).isEqualTo(401);
+        assertThat(sharingRequest(path, HttpMethod.PUT, Map.of("enabled", false, "inviterPoints", 70, "inviteePoints", 80), admin).path("code").asInt()).isEqualTo(200);
+        assertThat(get("/api/app/auth/invitation?code=" + code, null).path("data").path("rewards").path("enabled").asBoolean()).isFalse();
+        assertThat(invitedRegistration("review-disabled", code).path("code").asInt()).isEqualTo(200);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_user_invitation WHERE status='DISABLED'", Long.class)).isEqualTo(1);
+
+        JsonNode pending = get("/api/admin/invitations", admin).path("data");
+        assertThat(pending.path("total").asInt()).isEqualTo(2);
+        JsonNode entry = pending.path("records").get(0);
+        String approve = "/api/admin/invitations/" + entry.path("id").asText() + "/review";
+        String reject = "/api/admin/invitations/" + pending.path("records").get(1).path("id").asText() + "/review";
+        assertThat(entry.path("registerIp").asText()).isNotBlank();
+        assertThat(entry.path("inviterPoints").asInt()).isEqualTo(20);
+        assertThat(post(approve, Map.of("approved", true), owner).path("code").asInt()).isEqualTo(401);
+        doThrow(new org.springframework.dao.DataAccessResourceFailureException("review second income failure"))
+                .when(quotaUsageMapper).insert(argThat((com.aurora.imagehub.model.entity.QuotaUsage usage) -> "INVITEE_REWARD".equals(usage.getScene())));
+        assertThat(post(approve, Map.of("approved", true), admin).path("code").asInt()).isEqualTo(500);
+        assertThat(get("/api/admin/invitations", admin).path("data").path("total").asInt()).isEqualTo(2);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_quota_usage", Long.class)).isEqualTo(4);
+        reset(quotaUsageMapper);
+        for (int attempt = 0; attempt < 2; attempt++)
+            assertThat(post(approve, Map.of("approved", true, "note", "确认正常"), admin).path("code").asInt()).isEqualTo(200);
+        assertThat(post(approve, Map.of("approved", false), admin).path("code").asInt()).isEqualTo(409);
+        for (int attempt = 0; attempt < 2; attempt++)
+            assertThat(post(reject, Map.of("approved", false), admin).path("code").asInt()).isEqualTo(200);
+        assertThat(post(reject, Map.of("approved", true), admin).path("code").asInt()).isEqualTo(409);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_quota_usage", Long.class)).isEqualTo(6);
+        assertThat(jdbcTemplate.queryForObject("SELECT MAX(amount) FROM hub_quota_usage", Integer.class)).isEqualTo(20);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_user WHERE username LIKE 'review-new-%' AND deleted=0", Long.class)).isEqualTo(4);
+        assertThat(sharingRequest(path, HttpMethod.PUT, Map.of("enabled", true, "inviterPoints", 70, "inviteePoints", 80), admin).path("code").asInt()).isEqualTo(200);
+        jdbcTemplate.update("UPDATE hub_user_invitation SET create_time=TIMESTAMPADD(MINUTE,-11,CURRENT_TIMESTAMP)");
+        assertThat(invitedRegistration("review-later", code).path("code").asInt()).isEqualTo(200);
+        assertThat(get("/api/app/images/quota", login("review-later")).path("data").path("total").asInt()).isEqualTo(180);
+        assertThat(get("/api/app/images/quota", login("review-disabled")).path("data").path("total").asInt()).isEqualTo(100);
+        assertThat(get("/api/admin/invitations?status=bogus", admin).path("code").asInt()).isEqualTo(400);
+    }
+
+    /**
+     * 真实并发注册只能有前两次自动到账；不同 IP 的成功注册单独统计。
+     */
+    @Test
+    void invitationConcurrentRegistrationsCannotBypassReview() throws Exception {
+        register("parallel-owner", "parallel-owner@example.test");
+        String code = get("/api/app/invitations", login("parallel-owner")).path("data").path("inviteCode").asText();
+        try (var executor = java.util.concurrent.Executors.newFixedThreadPool(5)) {
+            var start = new java.util.concurrent.CountDownLatch(1);
+            var futures = new java.util.ArrayList<java.util.concurrent.Future<?>>();
+            for (int index = 0; index < 5; index++) {
+                String username = "parallel-invite-" + index;
+                String email = username + "@example.test";
+                codes.put(email, "654321");
+                futures.add(executor.submit(() -> {
+                    start.await();
+                    userAccountService.register(username, email, "secret123", "654321", code, "198.51.100.1");
+                    return null;
+                }));
+            }
+            start.countDown();
+            for (var future : futures) future.get(30, java.util.concurrent.TimeUnit.SECONDS);
+        }
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_user_invitation WHERE status='PAID'", Long.class)).isEqualTo(2);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_user_invitation WHERE status='PENDING'", Long.class)).isEqualTo(3);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_quota_usage", Long.class)).isEqualTo(4);
+        codes.put("parallel-other@example.test", "654321");
+        userAccountService.register("parallel-other", "parallel-other@example.test", "secret123", "654321", code, "198.51.100.2");
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_user_invitation WHERE status='PAID'", Long.class)).isEqualTo(3);
+    }
+
+    /**
+     * 走真实验证码与注册 HTTP 链路，只替换外部邮件投递。
+     */
+    private JsonNode invitedRegistration(String username, String inviteCode) {
+        String email = username + "@example.test";
+        assertThat(post("/api/app/auth/email-code", Map.of("email", email), null).path("code").asInt()).isEqualTo(200);
+        return post("/api/app/auth/register", Map.of("username", username, "email", email, "password", "secret123",
+                "code", "654321", "inviteCode", inviteCode), null);
     }
 
     private HttpHeaders headers(String token) {

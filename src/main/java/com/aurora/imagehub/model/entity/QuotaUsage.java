@@ -18,10 +18,12 @@ public class QuotaUsage {
 
     private Long userId;
 
-    /** IMAGE_UPLOAD、AI_GENERATION 为消费，DAILY_CHECK_IN、CHECK_IN_BONUS 为签到奖励。 */
+    /**
+     * IMAGE_UPLOAD、AI_GENERATION 为消费，DAILY_CHECK_IN、CHECK_IN_BONUS 为签到，INVITATION_REWARD、INVITEE_REWARD 为邀请奖励。
+     */
     private String scene;
 
-    /** 计费图片 ID 或签到日期，同一用户、场景及业务编号只能记账一次。 */
+    /** 计费图片 ID、签到日期或邀请记录 ID，同一用户、场景及业务编号只能记账一次。 */
     private String bizId;
 
     /** 实际收支数量，正整数；预占与失败释放不写流水。 */

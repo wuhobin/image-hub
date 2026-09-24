@@ -39,13 +39,13 @@ public class QuotaUsageServiceImpl extends ServiceImpl<QuotaUsageMapper, QuotaUs
     }
 
     /**
-     * 签到与收入必须同事务落库；唯一业务键阻止重复发放，失败整体回滚。
+     * 奖励业务与收入必须同事务落库；唯一业务键阻止重复发放，失败整体回滚。
      */
     @Override
     @Transactional(propagation = Propagation.MANDATORY)
     public void recordIncome(long userId, String scene, String bizId, int amount, String description) {
-        if (amount < 1 || !java.util.Set.of("DAILY_CHECK_IN", "CHECK_IN_BONUS").contains(scene)) {
-            throw new IllegalArgumentException("签到积分或场景无效");
+        if (amount < 1 || !java.util.Set.of("DAILY_CHECK_IN", "CHECK_IN_BONUS", "INVITATION_REWARD", "INVITEE_REWARD").contains(scene)) {
+            throw new IllegalArgumentException("奖励积分或场景无效");
         }
         QuotaUsage usage = new QuotaUsage();
         usage.setUserId(userId);
@@ -54,7 +54,7 @@ public class QuotaUsageServiceImpl extends ServiceImpl<QuotaUsageMapper, QuotaUs
         usage.setAmount(amount);
         usage.setDirection("INCOME");
         usage.setDescription(description);
-        if (!save(usage)) throw new IllegalStateException("签到积分记录保存失败");
+        if (!save(usage)) throw new IllegalStateException("奖励积分记录保存失败");
     }
 
     /** 用户 ID 由登录态传入；不接受前端指定归属，不向外暴露实体。 */

@@ -10,6 +10,12 @@ public final class SystemSettingsConstants {
 
     public static final String CHECK_IN_BONUS_POINTS = "check-in.bonus-points";
 
+    public static final String INVITATION_ENABLED = "invitation.enabled";
+
+    public static final String INVITATION_INVITER_POINTS = "invitation.inviter-points";
+
+    public static final String INVITATION_INVITEE_POINTS = "invitation.invitee-points";
+
     /** 父项目二级缓存实例名，与 application.yml 中的实例配置保持一致。 */
     public static final String CACHE_NAME = "imageHubSettings";
 

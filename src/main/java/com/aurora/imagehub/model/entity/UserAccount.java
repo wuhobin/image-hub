@@ -17,8 +17,11 @@ import lombok.Setter;
 public class UserAccount {
     @TableId(type = IdType.AUTO)
     private Long id;
+
     private String username;
+
     private String email;
+
     private String passwordHash;
 
     /**
@@ -26,9 +29,15 @@ public class UserAccount {
      */
     private String avatarImageId;
 
+    /**
+     * 稳定的公开邀请标识，按需生成；不作为登录凭据。
+     */
+    private String inviteCode;
+
     /** 数据库生成创建时间；通用写入忽略调用方传入的时间。 */
     @TableField(insertStrategy = FieldStrategy.NEVER, updateStrategy = FieldStrategy.NEVER)
     private Date createTime;
+
     /** 数据库在业务字段实际变化时自动维护更新时间。 */
     @TableField(insertStrategy = FieldStrategy.NEVER, updateStrategy = FieldStrategy.NEVER)
     private Date updateTime;

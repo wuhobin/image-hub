@@ -11,7 +11,8 @@ import { LinkSimple } from '@phosphor-icons/react/dist/csr/LinkSimple'
 import { Ambient } from '../components/Ambient'
 import type { AppState } from '../App'
 import { passwordError } from '../lib/rules'
-import { api } from '../lib/api'
+import {api, ApiError} from '../lib/api'
+import type {InvitationInfo} from '../lib/types'
 
 export default function Auth({ app, mode }: { app: AppState; mode: 'login' | 'register' }) {
   const navigate = useNavigate()
@@ -20,6 +21,10 @@ export default function Auth({ app, mode }: { app: AppState; mode: 'login' | 're
     const destination = ['/', '/upload', '/history', '/profile', '/create', '/creations'].includes(location.state?.from) ? location.state.from : '/'
   const creationPrompt = typeof location.state?.creationPrompt === 'string' ? location.state.creationPrompt.slice(0, 4000) : ''
     const creationPreset = location.state?.creationPreset
+    const [inviteCode, setInviteCode] = useState('')
+    const [invitationInfo, setInvitationInfo] = useState<InvitationInfo | null>(null)
+    const [checkingInvitation, setCheckingInvitation] = useState(false)
+    const [invitationError, setInvitationError] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [email, setEmail] = useState('')
   const [sentEmail, setSentEmail] = useState('')
@@ -45,6 +50,39 @@ export default function Auth({ app, mode }: { app: AppState; mode: 'login' | 're
     setSending(false)
     return () => { requestVersion.current++ }
   }, [mode])
+    // 新链接覆盖旧归属，手动修改同步保存；最终以当前表单提交值为准。
+    useEffect(() => {
+        const incoming = new URLSearchParams(location.search).get('invite')
+        const value = incoming ?? sessionStorage.getItem('imagehub.invite-code') ?? ''
+        setInviteCode(value)
+        if (value) sessionStorage.setItem('imagehub.invite-code', value)
+        else sessionStorage.removeItem('imagehub.invite-code')
+    }, [location.search])
+
+    useEffect(() => {
+        if (!registering) return
+        const controller = new AbortController()
+        setInvitationInfo(null)
+        setInvitationError('')
+        setCheckingInvitation(true)
+        const timer = setTimeout(() => {
+            void api<InvitationInfo>('/auth/invitation?code=' + encodeURIComponent(inviteCode.trim()), {signal: controller.signal})
+                .then(result => {
+                    if (!controller.signal.aborted) setInvitationInfo(result)
+                })
+                .catch(error => {
+                    if (!controller.signal.aborted) setInvitationError(error instanceof Error ? error.message : '邀请信息读取失败')
+                })
+                .finally(() => {
+                    if (!controller.signal.aborted) setCheckingInvitation(false)
+                })
+        }, 350)
+        return () => {
+            clearTimeout(timer);
+            controller.abort()
+        }
+    }, [inviteCode, registering])
+
   useEffect(() => {
     if (countdown <= 0) return
     const timer = setTimeout(() => setCountdown(value => value - 1), 1000)
@@ -93,6 +131,7 @@ export default function Auth({ app, mode }: { app: AppState; mode: 'login' | 're
       if (sentEmail !== email.trim() || !sentEmail) next.code = '请先获取当前邮箱的验证码'
       else if (!/^[0-9]{6}$/.test(String(data.get('code')))) next.code = '请输入 6 位数字验证码'
       if (String(data.get('confirmPassword')) !== password) next.confirmPassword = '两次输入的密码不一致'
+        if (inviteCode.trim() && (checkingInvitation || !invitationInfo || invitationError)) next.inviteCode = invitationError || '请等待邀请码校验完成'
     }
     setErrors(next)
     if (Object.keys(next).length) {
@@ -104,9 +143,20 @@ export default function Auth({ app, mode }: { app: AppState; mode: 'login' | 're
     const version = requestVersion.current
     try {
       if (registering) {
-        await api<void>('/auth/register', { method: 'POST', body: JSON.stringify({ username, email: email.trim(), password, code: String(data.get('code')) }) })
+          await api<void>('/auth/register', {
+              method: 'POST',
+              body: JSON.stringify({
+                  username,
+                  email: email.trim(),
+                  password,
+                  code: String(data.get('code')),
+                  inviteCode: inviteCode.trim()
+              })
+          })
         if (version !== requestVersion.current) return
-        app.notify('注册成功，请输入用户名和密码登录')
+          sessionStorage.removeItem('imagehub.invite-code')
+          setInviteCode('')
+          app.notify(inviteCode.trim() ? '注册成功，请登录个人中心查看邀请奖励状态' : '注册成功，请输入用户名和密码登录')
           navigate('/login', {replace: true, state: {from: destination, username, creationPrompt, creationPreset}})
       } else {
         await app.authenticate(username, password)
@@ -115,7 +165,11 @@ export default function Auth({ app, mode }: { app: AppState; mode: 'login' | 're
           navigate(destination, {replace: true, state: {creationPrompt, creationPreset}})
       }
     } catch (error) {
-      if (version === requestVersion.current) setErrors(current => ({ ...current, form: error instanceof Error ? error.message : '请求失败，请重试' }))
+        if (version === requestVersion.current) {
+            const field = error instanceof ApiError && error.code === 40021 ? 'inviteCode' : 'form'
+            setErrors(current => ({...current, [field]: error instanceof Error ? error.message : '请求失败，请重试'}))
+            if (field === 'inviteCode') form.current?.querySelector<HTMLInputElement>('[name="inviteCode"]')?.focus()
+        }
     } finally {
       if (version === requestVersion.current) { submitting.current = false; setLoading(false) }
     }
@@ -148,8 +202,34 @@ export default function Auth({ app, mode }: { app: AppState; mode: 'login' | 're
           </>}
           <div className="field"><label htmlFor="password">密码</label><div className="password-field"><input id="password" name="password" type={showPassword ? 'text' : 'password'} placeholder={registering ? '设置密码，至少 6 位' : '请输入密码'} autoComplete={registering ? 'new-password' : 'current-password'} aria-invalid={!!errors.password} aria-describedby={errors.password ? 'password-error' : undefined} /><button type="button" className="icon-button" aria-label={showPassword ? '隐藏密码' : '显示密码'} onClick={() => setShowPassword(!showPassword)}>{showPassword ? <EyeSlash size={19} /> : <Eye size={19} />}</button></div>{error('password')}</div>
           {registering && <div className="field"><label htmlFor="confirmPassword">确认密码</label><input id="confirmPassword" name="confirmPassword" type={showPassword ? 'text' : 'password'} placeholder="再次输入密码" autoComplete="new-password" aria-invalid={!!errors.confirmPassword} aria-describedby={errors.confirmPassword ? 'confirmPassword-error' : undefined} />{error('confirmPassword')}</div>}
+            {registering && <div className="field">
+                <label htmlFor="inviteCode">邀请码（选填）</label>
+                <input id="inviteCode" name="inviteCode" value={inviteCode} maxLength={64} disabled={loading}
+                       autoComplete="off" spellCheck={false}
+                       placeholder="通过邀请链接自动填写，也可手动输入"
+                       aria-invalid={!!errors.inviteCode || (!!inviteCode.trim() && !!invitationError)}
+                       aria-describedby="invitation-help" onChange={event => {
+                    const value = event.target.value
+                    setInviteCode(value)
+                    setErrors(current => ({...current, inviteCode: ''}))
+                    if (value.trim()) sessionStorage.setItem('imagehub.invite-code', value)
+                    else sessionStorage.removeItem('imagehub.invite-code')
+                }}/>
+                <div id="invitation-help" className="auth-invitation-summary" aria-live="polite">
+                    {errors.inviteCode ? <span className="field-error">{errors.inviteCode}</span>
+                        : inviteCode.trim() && invitationError ? <span className="field-error">{invitationError}</span>
+                            : checkingInvitation ? '正在读取邀请信息…'
+                                : invitationInfo ? invitationInfo.rewards.enabled
+                                        ? <>{invitationInfo.inviterName ? '邀请人：' + invitationInfo.inviterName + '。' : ''}通过有效邀请注册，你额外获得 {invitationInfo.rewards.inviteePoints} 积分，邀请人获得 {invitationInfo.rewards.inviterPoints} 积分。集中注册的奖励需人工审核。</>
+                                        : '邀请奖励活动已暂停，本次注册没有邀请奖励，仍可正常创建账号。'
+                                    : '邀请活动信息暂不可用，不填写邀请码仍可正常注册。'}
+                    <br/>注册后无法补填或更换邀请人。不参与邀请可留空。
+                </div>
+            </div>}
           {error('form')}
-          <button className="button button-primary auth-submit" type="submit" disabled={loading || app.initializing}>{loading ? '正在进入…' : registering ? '创建账号' : '登录'}<ArrowRight size={18} /></button>
+            <button className="button button-primary auth-submit" type="submit"
+                    disabled={loading || app.initializing || (registering && !!inviteCode.trim() && (checkingInvitation || !!invitationError))}>{loading ? '正在进入…' : registering ? '创建账号' : '登录'}<ArrowRight
+                size={18}/></button>
         </form>
         <p className="auth-demo-note">{registering ? '注册成功后，请使用用户名和密码登录。' : '登录有效期为 3 天，请妥善保管账号密码。'}</p>
       </div>

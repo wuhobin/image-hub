@@ -1,6 +1,7 @@
 package com.aurora.imagehub.service.admin;
 
 import com.aurora.imagehub.model.entity.admin.SystemSettings;
+import com.aurora.imagehub.model.vo.InvitationSettingsVO;
 import com.aurora.imagehub.model.vo.admin.AdminSettingsVO;
 import com.aurora.imagehub.model.vo.admin.CheckInSettingsVO;
 import com.baomidou.mybatisplus.extension.service.IService;
@@ -34,4 +35,19 @@ public interface SystemSettingsService extends IService<SystemSettings> {
      * 原子修改两项正整数奖励，提交后刷新对应二级缓存。
      */
     CheckInSettingsVO updateCheckInSettings(int dailyPoints, int bonusPoints);
+
+    /**
+     * 一次数据库查询取得完整活动规则，开关和金额不受缓存延迟影响。
+     */
+    InvitationSettingsVO invitationRewards();
+
+    /**
+     * 管理员读取邀请活动配置。
+     */
+    InvitationSettingsVO invitationSettings();
+
+    /**
+     * 原子修改开关和双方正整数奖励，不改变历史邀请的金额快照。
+     */
+    InvitationSettingsVO updateInvitationSettings(boolean enabled, int inviterPoints, int inviteePoints);
 }

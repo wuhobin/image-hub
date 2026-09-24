@@ -1,4 +1,60 @@
 /* 后台独立色板，不改变前台主题与焦点约定。 */
+.invitation-toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 18px;
+}
+
+.invitation-toggle input {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--accent);
+}
+
+.admin-invitation-table {
+    min-width: 950px;
+}
+
+.admin-invitation-table td {
+    white-space: normal;
+    max-width: 260px;
+    overflow-wrap: anywhere;
+}
+
+.admin-invitation-table small {
+    display: block;
+    color: var(--muted);
+    margin-top: 6px;
+    line-height: 1.7;
+}
+
+.admin-invitation-actions {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    margin: 10px 0;
+}
+
+.admin-console .modal p {
+    line-height: 1.8;
+    margin-bottom: 14px;
+}
+
+.admin-console .modal textarea {
+    width: 100%;
+    font: inherit;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px;
+    resize: vertical;
+}
+
+.admin-console .modal textarea:focus-visible {
+    border-color: var(--accent);
+}
 .admin-shell, .admin-console {
     --bg: #0e1117;
     --surface: #151a23;

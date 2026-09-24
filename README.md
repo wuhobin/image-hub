@@ -54,6 +54,8 @@ mvn -s C:/personal-program/Maven/conf/settings.xml "-Dmaven.repo.local=C:/person
 
 每日签到、积分收入规则及升级脚本见 [签到说明](docs/check-in.md)。
 
+邀请注册、双方积分奖励、集中注册审核及升级脚本见 [邀请说明](docs/invitation.md)。
+
 ## MySQL 与 Redis
 
 正常运行需要可用的 MySQL 和 Redis。先创建 `image_hub` 数据库（字符集 `utf8mb4`），为应用账号授予该库所需权限。业务表脚本为 `deploy/db/schema.sql`，包含管理员表、用户表、图片表和系统配置表。应用不会自动建库或建表，首次运行需在配置的数据库执行该脚本。本机 `.env` 使用 `image-hub` 数据库（已初始化），与默认名 `image_hub` 不同。

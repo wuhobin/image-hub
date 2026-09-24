@@ -10,8 +10,10 @@ public interface UserAccountService extends IService<UserAccount> {
     /** 向尚未注册的邮箱发送注册验证码。 */
     void sendCode(String email);
 
-    /** 消费邮箱验证码并创建账户；注册成功不建立登录态。 */
-    void register(String username, String email, String password, String code);
+    /**
+     * 校验邀请码后消费邮箱验证码；账号、邀请关系及奖励原子提交，IP 由 HTTP 入口取得，不自动登录。
+     */
+    void register(String username, String email, String password, String code, String inviteCode, String clientIp);
 
     /** 校验密码，为本次登录创建独立 Token。 */
     LoginVO login(String username, String password);

@@ -16,6 +16,7 @@ import type { Admin } from '../../lib/admin/api'
 // 这里只列出已上线的页面；新增模块与 AdminApp 中的子路由一同接入。
 const navigation = [
     {to: '/admin/users', label: '用户管理', description: '账户与积分', icon: Users},
+    {to: '/admin/invitations', label: '邀请审核', description: '注册邀请与奖励', icon: Users},
     {to: '/admin/settings', label: '配置管理', description: '平台规则与奖励', icon: SlidersHorizontal},
     {to: '/admin/models', label: '模型管理', description: '生图服务与参数', icon: Sparkle},
     {to: '/admin/creations', label: '作品分享', description: '公开内容与展示', icon: ImageSquare},
