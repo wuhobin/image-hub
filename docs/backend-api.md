@@ -25,17 +25,19 @@
 
 **HTTP 200 不代表业务成功**，客户端必须检查 `code`。认证头为 `Authorization: Bearer <token>`。业务码包括 400（参数或凭据错误）、401（登录失效）、404（记录不存在）、409（账号冲突）、413（文件过大）、429（请求频繁）、502/503（外部服务失败）。
 
-| 方法 | 路径 | 请求 / 结果 |
-| --- | --- | --- |
-| POST | /auth/email-code | `{email}`；发送注册验证码 |
-| POST | /auth/register | `{username,email,password,code}`；成功后前端跳转登录页 |
-| POST | /auth/login | `{username,password}`；返回 `{token,expiresIn,user:{id,username,email}}` |
-| GET | /auth/me | 当前用户，不返回密码或哈希 |
-| POST | /auth/logout | 注销当前 Token |
-| POST | /images | multipart 字段 `file`，每个请求一张；返回图片记录 |
-| GET | /images | `page=1&pageSize=24&search=&type=&sort=desc`，返回 `ImageListVO {page,totalBytes}`；type 为 JPG/PNG/WEBP/GIF 或空 |
-| GET | /images/quota | 返回 `{total,remaining,used}`；总额由管理员配置，已用可能大于总额，剩余最低为 0 |
-| DELETE | /images/{id} | 仅限拥有者，删除文件并逻辑删除记录 |
+| 方法     | 路径               | 请求 / 结果                                                                                                    |
+|--------|------------------|------------------------------------------------------------------------------------------------------------|
+| POST   | /auth/email-code | `{email}`；发送注册验证码                                                                                          |
+| POST   | /auth/register   | `{username,email,password,code}`；成功后前端跳转登录页                                                                |
+| POST   | /auth/login      | `{username,password}`；返回 `{token,expiresIn,user:{id,username,email,avatarUrl}}`                            |
+| GET    | /auth/me         | 当前用户，不返回密码或哈希                                                                                              |
+| POST   | /auth/logout     | 注销当前 Token                                                                                                 |
+| POST   | /auth/avatar     | multipart 字段 `file`，免费上传专用头像；返回更新后的用户                                                                      |
+| PUT    | /auth/avatar     | `{imageId}`，选择本人图库中的图片作为头像；返回更新后的用户                                                                        |
+| POST   | /images          | multipart 字段 `file`，每个请求一张；返回图片记录                                                                          |
+| GET    | /images          | `page=1&pageSize=24&search=&type=&sort=desc`，返回 `ImageListVO {page,totalBytes}`；type 为 JPG/PNG/WEBP/GIF 或空 |
+| GET    | /images/quota    | 返回 `{total,remaining,used}`；总额由管理员配置，已用可能大于总额，剩余最低为 0                                                      |
+| DELETE | /images/{id}     | 仅限拥有者，删除文件并逻辑删除记录                                                                                          |
 
 图片结构：`{id,name,url,preview,type,size,width,height,createdAt}`，ID 为字符串，大小单位字节，时间为 ISO UTC，preview 使用同一公开原始 URL。`createdAt` 继续映射实体的 `createTime`，保持前端兼容。
 
@@ -48,6 +50,12 @@
 ```
 
 ## 行为与失败处理
+
+- 头像入口位于个人中心。已有数据库在更新后端前执行一次 [头像字段迁移](../deploy/db/migrations/20260924_user_avatar.sql)
+  ；新建库直接使用最新 schema.sql。`avatarUrl` 是居中裁切的 256 × 256 缩略图地址，未设置或原图已删除时为 null。
+- 新头像支持 JPG、PNG、WebP、GIF，原文件最大 10 MiB；浏览器在保存前自动居中裁切为最多 512 × 512 的 PNG 头像，GIF
+  使用首帧，免去高像素照片的手动缩图。服务端仍校验真实内容及 18,874,368 像素上限。免费保存到独立 `avatars/{userId}/`
+  目录，记录标记为 `AVATAR`，不出现在“我的图片”或图库统计中，不扣积分。图库选择只更新引用，不复制或删除原图。更换后清理旧的专用头像，清理失败保留记录供下次更换前重试。
 
 - 用户名 3–32 字符且不含空白，邮箱校验成功后创建账号；用户名和邮箱有数据库唯一约束。密码最少 6 位，BCrypt 最大输入 72 UTF-8 字节，前后端均校验。
 - 每次登录生成独立 Token，有效期 3 天，退出一个设备不影响其他设备。浏览器使用 localStorage 保存 Token；刷新时请求 me，401 时清理失效登录态。
@@ -74,6 +82,7 @@
 mvn -s C:/personal-program/Maven/conf/settings.xml "-Dmaven.repo.local=C:/personal-program/Maven/repoBack" verify
 npm --prefix frontend test
 npm --prefix frontend run build
+pwsh -NoProfile -File frontend/scripts/check-avatar.ps1
 ```
 
 `BusinessFlowTest` 使用实际 HTTP、MyBatis 和 H2 执行一期流程，外部存储和邮件使用替身，避免自动测试向真实邮箱发送邮件或改动云端文件。基础设施测试验证原有配置与鉴权装配。

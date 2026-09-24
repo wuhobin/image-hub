@@ -342,24 +342,32 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
         if (page < 1 || pageSize < 1 || pageSize > 50) throw new BizException(400, "分页参数无效");
         Page<AiGeneration> tasks = aiGenerationMapper.shared(PageUtils.buildPage(page, pageSize), shareId, includeBlocked);
         if (tasks.getRecords().isEmpty()) return PageUtils.convert(tasks, task -> new SharedCreationVO());
-        var ids = tasks.getRecords().stream().map(AiGeneration::getId).toList();
         var userIds = tasks.getRecords().stream().map(AiGeneration::getUserId).distinct().toList();
+        var authors = userMapper.selectList(Wrappers.<UserAccount>lambdaQuery()
+                        .select(UserAccount::getId, UserAccount::getUsername, UserAccount::getAvatarImageId)
+                        .in(UserAccount::getId, userIds))
+                .stream().collect(java.util.stream.Collectors.toMap(UserAccount::getId, author -> author));
+        // 与作品图片一起批量读取当前头像，避免逐作品查询；逻辑删除过滤由 MyBatis-Plus 处理。
+        var ids = java.util.stream.Stream.concat(tasks.getRecords().stream().map(AiGeneration::getId),
+                authors.values().stream().map(UserAccount::getAvatarImageId).filter(java.util.Objects::nonNull)).distinct().toList();
         var images = imageMapper.selectList(Wrappers.<ImageFile>lambdaQuery()
                         .select(ImageFile::getId, ImageFile::getUserId, ImageFile::getUrl, ImageFile::getWidth, ImageFile::getHeight)
                         .in(ImageFile::getId, ids).in(ImageFile::getUserId, userIds))
                 .stream().collect(java.util.stream.Collectors.toMap(ImageFile::getId, image -> image));
-        var authors = userMapper.selectList(Wrappers.<UserAccount>lambdaQuery()
-                        .select(UserAccount::getId, UserAccount::getUsername).in(UserAccount::getId, userIds))
-                .stream().collect(java.util.stream.Collectors.toMap(UserAccount::getId, UserAccount::getUsername));
         // 读取期间发生原图或作者删除时，也不返回失效作品；下一次分页会使用最新总数。
         tasks.setRecords(tasks.getRecords().stream().filter(task -> images.containsKey(task.getId())
                 && task.getUserId().equals(images.get(task.getId()).getUserId()) && authors.containsKey(task.getUserId())).toList());
         return PageUtils.convert(tasks, task -> {
             ImageFile image = images.get(task.getId());
+            UserAccount author = authors.get(task.getUserId());
+            ImageFile avatar = images.get(author.getAvatarImageId());
             SharedCreationVO result = new SharedCreationVO();
             result.setShareId(task.getShareId());
             result.setShareStatus(task.getShareStatus());
-            result.setAuthorName(authors.get(task.getUserId()));
+            result.setAuthorName(author.getUsername());
+            // 即使当前页包含其他作者的图片，头像仍必须属于对应作者。
+            result.setAuthorAvatarUrl(avatar != null && author.getId().equals(avatar.getUserId())
+                    ? ImageVO.avatarUrl(avatar) : null);
             result.setImageUrl(image.getUrl());
             result.setWidth(image.getWidth());
             result.setHeight(image.getHeight());

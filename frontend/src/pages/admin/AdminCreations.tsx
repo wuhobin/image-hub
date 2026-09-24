@@ -3,6 +3,7 @@ import {Link, useSearchParams} from 'react-router-dom'
 import {adminApi} from '../../lib/admin/api'
 import type {Page, SharedCreation} from '../../lib/types'
 import {Modal} from '../../components/Modal'
+import {Avatar} from '../../components/Avatar'
 import {ArrowClockwise} from '@phosphor-icons/react/dist/csr/ArrowClockwise'
 import {ArrowUpRight} from '@phosphor-icons/react/dist/csr/ArrowUpRight'
 import {ImageSquare} from '@phosphor-icons/react/dist/csr/ImageSquare'
@@ -116,8 +117,9 @@ export default function AdminCreations() {
                                         </div>
                                     </td>
                                     <td>
-                                        <div className="admin-user-cell"><span className="admin-user-avatar"
-                                                                               aria-hidden="true">{work.authorName.slice(0, 1).toUpperCase()}</span><strong>{work.authorName}</strong>
+                                        <div className="admin-user-cell"><Avatar name={work.authorName}
+                                                                                 url={work.authorAvatarUrl}
+                                                                                 className="admin-user-avatar"/><strong>{work.authorName}</strong>
                                         </div>
                                     </td>
                                     <td className="admin-date">{work.publishedTime}</td>

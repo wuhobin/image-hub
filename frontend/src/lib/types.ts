@@ -23,7 +23,7 @@ export type PendingImage = {
   record?: ImageRecord
 }
 
-export type User = { id: string; username: string; email: string }
+export type User = { id: string; username: string; email: string; avatarUrl?: string | null }
 export type LoginResult = { token: string; expiresIn: number; user: User }
 /** MyBatis-Plus 原生分页响应。 */
 export type Page<T> = {
@@ -69,7 +69,7 @@ export type Generation = {
 }
 
 export type SharedCreation = {
-    shareId: string; shareStatus: 'PUBLIC' | 'BLOCKED'; authorName: string
+    shareId: string; shareStatus: 'PUBLIC' | 'BLOCKED'; authorName: string; authorAvatarUrl?: string | null
     imageUrl: string; width: number; height: number; modelId: number; modelName: string
     size: string; quality: string; promptPublic: boolean; prompt: string | null; publishedTime: string
 }

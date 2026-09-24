@@ -11,9 +11,13 @@ import { api } from '../lib/api'
 import type { Page, QuotaUsage } from '../lib/types'
 import type { AppState } from '../App'
 import {CheckInCard} from '../components/CheckInCard'
+import {Avatar} from '../components/Avatar'
+import {AvatarEditor} from '../components/AvatarEditor'
+import {Camera} from '@phosphor-icons/react/dist/csr/Camera'
 
 export default function Profile({ app }: { app: AppState }) {
   const [retrying, setRetrying] = useState(false)
+    const [editingAvatar, setEditingAvatar] = useState(false)
   const [records, setRecords] = useState<Page<QuotaUsage> | null>(null)
   const [recordsLoading, setRecordsLoading] = useState(true)
   const [recordsError, setRecordsError] = useState('')
@@ -54,7 +58,11 @@ export default function Profile({ app }: { app: AppState }) {
   return <main id="main" className="history-page profile-page">
     <div className="profile-overview">
       <header className="profile-heading">
-        <span className="profile-avatar" aria-hidden="true">{app.user?.slice(0, 1).toUpperCase() || '·'}</span>
+          <button type="button" className="profile-avatar-edit" disabled={app.initializing || !app.user}
+                  aria-label="更换头像" aria-haspopup="dialog" onClick={() => setEditingAvatar(true)}>
+              <Avatar name={app.user} url={app.avatarUrl} className="profile-avatar"/>
+              <span className="profile-avatar-camera"><Camera size={14} aria-hidden="true"/></span>
+          </button>
         <div><h1 title={app.user || undefined}>{app.user || '个人中心'}</h1><p>个人中心 <span>·</span> 我的创作账户</p></div>
       </header>
       <section className="profile-quota" aria-labelledby="profile-quota-title" aria-busy={loading}>
@@ -159,5 +167,6 @@ export default function Profile({ app }: { app: AppState }) {
         </section>
       </aside>
     </div>
+      {editingAvatar && app.user && <AvatarEditor key={app.user} app={app} onClose={() => setEditingAvatar(false)}/>}
   </main>
 }

@@ -21,6 +21,11 @@ public class UserAccount {
     private String email;
     private String passwordHash;
 
+    /**
+     * 指向本人图片；专用头像不进入图库、不参与积分消费。
+     */
+    private String avatarImageId;
+
     /** 数据库生成创建时间；通用写入忽略调用方传入的时间。 */
     @TableField(insertStrategy = FieldStrategy.NEVER, updateStrategy = FieldStrategy.NEVER)
     private Date createTime;

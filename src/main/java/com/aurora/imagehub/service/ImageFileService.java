@@ -14,6 +14,11 @@ public interface ImageFileService extends IService<ImageFile> {
     /** 校验并上传单张图片，记录入库失败时补偿删除云端文件。 */
     ImageVO upload(long userId, MultipartFile file);
 
+    /**
+     * 免费头像复用真实图片校验，单独存入 avatars 目录；调用方负责头像与图片记录的同事务写入。
+     */
+    ImageFile storeAvatar(long userId, MultipartFile file);
+
     /** 校验单张 JPG/PNG/WEBP 参考图并返回真实 MIME，不上传云端、不扣额、不入库。 */
     String validateReference(MultipartFile file);
 

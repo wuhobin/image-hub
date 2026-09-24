@@ -96,6 +96,51 @@ button, a { transition: color .2s, background .2s, border-color .2s, box-shadow 
 .user-name:hover, .user-menu[open] > .user-name { background: #ffffff0b; }
 .user-name > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .avatar { display: grid; place-items: center; min-width: 29px; height: 29px; border-radius: 50%; font-size: 12px; background: #26364f; color: #c8dcff; }
+
+.user-avatar {
+    position: relative;
+    overflow: hidden;
+}
+
+.user-avatar img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.avatar.user-avatar {
+    width: 29px;
+}
+
+.profile-avatar-edit {
+    position: relative;
+    flex-shrink: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    cursor: pointer;
+}
+
+.profile-avatar-edit:focus-visible {
+    outline: 2px solid #b9d3f4;
+    outline-offset: 4px;
+}
+
+.profile-avatar-camera {
+    position: absolute;
+    right: -2px;
+    bottom: -2px;
+    display: grid;
+    place-items: center;
+    width: 25px;
+    height: 25px;
+    border: 2px solid #111923;
+    border-radius: 50%;
+    background: #d5e3f7;
+    color: #26364f;
+}
 .user-dropdown { position: absolute; top: calc(100% + 8px); left: 0; width: 128px; padding: 4px; border: 1px solid #354359; border-radius: 8px; background: #121b28; box-shadow: 0 8px 24px #0005; animation: format-menu-enter .16s ease-out; }
 /* 填满头像和下拉框之间的间隙，鼠标移入菜单时不会提前收起。 */
 .user-dropdown::before { content: ''; position: absolute; inset: -9px 0 auto; height: 9px; }

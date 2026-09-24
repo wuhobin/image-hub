@@ -361,6 +361,8 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
             setDeleting(null)
             setHistoryRevision(value => value + 1)
             app.notify('作品和创作记录已删除')
+            void app.refreshUser().catch(() => {
+            })
         } catch (error) {
             if (mounted.current) setDeleteError(message(error))
         } finally {

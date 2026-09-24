@@ -3,6 +3,7 @@ import {Link, useSearchParams} from 'react-router-dom'
 import {api} from '../lib/api'
 import type {Page, SharedCreation} from '../lib/types'
 import MasonryGrid from '../components/MasonryGrid'
+import {Avatar} from '../components/Avatar'
 import './sharing.css'
 
 /** 公开广场独立于登录态；切回页面重新查询，避免继续展示已撤销作品。 */
@@ -80,8 +81,8 @@ export default function Explore() {
                         <div className="explore-copy">
                             <p className="explore-prompt">{work.promptPublic ? work.prompt : '作者未公开提示词'}</p>
                             <div className="explore-caption">
-                                <span className="avatar explore-avatar"
-                                      aria-hidden="true">{work.authorName.slice(0, 1).toUpperCase() || '·'}</span>
+                                <Avatar name={work.authorName} url={work.authorAvatarUrl}
+                                        className="avatar explore-avatar"/>
                                 <span className="explore-author">{work.authorName}</span>
                             </div>
                         </div>

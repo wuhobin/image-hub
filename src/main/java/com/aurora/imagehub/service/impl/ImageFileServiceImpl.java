@@ -73,6 +73,21 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
         return uploadQuotaCache.consume(userId, id, () -> uploadValidated(userId, file, mime, dimensions, id));
     }
 
+    /**
+     * 专用头像不消耗积分，保留存储记录以便更换后可靠清理；不出现在用户图库中。
+     */
+    @Override
+    public ImageFile storeAvatar(long userId, MultipartFile file) {
+        String mime = validateUpload(file);
+        ImageDimensionsBO dimensions = dimensions(file);
+        if ((long) dimensions.getWidth() * dimensions.getHeight() > 18_874_368) {
+            throw new BizException(400, "头像图片像素过大，请缩小后上传");
+        }
+        ImageFile image = storeValidated(userId, file, mime, dimensions, UUID.randomUUID().toString(), "AVATAR");
+        image.setQuotaCharged(0);
+        return image;
+    }
+
     /** 参考图沿用普通上传的真实内容及 10 MB 校验，限制为模型支持的静态图片格式。 */
     @Override
     public String validateReference(MultipartFile file) {
@@ -154,7 +169,7 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
                                     String id, String sourceType, java.util.function.Consumer<String> beforeUpload) {
         String filename = UUID.randomUUID() + "." + TYPES.get(mime).toLowerCase(Locale.ROOT);
         var fileStorageService = ossTemplate.getFileStorageService();
-        var upload = fileStorageService.of(file).setPath("images/" + userId + "/")
+        var upload = fileStorageService.of(file).setPath(("AVATAR".equals(sourceType) ? "avatars/" : "images/") + userId + "/")
                 .setSaveFilename(filename).setContentType(mime);
         FileInfo stored;
         if (beforeUpload == null) {

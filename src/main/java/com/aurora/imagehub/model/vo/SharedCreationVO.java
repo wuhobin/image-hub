@@ -20,6 +20,11 @@ public class SharedCreationVO {
 
     private String authorName;
 
+    /**
+     * 作者当前头像；未设置或图片已删除时为空，不保存发布时的快照。
+     */
+    private String authorAvatarUrl;
+
     private String imageUrl;
 
     private int width;

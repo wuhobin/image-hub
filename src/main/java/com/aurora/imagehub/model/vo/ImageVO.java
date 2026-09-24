@@ -37,6 +37,13 @@ public class ImageVO {
     /** 复用全局 Jackson 日期格式和时区，保持数据库生成的时间值。 */
     private Date createdAt;
 
+    /**
+     * 账户与公开作品使用同一头像缩略图，缺失图片由前端回退默认头像。
+     */
+    public static String avatarUrl(ImageFile image) {
+        return image == null ? null : image.getUrl() + "?imageView2/1/w/256/h/256/q/85/format/webp/ignore-error/1";
+    }
+
     public static ImageVO from(ImageFile image) {
         // 同时限制宽高，避免长图预览仍下载大量像素；超出七牛处理限制时回退原图。
         String preview = image.getUrl() + "?imageView2/2/w/600/h/600/q/75/format/webp/ignore-error/1";

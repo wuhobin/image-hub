@@ -224,6 +224,23 @@ body:has(.explore-page) {
     margin-bottom: 24px;
 }
 
+.shared-author-heading {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.shared-author-heading .user-avatar {
+    flex: 0 0 36px;
+    width: 36px;
+    height: 36px;
+}
+
+.shared-author-heading > span:last-child {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
 .shared-work {
     display: grid;
     grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);

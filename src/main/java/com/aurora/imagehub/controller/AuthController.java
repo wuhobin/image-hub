@@ -48,6 +48,22 @@ public class AuthController {
         return Result.data(userAccountService.currentUser());
     }
 
+    /**
+     * 上传专用头像，用户身份取自可信登录态，内容校验交给账户服务。
+     */
+    @PostMapping(value = "/avatar", consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Result<UserVO> uploadAvatar(@RequestPart("file") org.springframework.web.multipart.MultipartFile file) {
+        return Result.data(userAccountService.uploadAvatar(cn.dev33.satoken.stp.StpUtil.getLoginIdAsLong(), file));
+    }
+
+    /**
+     * 仅允许选用本人图片，接口不接受任意头像 URL。
+     */
+    @PutMapping("/avatar")
+    public Result<UserVO> selectAvatar(@Valid @RequestBody com.aurora.imagehub.model.param.AvatarParam param) {
+        return Result.data(userAccountService.selectAvatar(cn.dev33.satoken.stp.StpUtil.getLoginIdAsLong(), param.getImageId()));
+    }
+
     @PostMapping("/logout")
     public Result<Void> logout() {
         userAccountService.logout();

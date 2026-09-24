@@ -32,6 +32,10 @@ CREATE TABLE IF NOT EXISTS hub_user (
     username VARCHAR(32) NOT NULL,
     email VARCHAR(254) NOT NULL,
     password_hash VARCHAR(100) NOT NULL,
+    avatar_image_id VARCHAR
+(
+    36
+) DEFAULT NULL COMMENT '本人头像图片ID，空值使用默认头像',
     `create_time` datetime DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     deleted TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除：0未删除，1已删除',
@@ -45,7 +49,10 @@ CREATE TABLE IF NOT EXISTS hub_image (
     name VARCHAR(255) NOT NULL,
     url VARCHAR(2048) NOT NULL,
     type VARCHAR(8) NOT NULL,
-    source_type VARCHAR(12) NOT NULL DEFAULT 'UPLOAD' COMMENT 'UPLOAD用户上传，AI生成',
+    source_type VARCHAR
+(
+    12
+) NOT NULL DEFAULT 'UPLOAD' COMMENT 'UPLOAD用户上传，AI生成，AVATAR专用头像',
     size BIGINT NOT NULL,
     width INT NOT NULL,
     height INT NOT NULL,

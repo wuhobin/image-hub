@@ -1,0 +1,264 @@
+.avatar-modal {
+    width: 560px;
+    max-width: calc(100vw - 32px);
+    max-height: calc(100dvh - 32px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #46566a transparent;
+}
+
+.avatar-editor-preview {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    margin: 4px 0 24px;
+}
+
+.avatar-editor-image {
+    display: grid;
+    place-items: center;
+    width: 76px;
+    height: 76px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: #26364f;
+    color: #c8dcff;
+    font-size: 28px;
+}
+
+.avatar-editor-preview > div {
+    min-width: 0;
+}
+
+.avatar-editor-preview strong {
+    display: block;
+    font-size: 14px;
+    font-weight: 500;
+    overflow-wrap: anywhere;
+}
+
+.avatar-editor-preview p {
+    margin: 8px 0 0;
+    color: #a8b6c7;
+    font-size: 12px;
+    line-height: 1.7;
+}
+
+.avatar-source {
+    display: flex;
+    gap: 4px;
+    padding: 4px;
+    border: 1px solid #344151;
+    border-radius: 10px;
+    background: #101721;
+}
+
+.avatar-source button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    flex: 1;
+    min-height: 42px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: #a8b6c7;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.avatar-source button[aria-pressed=true] {
+    background: #293647;
+    color: #edf3fa;
+}
+
+.avatar-source button:focus-visible, .avatar-image-option:has(input:focus-visible) {
+    outline: 2px solid #b9d3f4;
+    outline-offset: 2px;
+}
+
+.avatar-upload {
+    display: grid;
+    justify-items: center;
+    padding: 30px 12px 18px;
+    text-align: center;
+}
+
+.avatar-upload p, .avatar-upload > span {
+    color: #a8b6c7;
+    font-size: 12px;
+    line-height: 1.8;
+}
+
+.avatar-upload p {
+    margin: 18px 0 3px;
+}
+
+.avatar-library {
+    margin-top: 18px;
+}
+
+.avatar-search {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 42px;
+    padding: 0 12px;
+    border: 1px solid #344151;
+    border-radius: 8px;
+    color: #a8b6c7;
+    background: #101721;
+}
+
+.avatar-search:focus-within {
+    border-color: #9db6d5;
+}
+
+.avatar-search input {
+    width: 100%;
+    min-width: 0;
+    padding: 10px 0;
+    border: 0;
+    background: transparent;
+    color: #edf3fa;
+    font: inherit;
+    font-size: 13px;
+    outline: 0;
+}
+
+.avatar-image-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.avatar-image-option {
+    position: relative;
+    min-width: 0;
+    border: 2px solid transparent;
+    border-radius: 9px;
+    overflow: hidden;
+    background: #0e151f;
+    cursor: pointer;
+}
+
+.avatar-image-option input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+}
+
+.avatar-image-option img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+}
+
+.avatar-image-option:has(input:checked) {
+    border-color: #b9d3f4;
+}
+
+.avatar-image-check {
+    position: absolute;
+    right: 5px;
+    top: 5px;
+    display: none;
+    place-items: center;
+    width: 23px;
+    height: 23px;
+    border-radius: 50%;
+    color: #162436;
+    background: #c9dff9;
+}
+
+.avatar-image-option:has(input:checked) .avatar-image-check {
+    display: grid;
+}
+
+.avatar-image-name {
+    display: block;
+    padding: 7px 5px;
+    color: #b8c5d5;
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.avatar-library-state {
+    display: grid;
+    justify-items: center;
+    align-content: center;
+    gap: 10px;
+    min-height: 190px;
+    color: #a8b6c7;
+    font-size: 13px;
+    text-align: center;
+}
+
+.avatar-library-state strong {
+    font-weight: 500;
+    color: #dce6f3;
+}
+
+.avatar-library-state p {
+    margin: 0;
+    line-height: 1.8;
+}
+
+.avatar-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 14px;
+    color: #a8b6c7;
+    font-size: 12px;
+}
+
+.avatar-pagination .button {
+    min-height: 36px;
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
+.avatar-error {
+    margin: 18px 0 0;
+    color: #ffb2ba;
+    font-size: 13px;
+    line-height: 1.7;
+}
+
+.avatar-modal .modal-actions {
+    margin-top: 24px;
+}
+
+@media (max-width: 480px) {
+    .avatar-modal .modal-inner {
+        padding: 20px 16px;
+    }
+
+    .avatar-editor-preview {
+        gap: 14px;
+    }
+
+    .avatar-editor-image {
+        width: 64px;
+        height: 64px;
+    }
+
+    .avatar-source button {
+        gap: 6px;
+        font-size: 12px;
+    }
+
+    .avatar-image-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+    }
+}

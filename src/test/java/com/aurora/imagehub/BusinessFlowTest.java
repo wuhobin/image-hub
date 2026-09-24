@@ -1610,6 +1610,27 @@ class BusinessFlowTest {
                 "apiKey", "storageInfo", "reference", "private-reference-secret");
         assertThat(get(publicPath, other).path("data").path("total").asInt()).isEqualTo(1);
         String publishedTime = detail.path("publishedTime").asText();
+        // 公开列表和详情读取作者当前头像；已发布作品无需重新发布，也不暴露头像的内部记录。
+        assertThat(detail.path("authorAvatarUrl").isNull()).isTrue();
+        JsonNode avatarUpload = uploadAvatar(author, png());
+        assertThat(avatarUpload.path("code").asInt()).isEqualTo(200);
+        String uploadedAvatar = avatarUpload.path("data").path("avatarUrl").asText();
+        assertThat(get(publicPath, null).path("data").path("records").get(0).path("authorAvatarUrl").asText()).isEqualTo(uploadedAvatar);
+        assertThat(get(publicPath + "/" + shareId, null).path("data").path("authorAvatarUrl").asText()).isEqualTo(uploadedAvatar);
+        jdbcTemplate.update("UPDATE hub_image SET url='https://cdn.example.test/library-avatar.png' WHERE id=?", uploadId);
+        JsonNode selectedAvatar = sharingRequest("/api/app/auth/avatar", HttpMethod.PUT, Map.of("imageId", uploadId), author);
+        assertThat(selectedAvatar.path("code").asInt()).isEqualTo(200);
+        String libraryAvatar = selectedAvatar.path("data").path("avatarUrl").asText();
+        assertThat(libraryAvatar).isNotEqualTo(uploadedAvatar);
+        JsonNode updatedDetail = get(publicPath + "/" + shareId, null).path("data");
+        assertThat(updatedDetail.path("authorAvatarUrl").asText()).isEqualTo(libraryAvatar);
+        assertThat(updatedDetail.path("publishedTime").asText()).isEqualTo(publishedTime);
+        assertThat(updatedDetail.toString()).doesNotContain("avatarImageId", "storageInfo", "email", "password");
+        assertThat(get(publicPath, null).path("data").path("records").get(0).path("authorAvatarUrl").asText()).isEqualTo(libraryAvatar);
+        assertThat(delete(uploadId, author).path("code").asInt()).isEqualTo(200);
+        assertThat(get(publicPath + "/" + shareId, null).path("data").path("authorAvatarUrl").isNull()).isTrue();
+        assertThat(get(publicPath, null).path("data").path("records").get(0).path("authorAvatarUrl").isNull()).isTrue();
+
         JsonNode hidden = sharingRequest(path, HttpMethod.PUT, Map.of("promptPublic", false), author);
         assertThat(hidden.path("data").path("shareId").asText()).isEqualTo(shareId);
         assertThat(get(publicPath + "/" + shareId, null).toString()).doesNotContain("海边书店");
@@ -1763,6 +1784,95 @@ class BusinessFlowTest {
      */
     private JsonNode sharingRequest(String path, HttpMethod method, Object body, String token) {
         return testRestTemplate.exchange(path, method, new HttpEntity<>(body, headers(token)), JsonNode.class).getBody();
+    }
+
+    /**
+     * 免费头像独立于图库与积分，图片选择校验归属，刷新和重新登录保留头像。
+     */
+    @Test
+    void avatarsAreFreePrivateAndPersistAcrossSessions() throws Exception {
+        register("avatar-owner", "avatar-owner@example.test");
+        register("avatar-other", "avatar-other@example.test");
+        String token = login("avatar-owner");
+        String other = login("avatar-other");
+        long userId = userMapper.findByUsername("avatar-owner").getId();
+        String ownImage = upload(token, "library.png", png()).path("data").path("id").asText();
+        String otherImage = upload(other, "other.png", png()).path("data").path("id").asText();
+        jdbcTemplate.update("UPDATE hub_settings SET config_value='0' WHERE config_key='upload.free-total'");
+        assertThat(uploadAvatar(null, png()).path("code").asInt()).isEqualTo(401);
+        assertThat(uploadAvatar(token, "not an image".getBytes()).path("code").asInt()).isEqualTo(400);
+        JsonNode uploaded = uploadAvatar(token, png());
+        assertThat(uploaded.path("code").asInt()).isEqualTo(200);
+        assertThat(uploaded.path("data").path("avatarUrl").asText()).contains("imageView2/1/w/256/h/256");
+        assertThat(uploaded.toString()).doesNotContain("storageInfo", "passwordHash");
+        String avatarId = userMapper.findById(userId).getAvatarImageId();
+        assertThat(imageMapper.findOwned(userId, avatarId).getSourceType()).isEqualTo("AVATAR");
+        assertThat(imageMapper.findOwned(userId, avatarId).getQuotaCharged()).isZero();
+        assertThat(get("/api/app/images", token).path("data").path("page").path("total").asInt()).isEqualTo(1);
+        assertThat(get("/api/app/images?search=头像", token).path("data").path("page").path("total").asInt()).isZero();
+        quotaState.clear();
+        assertThat(imageFileService.quota(userId).getUsed()).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_quota_usage WHERE user_id=?", Long.class, userId)).isEqualTo(1);
+        assertThat(get("/api/app/auth/me", login("avatar-owner")).path("data").path("avatarUrl")).isEqualTo(uploaded.path("data").path("avatarUrl"));
+        assertThat(sharingRequest("/api/app/auth/avatar", HttpMethod.PUT, Map.of("imageId", otherImage), token).path("code").asInt()).isEqualTo(404);
+        assertThat(sharingRequest("/api/app/auth/avatar", HttpMethod.PUT, Map.of("avatarUrl", "https://other.test/image.png"), token).path("code").asInt()).isEqualTo(400);
+        assertThat(sharingRequest("/api/app/auth/avatar", HttpMethod.PUT, Map.of("imageId", ownImage), token).path("code").asInt()).isEqualTo(200);
+        assertThat(userMapper.findById(userId).getAvatarImageId()).isEqualTo(ownImage);
+        assertThat(imageMapper.findOwned(userId, avatarId)).isNull();
+        assertThat(imageMapper.findOwned(userId, ownImage)).isNotNull();
+        assertThat(imageMapper.findOwned(userMapper.findByUsername("avatar-other").getId(), otherImage)).isNotNull();
+        assertThat(delete(ownImage, token).path("code").asInt()).isEqualTo(200);
+        assertThat(get("/api/app/auth/me", token).path("data").path("avatarUrl").isNull()).isTrue();
+        assertThat(sharingRequest("/api/app/auth/avatar", HttpMethod.PUT, Map.of("imageId", ownImage), token).path("code").asInt()).isEqualTo(404);
+    }
+
+    /**
+     * 保存失败不覆盖原头像，旧文件清理失败保留记录且阻止持续堆积免费上传。
+     */
+    @Test
+    void avatarFailuresKeepCurrentImageAndRetryOldFileCleanup() throws Exception {
+        register("avatar-retry", "avatar-retry@example.test");
+        String token = login("avatar-retry");
+        long userId = userMapper.findByUsername("avatar-retry").getId();
+        assertThat(uploadAvatar(token, png()).path("code").asInt()).isEqualTo(200);
+        String first = userMapper.findById(userId).getAvatarImageId();
+        doThrow(new org.springframework.dao.DataIntegrityViolationException("simulated avatar insert failure"))
+                .when(imageMapper).insert(any(ImageFile.class));
+        assertThat(uploadAvatar(token, png()).path("code").asInt()).isEqualTo(500);
+        assertThat(userMapper.findById(userId).getAvatarImageId()).isEqualTo(first);
+        assertThat(imageMapper.findOwned(userId, first)).isNotNull();
+        reset(imageMapper);
+        when(ossTemplate.delete(any(FileInfo.class))).thenReturn(false);
+        assertThat(uploadAvatar(token, png()).path("code").asInt()).isEqualTo(200);
+        String second = userMapper.findById(userId).getAvatarImageId();
+        assertThat(second).isNotEqualTo(first);
+        assertThat(imageMapper.findOwned(userId, first)).isNotNull();
+        clearInvocations(storage);
+        assertThat(uploadAvatar(token, png()).path("code").asInt()).isEqualTo(502);
+        verify(storage, never()).of(any(MultipartFile.class));
+        assertThat(userMapper.findById(userId).getAvatarImageId()).isEqualTo(second);
+        when(ossTemplate.delete(any(FileInfo.class))).thenReturn(true);
+        assertThat(uploadAvatar(token, png()).path("code").asInt()).isEqualTo(200);
+        assertThat(imageMapper.findOwned(userId, first)).isNull();
+        assertThat(imageMapper.findOwned(userId, second)).isNull();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_image WHERE user_id=? AND deleted=0", Long.class, userId)).isEqualTo(1);
+        assertThat(imageFileService.quota(userId).getUsed()).isZero();
+    }
+
+    /**
+     * 使用真实头像 multipart 接口，云上传由现有测试桩替代。
+     */
+    private JsonNode uploadAvatar(String token, byte[] bytes) {
+        var body = new LinkedMultiValueMap<String, Object>();
+        body.add("file", new ByteArrayResource(bytes) {
+            @Override
+            public String getFilename() {
+                return "头像.png";
+            }
+        });
+        var requestHeaders = headers(token);
+        requestHeaders.setContentType(MediaType.MULTIPART_FORM_DATA);
+        return testRestTemplate.postForObject("/api/app/auth/avatar", new HttpEntity<>(body, requestHeaders), JsonNode.class);
     }
 
     private HttpHeaders headers(String token) {

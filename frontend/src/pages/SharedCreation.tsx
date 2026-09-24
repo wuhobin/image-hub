@@ -3,6 +3,7 @@ import {Link, useNavigate, useParams} from 'react-router-dom'
 import type {AppState} from '../App'
 import {api} from '../lib/api'
 import type {SharedCreation as Work} from '../lib/types'
+import {Avatar} from '../components/Avatar'
 import './sharing.css'
 
 /** 分享详情只读公开接口；做同款前再次确认可见性，不携带作者原参考图或触发生图。 */
@@ -79,7 +80,9 @@ export default function SharedCreation({app}: { app: AppState }) {
                                                          width={work.width} height={work.height}/><span
                         className="shared-ai-label">AI 生成作品</span></div>
                     <div className="shared-information"><span className="section-kicker">公开作品</span>
-                        <h1>{work.authorName} 的创作</h1>
+                        <h1 className="shared-author-heading"><Avatar name={work.authorName}
+                                                                      url={work.authorAvatarUrl}/><span>{work.authorName} 的创作</span>
+                        </h1>
                         <p className="shared-time">发布于 <time
                             dateTime={work.publishedTime.replace(' ', 'T')}>{work.publishedTime}</time></p>
                         <dl className="shared-settings">

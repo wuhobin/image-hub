@@ -19,6 +19,16 @@ public interface UserAccountService extends IService<UserAccount> {
     /** 获取当前登录账户；账户已不存在时注销当前会话。 */
     UserVO currentUser();
 
+    /**
+     * 免费上传专用头像；替换后清理旧专用头像，图库原图不受影响，用户编号来自登录态。
+     */
+    UserVO uploadAvatar(long userId, org.springframework.web.multipart.MultipartFile file);
+
+    /**
+     * 从本人未删除的图库图片选择头像，不复制原图、不扣积分。
+     */
+    UserVO selectAvatar(long userId, String imageId);
+
     /** 仅注销当前 Token。 */
     void logout();
 }

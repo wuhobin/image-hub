@@ -4,9 +4,11 @@ import { ArrowUpRight } from '@phosphor-icons/react/dist/csr/ArrowUpRight'
 import { ImageSquare } from '@phosphor-icons/react/dist/csr/ImageSquare'
 import { SignOut } from '@phosphor-icons/react/dist/csr/SignOut'
 import { UserCircle } from '@phosphor-icons/react/dist/csr/UserCircle'
+import {ClockCounterClockwise} from '@phosphor-icons/react/dist/csr/ClockCounterClockwise'
 import Create from './pages/Create'
 import HistoryLoading from './components/HistoryLoading'
 import { useImageHub } from './lib/useImageHub'
+import {Avatar} from './components/Avatar'
 
 const NoticeToast = lazy(() => import('./components/NoticeToast').then(module => ({default: module.NoticeToast})))
 const ImagePreview = lazy(() => import('./components/ImagePreview').then(module => ({default: module.ImagePreview})))
@@ -68,12 +70,15 @@ function Header({ app }: { app: AppState }) {
             if (event.pointerType === 'mouse' && !event.currentTarget.contains(document.activeElement)) event.currentTarget.open = false
           }}>
           <summary className="user-name" aria-label={`${app.user}，账户菜单`}>
-            <span className="avatar" aria-hidden="true">{app.user.slice(0, 1).toUpperCase()}</span><span>{app.user}</span>
+              <Avatar name={app.user} url={app.avatarUrl}/><span>{app.user}</span>
           </summary>
           <div className="user-dropdown">
             <NavLink className="user-menu-item" to="/profile" onClick={() => {
               if (userMenu.current) userMenu.current.open = false
             }}><UserCircle size={18} aria-hidden="true" />个人中心</NavLink>
+              <NavLink className="user-menu-item" to="/creations" onClick={() => {
+                  if (userMenu.current) userMenu.current.open = false
+              }}><ClockCounterClockwise size={18} aria-hidden="true"/>创作记录</NavLink>
             <button type="button" className="user-menu-item user-logout" onClick={() => {
               if (userMenu.current) userMenu.current.open = false
               userMenu.current?.querySelector('summary')?.focus()

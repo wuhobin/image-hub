@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, ApiError, getToken, SESSION_EXPIRED, TOKEN_KEY, uploadImage } from './api'
+import {api, ApiError, getToken, prepareAvatar, SESSION_EXPIRED, TOKEN_KEY, uploadImage} from './api'
 import {createQuotaCache} from './quotaCache'
 import { fileError, MAX_FILES } from './rules'
 import type { ImageRecord, LoginResult, PendingImage, UploadQuota, User } from './types'
@@ -8,7 +8,8 @@ type Preview = Pick<ImageRecord, 'name' | 'preview' | 'size' | 'width' | 'height
 type Notice = { text: string; error: boolean }
 
 export function useImageHub(onUploadPage: boolean, onProfilePage: boolean) {
-  const [user, setUser] = useState<string | null>(null)
+    const [account, setAccount] = useState<User | null>(null)
+    const user = account?.username || null
   const [initializing, setInitializing] = useState(!!getToken())
   const [pending, setPending] = useState<PendingImage[]>([])
   const [preview, setPreview] = useState<Preview | null>(null)
@@ -25,6 +26,7 @@ export function useImageHub(onUploadPage: boolean, onProfilePage: boolean) {
   const activeUpload = useRef<AbortController | null>(null)
   const generation = useRef(0)
   const quotaRequest = useRef(0)
+    const profileRequest = useRef(0)
     const [quotaCache] = useState(() => createQuotaCache(signal => api<UploadQuota>('/images/quota', {signal})))
 
   useEffect(() => {
@@ -80,7 +82,7 @@ export function useImageHub(onUploadPage: boolean, onProfilePage: boolean) {
       setInitializing(true)
       try {
         const result = await api<User>('/auth/me', { signal })
-        if (!signal.aborted) setUser(result.username)
+          if (!signal.aborted) setAccount(result)
       } catch (error) {
         if (!signal.aborted) notify(error instanceof Error ? error.message : '登录状态读取失败', true)
       } finally {
@@ -128,7 +130,7 @@ export function useImageHub(onUploadPage: boolean, onProfilePage: boolean) {
     activeUpload.current?.abort()
     uploadLock.current = false
     setBusy(false)
-    setUser(null)
+      setAccount(null)
     setQuota(null)
     setQuotaError('')
     setPreview(null)
@@ -263,7 +265,7 @@ export function useImageHub(onUploadPage: boolean, onProfilePage: boolean) {
       setQuota(null)
       setQuotaError('')
     localStorage.setItem(TOKEN_KEY, result.token)
-    setUser(result.user.username)
+      setAccount(result.user)
     setInitializing(false)
     setRevision(value => value + 1)
   }
@@ -287,6 +289,38 @@ export function useImageHub(onUploadPage: boolean, onProfilePage: boolean) {
     setPreview(null)
     setRevision(value => value + 1)
     notify('图片和上传记录已删除')
+      void refreshUser().catch(() => {
+      })
+  }
+
+    async function refreshUser() {
+        const version = generation.current
+        const request = ++profileRequest.current
+        const result = await api<User>('/auth/me')
+        if (version === generation.current && request === profileRequest.current) setAccount(result)
+    }
+
+    async function updateAvatar(choice: File | string) {
+        const version = generation.current
+        const request = ++profileRequest.current
+        const body = typeof choice === 'string' ? JSON.stringify({imageId: choice}) : new FormData()
+        if (body instanceof FormData) body.append('file', await prepareAvatar(choice as File))
+        // 本地处理期间可能退出或切换账号，不能用新会话替旧账号上传头像。
+        if (version !== generation.current) throw new Error('登录状态已变化，请重新选择头像')
+        try {
+            const result = await api<User>('/auth/avatar', {
+                method: typeof choice === 'string' ? 'PUT' : 'POST', body, signal: AbortSignal.timeout(120000),
+            })
+            if (version === generation.current && request === profileRequest.current) {
+                setAccount(result)
+                notify('头像已更新')
+            }
+        } catch (error) {
+            // 响应丢失时回读账户，避免头像实际上已更新、页面仍显示旧状态。
+            if (version === generation.current) void refreshUser().catch(() => {
+            })
+            throw error
+        }
   }
 
   async function copyUrl(url: string) {
@@ -294,6 +328,20 @@ export function useImageHub(onUploadPage: boolean, onProfilePage: boolean) {
     catch { notify('复制失败，请选中链接后手动复制', true) }
   }
 
-  return { user, initializing, quota, quotaError, refreshQuota, pending, preview, setPreview, notice, setNotice, selecting,
+    return {
+        user,
+        avatarUrl: account?.avatarUrl,
+        refreshUser,
+        updateAvatar,
+        initializing,
+        quota,
+        quotaError,
+        refreshQuota,
+        pending,
+        preview,
+        setPreview,
+        notice,
+        setNotice,
+        selecting,
     busy, revision, selectFiles, removePending, clearPending, upload, authenticate, logout, deleteRecord, copyUrl, notify }
 }

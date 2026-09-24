@@ -9,7 +9,7 @@ import org.apache.ibatis.annotations.*;
 @Mapper
 public interface ImageMapper extends BaseMapper<ImageFile> {
     String FILTER = """
-        FROM hub_image WHERE user_id = #{userId} AND deleted = 0
+            FROM hub_image WHERE user_id = #{userId} AND deleted = 0 AND source_type IN ('UPLOAD', 'AI')
         <if test="search != null and search != ''">AND LOCATE(LOWER(#{search}), LOWER(name)) > 0</if>
         <if test="type != null and type != ''">AND type = #{type}</if>
         <if test="sourceType != null and sourceType != ''">AND source_type = #{sourceType}</if>
@@ -18,6 +18,15 @@ public interface ImageMapper extends BaseMapper<ImageFile> {
 
     @Select("SELECT * FROM hub_image WHERE id = #{id} AND user_id = #{userId} AND deleted = 0")
     ImageFile findOwned(@Param("userId") long userId, @Param("id") String id);
+
+    /**
+     * 从数据库读取当前引用，避免按旧用户快照误清理另一请求刚保存的头像。
+     */
+    @Select("""
+            SELECT i.* FROM hub_image i WHERE i.user_id = #{userId} AND i.deleted = 0 AND i.source_type = 'AVATAR'
+              AND NOT EXISTS (SELECT 1 FROM hub_user u WHERE u.id = #{userId} AND u.avatar_image_id = i.id AND u.deleted = 0)
+            """)
+    java.util.List<ImageFile> unusedAvatars(long userId);
 
     // 固定 SQL 分支避免拼接客户端排序值；同秒上传用主键补充排序，保证分页顺序稳定。
     @Select("<script>SELECT * " + FILTER + " ORDER BY <choose>"

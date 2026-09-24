@@ -1,4 +1,5 @@
 import type { ImageRecord } from './types'
+import {fileError} from './rules'
 
 export const TOKEN_KEY = 'imagehub.token'
 export const SESSION_EXPIRED = 'imagehub:session-expired'
@@ -39,6 +40,33 @@ export async function api<T>(path: string, init: RequestInit = {}, session: ApiS
   }
   const body: unknown = await response.json().catch(() => null)
   return unwrap<T>(response.status, body, token, session)
+}
+
+/** 专用头像在浏览器居中裁切并缩至最多 512 像素，避免上传整张高像素照片；GIF 使用首帧。 */
+export async function prepareAvatar(file: File): Promise<File> {
+    const invalid = fileError(file)
+    if (invalid) throw new ApiError(400, invalid)
+    let bitmap: ImageBitmap
+    try {
+        bitmap = await createImageBitmap(file)
+    } catch {
+        throw new ApiError(400, '无法读取这张图片，请重新选择 JPG、PNG、WebP 或 GIF 图片')
+    }
+    try {
+        const side = Math.min(bitmap.width, bitmap.height)
+        if (!side) throw new ApiError(400, '图片尺寸无效，请重新选择')
+        const canvas = document.createElement('canvas')
+        canvas.width = canvas.height = Math.min(side, 512)
+        const context = canvas.getContext('2d')
+        if (!context) throw new ApiError(400, '浏览器无法处理头像，请更新浏览器后重试')
+        context.imageSmoothingQuality = 'high'
+        context.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, canvas.width, canvas.height)
+        const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'))
+        if (!blob) throw new ApiError(400, '头像处理失败，请重新选择图片')
+        return new File([blob], file.name.replace(/\.[^.]+$/, '') + '.png', {type: 'image/png'})
+    } finally {
+        bitmap.close()
+    }
 }
 
 export function uploadImage(file: File, progress: (value: number) => void, signal: AbortSignal): Promise<ImageRecord> {
