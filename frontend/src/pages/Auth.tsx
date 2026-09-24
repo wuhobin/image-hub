@@ -21,6 +21,7 @@ export default function Auth({ app, mode }: { app: AppState; mode: 'login' | 're
     const destination = ['/', '/upload', '/history', '/profile', '/create', '/creations'].includes(location.state?.from) ? location.state.from : '/'
   const creationPrompt = typeof location.state?.creationPrompt === 'string' ? location.state.creationPrompt.slice(0, 4000) : ''
     const creationPreset = location.state?.creationPreset
+    const templateDraft = location.state?.templateDraft
     const [inviteCode, setInviteCode] = useState('')
     const [invitationInfo, setInvitationInfo] = useState<InvitationInfo | null>(null)
     const [checkingInvitation, setCheckingInvitation] = useState(false)
@@ -89,7 +90,7 @@ export default function Auth({ app, mode }: { app: AppState; mode: 'login' | 're
     return () => clearTimeout(timer)
   }, [countdown])
 
-    if (app.user) return <Navigate to={destination} state={{creationPrompt, creationPreset}} replace/>
+    if (app.user) return <Navigate to={destination} state={{creationPrompt, creationPreset, templateDraft}} replace/>
 
   async function sendCode() {
     if (sendingCode.current || countdown > 0) return
@@ -157,12 +158,15 @@ export default function Auth({ app, mode }: { app: AppState; mode: 'login' | 're
           sessionStorage.removeItem('imagehub.invite-code')
           setInviteCode('')
           app.notify(inviteCode.trim() ? '注册成功，请登录个人中心查看邀请奖励状态' : '注册成功，请输入用户名和密码登录')
-          navigate('/login', {replace: true, state: {from: destination, username, creationPrompt, creationPreset}})
+          navigate('/login', {
+              replace: true,
+              state: {from: destination, username, creationPrompt, creationPreset, templateDraft}
+          })
       } else {
         await app.authenticate(username, password)
         if (version !== requestVersion.current) return
         app.notify(destination === '/upload' ? '登录成功，继续上传图片' : '登录成功，继续你的创作')
-          navigate(destination, {replace: true, state: {creationPrompt, creationPreset}})
+          navigate(destination, {replace: true, state: {creationPrompt, creationPreset, templateDraft}})
       }
     } catch (error) {
         if (version === requestVersion.current) {

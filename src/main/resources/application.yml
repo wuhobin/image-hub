@@ -98,6 +98,8 @@ platform:
       - /api/app/auth/invitation
       - /api/app/public/creations
       - /api/app/public/creations/*
+      - /api/app/public/templates
+      - /api/app/public/templates/*
   verification:
     key-prefix: image-hub:verification
     mail:

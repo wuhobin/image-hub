@@ -16,6 +16,8 @@ import { QuotaStatus } from '../components/QuotaStatus'
 import {Modal} from '../components/Modal'
 import { CreationRatioPicker } from '../components/CreationRatioPicker'
 import './create.css'
+import {readCreationOptions, saveCreationOptions} from '../lib/templates'
+import type {TemplateDraft} from '../lib/templates'
 
 const CreationCurrent = lazy(() => import('../components/CreationCurrent'))
 import CreationRecords from '../components/CreationRecords'
@@ -55,6 +57,7 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
   const [referenceError, setReferenceError] = useState('')
   const [models, setModels] = useState<AiModel[]>([])
   const [modelId, setModelId] = useState('')
+    const [templateDraft, setTemplateDraft] = useState<TemplateDraft | undefined>(location.state?.templateDraft)
   const [prompt, setPrompt] = useState(() => typeof location.state?.creationPrompt === 'string' ? location.state.creationPrompt.slice(0, 4000) : '')
   const [size, setSize] = useState('')
   const [quality, setQuality] = useState('')
@@ -100,6 +103,13 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
   const ratio = imageAspectRatio(size)
   const ratios = [...new Set(model?.sizes.map(imageAspectRatio) || [])]
   const ratioSizes = model?.sizes.filter(value => imageAspectRatio(value) === ratio) || []
+
+    // 从模板库返回时保留当前账号本标签页的参数；模板本身不改变模型或质量。
+    useEffect(() => {
+        if (app.user && model && model.sizes.includes(size) && model.qualities.includes(quality)) {
+            saveCreationOptions(app.user, {modelId, size, quality})
+        }
+    }, [app.user, model, modelId, size, quality])
 
   useEffect(() => {
     if (!reference) return
@@ -153,7 +163,11 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
                 ? '原作品的部分模型或参数已不可用，已选择当前可用选项，请确认后生成。' : '已带入公开提示词和生成参数，请确认后生成。')
             creationPreset.current = undefined
         } else {
-            setModelId(previous => items.some(item => String(item.id) === previous) ? previous : String(items[0]?.id || ''))
+            const saved = readCreationOptions(app.user)
+            setModelId(previous => items.some(item => String(item.id) === previous) ? previous
+                : items.some(item => String(item.id) === saved.modelId) ? saved.modelId : String(items[0]?.id || ''))
+            setSize(previous => previous || saved.size)
+            setQuality(previous => previous || saved.quality)
         }
     }).catch(error => { if (!controller.signal.aborted) setModelsError(message(error)) })
       .finally(() => { if (!controller.signal.aborted) setModelsLoading(false) })
@@ -161,6 +175,8 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
   }, [modelsRevision, app.user, historyView])
 
   useEffect(() => {
+      // 模型尚未加载时不清空已恢复的参数，加载完成后再校验是否仍然可用。
+      if (!model) return
     setSize(previous => model?.sizes.includes(previous) ? previous : model?.defaultSize || '')
     setQuality(previous => model?.qualities.includes(previous) ? previous : model?.defaultQuality || '')
   }, [model])
@@ -283,7 +299,10 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
       if (app.initializing) return
-    if (!app.user) { navigate('/login', { state: { from: '/', creationPrompt: prompt } }); return }
+      if (!app.user) {
+          navigate('/login', {state: {from: '/', creationPrompt: prompt, templateDraft}});
+          return
+      }
     if (submitting.current || active || (!pending.current && (!model || !prompt.trim()))) return
     submitting.current = true
     setBusy(true)
@@ -399,6 +418,13 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
       <p>写下你的想法，让 AI 把它变成一张图片。</p>
     </header>
     <div className="creation-workspace" ref={workspace}>
+        <div className="creation-template-entry">
+            <span>{templateDraft ? '正在使用：' + templateDraft.title : '还没想好怎么描述？'}</span>
+            <Link to={templateDraft ? '/templates?template=' + templateDraft.id : '/templates'}
+                  state={templateDraft ? {templateDraft: {...templateDraft, prompt}} : undefined}>
+                {templateDraft ? '重新填写模板 →' : '从场景模板开始 →'}
+            </Link>
+        </div>
       <span className="upload-rim" aria-hidden="true" />
       <form className="creation-form" onSubmit={submit} aria-busy={busy}>
         <input ref={referenceInput} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp"
@@ -414,7 +440,14 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
         </div>}
         {referenceError && <p className="creation-reference-error" role="alert">{referenceError}</p>}
         <label className="visually-hidden" htmlFor="creation-prompt">画面描述</label>
-        <textarea id="creation-prompt" value={prompt} onChange={event => setPrompt(event.target.value)} maxLength={4000} aria-required="true"
+          <textarea id="creation-prompt" value={prompt} onChange={event => {
+              setPrompt(event.target.value)
+              setTemplateDraft(previous => previous ? {
+                  ...previous,
+                  prompt: event.target.value,
+                  manual: true
+              } : undefined)
+          }} maxLength={4000} aria-required="true"
                   disabled={app.initializing || busy || uncertain}
                   placeholder="描述你想创作的画面…&#10;例如：海边的书店，午后阳光，胶片摄影质感。"/>
         <div className="creation-toolbar">
@@ -453,7 +486,16 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
                         aria-describedby="creation-submit-status"
                         disabled={app.initializing || busy || loading || !!active || (!model && !uncertain) || !prompt.trim() || (!uncertain && (!app.quota || !!app.quotaError || app.quota.remaining < (model?.pointsCost ?? 1)))}>
             <span className="visually-hidden">{uncertain ? '确认本次提交' : '生成图片'}</span><ArrowUp size={21} aria-hidden="true" />
-          </button> : <button type="button" className="creation-submit" title="登录创作" onClick={() => navigate('/login', { state: { from: '/', creationPrompt: prompt } })}><span className="visually-hidden">登录创作</span><ArrowUp size={21} aria-hidden="true" /></button>}
+                </button> : <button type="button" className="creation-submit" title="登录创作"
+                                    onClick={() => navigate('/login', {
+                                        state: {
+                                            from: '/',
+                                            creationPrompt: prompt,
+                                            templateDraft
+                                        }
+                                    })}><span className="visually-hidden">登录创作</span><ArrowUp size={21}
+                                                                                                  aria-hidden="true"/>
+                </button>}
         </div>
       </form>
     </div>

@@ -65,6 +65,43 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
         return uploadQuotaCache.get(userId);
     }
 
+    /**
+     * 模板图片沿用真实内容校验，独立目录与用户图片隔离。
+     */
+    @Override
+    public ImageFile storeTemplateExample(MultipartFile file) {
+        String mime = validateUpload(file);
+        ImageDimensionsBO dimensions = dimensions(file);
+        if ((long) dimensions.getWidth() * dimensions.getHeight() > 18_874_368) {
+            throw new BizException(400, "示例图像素过大，请缩小后上传");
+        }
+        return storeValidated(0L, file, mime, dimensions, UUID.randomUUID().toString(), "TEMPLATE");
+    }
+
+    /**
+     * 读取云存储原对象而非任意 URL；生成新对象，原作品删除不影响模板。
+     */
+    @Override
+    public ImageFile copyTemplateExample(ImageFile source) {
+        int limit = 10 * 1024 * 1024;
+        if (source.getSize() > limit) throw new BizException(400, "示例图最大 10 MB，请缩小后手动上传");
+        try {
+            var bytes = new java.util.concurrent.atomic.AtomicReference<byte[]>();
+            ossTemplate.getFileStorageService().download(readStorageInfo(source.getStorageInfo())).inputStream(input -> {
+                try {
+                    byte[] content = input.readNBytes(limit + 1);
+                    if (content.length > limit) throw new BizException(400, "示例图最大 10 MB");
+                    bytes.set(content);
+                } catch (IOException e) {
+                    throw new BizException(502, "来源图片读取失败，请稍后重试");
+                }
+            });
+            return storeTemplateExample(new GeneratedImageFile(bytes.get(), aiImageLimits));
+        } catch (IOException e) {
+            throw new BizException(500, "来源图片存储记录异常");
+        }
+    }
+
     @Override
     public ImageVO upload(long userId, MultipartFile file) {
         String mime = validateUpload(file);
@@ -169,7 +206,7 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
                                     String id, String sourceType, java.util.function.Consumer<String> beforeUpload) {
         String filename = UUID.randomUUID() + "." + TYPES.get(mime).toLowerCase(Locale.ROOT);
         var fileStorageService = ossTemplate.getFileStorageService();
-        var upload = fileStorageService.of(file).setPath(("AVATAR".equals(sourceType) ? "avatars/" : "images/") + userId + "/")
+        var upload = fileStorageService.of(file).setPath(("TEMPLATE".equals(sourceType) ? "templates/" : "AVATAR".equals(sourceType) ? "avatars/" : "images/") + userId + "/")
                 .setSaveFilename(filename).setContentType(mime);
         FileInfo stored;
         if (beforeUpload == null) {

@@ -54,6 +54,8 @@ mvn -s C:/personal-program/Maven/conf/settings.xml "-Dmaven.repo.local=C:/person
 
 每日签到、积分收入规则及升级脚本见 [签到说明](docs/check-in.md)。
 
+场景模板、提示词示例库、分类标签及升级脚本见 [模板库说明](docs/creation-templates.md)。
+
 邀请注册、双方积分奖励、集中注册审核及升级脚本见 [邀请说明](docs/invitation.md)。
 
 ## MySQL 与 Redis

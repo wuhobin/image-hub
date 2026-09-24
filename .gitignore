@@ -19,3 +19,5 @@
 !/frontend/scripts/check-creation-polling.js
 !/frontend/scripts/check-quota.ps1
 !/frontend/scripts/check-creation-sharing.ps1
+!/frontend/scripts/check-templates.ps1
+!/frontend/scripts/template-fixture.js

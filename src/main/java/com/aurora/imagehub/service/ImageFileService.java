@@ -9,6 +9,16 @@ import org.springframework.web.multipart.MultipartFile;
 
 /** ImageFile 实体相关的上传、记录查询和删除服务。userId 必须来自可信登录态。 */
 public interface ImageFileService extends IService<ImageFile> {
+    /**
+     * 管理员模板示例独立存储，调用方负责记录定位；不入用户图库或计费。
+     */
+    ImageFile storeTemplateExample(MultipartFile file);
+
+    /**
+     * 仅复制已通过公开资格检查的图片；从可信存储定位读取并限制大小。
+     */
+    ImageFile copyTemplateExample(ImageFile source);
+
     /** 当前账号永久积分；历史上传不计费，删除不返还。 */
     UploadQuotaVO quota(long userId);
     /** 校验并上传单张图片，记录入库失败时补偿删除云端文件。 */

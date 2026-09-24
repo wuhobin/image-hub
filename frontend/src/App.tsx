@@ -18,6 +18,7 @@ import Upload from './pages/Home'
 import Auth from './pages/Auth'
 import Explore from './pages/Explore'
 import SharedCreation from './pages/SharedCreation'
+import Templates from './pages/Templates'
 export type AppState = ReturnType<typeof useImageHub>
 
 function Header({ app }: { app: AppState }) {
@@ -54,6 +55,7 @@ function Header({ app }: { app: AppState }) {
       </Link>
       {!authPage && <nav className="navigation" aria-label="主导航">
         <NavLink to="/" end>AI 创作</NavLink>
+          <NavLink to="/templates">模板库</NavLink>
           <NavLink to="/explore">作品广场</NavLink>
         <NavLink to="/upload">上传图片</NavLink>
         <NavLink to="/history">我的图片</NavLink>
@@ -111,6 +113,7 @@ export default function App() {
           '/profile': '个人中心',
           '/creations': '创作记录',
           '/explore': '作品广场',
+          '/templates': '模板库',
           '/login': '登录',
           '/register': '注册'
       }
@@ -128,6 +131,7 @@ export default function App() {
                 <Navigate to="/login" state={{from: '/creations'}} replace/>}/>
       <Route path="/create" element={<Navigate to="/" state={location.state} replace />} />
         <Route path="/explore" element={<Explore/>}/>
+        <Route path="/templates" element={<Templates/>}/>
         <Route path="/share/:shareId" element={<SharedCreation key={location.pathname} app={app}/>}/>
       <Route path="/upload" element={<Upload app={app} />} />
       <Route path="/history" element={app.initializing ? <HistoryLoading /> : app.user ? <History app={app} /> : <Navigate to="/login" state={{ from: '/history' }} replace />} />

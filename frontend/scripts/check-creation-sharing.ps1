@@ -120,7 +120,7 @@ try {
     A 'document.querySelector("#creation-prompt").value===window.works[0].prompt && !document.querySelector(".creation-reference") && !window.calls.some(c=>c.path==="/api/app/generations" && c.method==="POST")'
     A 'document.querySelector("#creation-quality").value==="high"'
     A 'document.querySelector(".creation-ratio-trigger").textContent.includes("3:2")'
-    B click '.navigation a:nth-child(2)' | Out-Null
+    B click ".navigation a[href='/explore']" | Out-Null
     B wait '.explore-card' | Out-Null
     E 'window.works[0]={...window.works[0],modelId:999,size:"2048x2048",quality:"unsupported"}' | Out-Null
     B click '.explore-card:first-child' | Out-Null
