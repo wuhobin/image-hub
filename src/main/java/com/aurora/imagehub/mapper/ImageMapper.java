@@ -35,7 +35,7 @@ public interface ImageMapper extends BaseMapper<ImageFile> {
     @Select("SELECT COALESCE(SUM(points_cost), 0) FROM hub_image WHERE user_id = #{userId} AND quota_charged = 1")
     long sumConsumedPoints(long userId);
 
-    // 逻辑删除会改变业务列，数据库 ON UPDATE 自动维护更新时间。
-    @Update("UPDATE hub_image SET deleted = 1 WHERE id = #{id} AND user_id = #{userId} AND deleted = 0")
+    // 逻辑删除显式使用数据库当前时间，保持审计时间由数据库维护。
+    @Update("UPDATE hub_image SET deleted = 1, update_time = CURRENT_TIMESTAMP WHERE id = #{id} AND user_id = #{userId} AND deleted = 0")
     int deleteOwned(@Param("userId") long userId, @Param("id") String id);
 }

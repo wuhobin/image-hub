@@ -21,7 +21,20 @@ public interface AiGenerationService extends IService<AiGeneration> {
 
     GenerationVO active(long userId);
 
+    /**
+     * 删除本人终态创作及云文件、撤销分享；进行中拒绝删除，云端失败可重试，不退还已用积分。
+     */
+    void delete(long userId, String id);
+
+    /**
+     * 兼容旧调用，返回本人全部状态的历史记录。
+     */
     Page<GenerationVO> history(long userId, int page, int pageSize);
+
+    /**
+     * 状态、关键词和排序在数据库分页前生效，返回筛选后的总数，始终限定本人且未删除。
+     */
+    Page<GenerationVO> history(long userId, com.aurora.imagehub.model.param.GenerationHistoryParam param);
 
     /**
      * 仅发布本人成功且未删除的 AI 作品；公开状态更新不能解除管理员下架。

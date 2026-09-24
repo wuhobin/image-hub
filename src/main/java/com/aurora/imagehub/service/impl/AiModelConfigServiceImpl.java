@@ -60,10 +60,18 @@ public class AiModelConfigServiceImpl extends ServiceImpl<AiModelConfigMapper, A
         if (!param.getSizes().contains(param.getDefaultSize()) || !param.getQualities().contains(param.getDefaultQuality())) {
             throw new BizException(400, "默认尺寸和质量必须属于允许的选项");
         }
+        boolean geminiFlashImage = param.getModelCode().equals("gemini-3.1-flash-image")
+                || param.getModelCode().startsWith("gemini-3.1-flash-image-");
         for (String size : param.getSizes()) {
             String[] parts = size.split("x");
             int width = Integer.parseInt(parts[0]), height = Integer.parseInt(parts[1]);
-            if (width < 256 || height < 256 || width > 3840 || height > 3840 || (long) width * height > 8_294_400) {
+            // Gemini 的官方尺寸包含 512 档和 1:8 / 8:1 的 4K 长图，不能沿用 GPT 的边长与像素范围。
+            if (geminiFlashImage) {
+                if (width < 168 || height < 168 || width > 12288 || height > 12288 || (long) width * height > 18_874_368
+                        || Math.max(width, height) > 8 * Math.min(width, height)) {
+                    throw new BizException(400, "Gemini尺寸边长须在168至12288之间，比例不超过8:1，且总像素不能超过18874368");
+                }
+            } else if (width < 256 || height < 256 || width > 3840 || height > 3840 || (long) width * height > 8_294_400) {
                 throw new BizException(400, "尺寸边长须在256至3840之间，且总像素不能超过8294400");
             }
             // GPT-Image-2 的自定义尺寸有额外约束，在保存配置时拦截，避免用户生成时才被供应商拒绝。

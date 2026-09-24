@@ -22,13 +22,15 @@ export default function SharedCreation({app}: { app: AppState }) {
     }, [])
     useEffect(() => {
         const controller = new AbortController()
-        setWork(null)
         setError('')
         setLoading(true)
         void api<Work>(path, {signal: controller.signal, cache: 'no-store'}).then(result => {
             if (!controller.signal.aborted) setWork(result)
         }).catch(error => {
-            if (!controller.signal.aborted) setError(error instanceof Error ? error.message : '作品读取失败')
+            if (!controller.signal.aborted) {
+                setWork(null);
+                setError(error instanceof Error ? error.message : '作品读取失败')
+            }
         }).finally(() => {
             if (!controller.signal.aborted) setLoading(false)
         })
@@ -36,7 +38,7 @@ export default function SharedCreation({app}: { app: AppState }) {
     }, [path, revision])
 
     async function remix() {
-        if (busy || app.initializing) return
+        if (busy || loading || app.initializing) return
         setBusy(true)
         try {
             const current = await api<Work>(path, {cache: 'no-store'})
@@ -58,9 +60,16 @@ export default function SharedCreation({app}: { app: AppState }) {
         }
     }
 
-    return <main id="main" className="shared-page">
+    return <main id="main" className="shared-page" aria-busy={loading}>
         <Link className="quiet-link shared-back" to="/explore">← 返回作品广场</Link>
-        {loading ? <div className="sharing-state" role="status">正在加载作品…</div>
+        {loading && !work ? <div className="shared-work shared-skeleton" role="status" aria-label="正在加载作品">
+                <div className="shared-artwork skeleton-block" aria-hidden="true"/>
+                <div className="shared-information" aria-hidden="true">
+                    <span className="skeleton-block skeleton-title"/>
+                    <div className="shared-settings"><span className="skeleton-block skeleton-detail"/></div>
+                    <div className="skeleton-block shared-prompt-placeholder"/>
+                </div>
+            </div>
             : !work ? <div className="sharing-state"><h1>暂时无法查看这件作品</h1><p role="alert">{error}</p>
                     <button className="button button-secondary" onClick={() => setRevision(value => value + 1)}>重新加载
                     </button>
@@ -96,7 +105,8 @@ export default function SharedCreation({app}: { app: AppState }) {
                             <p>{work.promptPublic ? work.prompt : '作者未公开提示词。你仍可以欣赏作品，或开始自己的创作。'}</p>
                         </section>
                         {work.promptPublic && work.prompt ? <>
-                            <button className="button button-primary shared-remix" disabled={busy || app.initializing}
+                            <button className="button button-primary shared-remix"
+                                    disabled={busy || loading || app.initializing}
                                     onClick={() => void remix()}>{busy ? '正在准备…' : '一键做同款'}</button>
                             <p className="sharing-note">带入公开提示词和可用参数，确认提交后才生成并扣积分。参考图不随作品分享。</p>
                         </> : <Link className="button button-secondary" to="/">开始自己的创作</Link>}

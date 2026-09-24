@@ -1140,6 +1140,53 @@ class BusinessFlowTest {
         verify(quotaLock, never()).unlock();
     }
 
+    /**
+     * 状态和关键词必须在分页前过滤；同时覆盖总数、稳定排序、用户隔离与旧接口兼容。
+     */
+    @Test
+    void aiHistoryFiltersBeforePagination() {
+        register("history-filter", "history-filter@example.test");
+        String token = login("history-filter");
+        long userId = userMapper.findByUsername("history-filter").getId();
+        register("history-foreign", "history-foreign@example.test");
+        long otherUserId = userMapper.findByUsername("history-foreign").getId();
+        var otherStatuses = List.of("QUEUED", "GENERATING", "SAVING", "FAILED", "SAVE_FAILED", "EXPIRED", "ABANDONED");
+        for (int index = 0; index < 22; index++) {
+            String id = "history-" + String.format("%02d", index);
+            jdbcTemplate.update("""
+                            INSERT INTO hub_ai_generation
+                            (id, user_id, request_id, model_id, model_name, model_code, base_url, images_path,
+                             prompt, image_size, quality, status, create_time, deleted)
+                            VALUES (?, ?, ?, 1, ?, 'mock', 'https://example.test', '/generations',
+                                    ?, '1024x1024', 'medium', ?, ?, ?)
+                            """, id, index == 20 ? otherUserId : userId, id,
+                    index == 1 ? "special-model" : index == 20 ? "foreign-model" : "Test model",
+                    (index % 2 == 0 ? "forest " : "coast ") + index,
+                    index < 13 || index >= 20 ? "SUCCEEDED" : otherStatuses.get(index - 13),
+                    java.sql.Timestamp.valueOf("2026-09-22 10:00:" + String.format("%02d", index)), index == 21 ? 1 : 0);
+        }
+        var first = get("/api/app/generations?status=done&page=1&pageSize=12", token).path("data");
+        assertThat(first.path("total").asInt()).isEqualTo(13);
+        assertThat(first.path("pages").asInt()).isEqualTo(2);
+        assertThat(first.path("records").size()).isEqualTo(12);
+        assertThat(first.path("records").get(0).path("id").asText()).isEqualTo("history-12");
+        first.path("records").forEach(record -> assertThat(record.path("status").asText()).isEqualTo("SUCCEEDED"));
+        var second = get("/api/app/generations?status=done&page=2&pageSize=12", token).path("data");
+        assertThat(second.path("records").size()).isEqualTo(1);
+        assertThat(second.path("records").get(0).path("id").asText()).isEqualTo("history-00");
+        assertThat(get("/api/app/generations?status=done&order=asc", token).path("data").path("records").get(0)
+                .path("id").asText()).isEqualTo("history-00");
+        assertThat(get("/api/app/generations?status=running", token).path("data").path("total").asInt()).isEqualTo(3);
+        assertThat(get("/api/app/generations?status=failed", token).path("data").path("total").asInt()).isEqualTo(4);
+        assertThat(get("/api/app/generations?status=done&keyword=forest", token).path("data").path("total").asInt()).isEqualTo(7);
+        assertThat(get("/api/app/generations?status=done&keyword=special-model", token).path("data").path("total").asInt()).isEqualTo(1);
+        assertThat(get("/api/app/generations?status=done&keyword=foreign-model", token).path("data").path("total").asInt()).isZero();
+        assertThat(get("/api/app/generations", token).path("data").path("total").asInt()).isEqualTo(20);
+        for (String invalid : List.of("status=unknown", "page=0", "pageSize=51", "order=invalid", "keyword=" + "x".repeat(201))) {
+            assertThat(get("/api/app/generations?" + invalid, token).path("code").asInt()).isEqualTo(400);
+        }
+    }
+
     /** 分页批量取图必须保留排序与总数，且不能返回已删除或其他用户的图片。 */
     @Test
     @SuppressWarnings("unchecked")
@@ -1613,6 +1660,102 @@ class BusinessFlowTest {
         assertThat(get(publicPath, null).path("data").path("total").asInt()).isZero();
         assertThat(sharingRequest(secondPath, HttpMethod.PUT, Map.of(), author).path("code").asInt()).isEqualTo(409);
         assertThat(imageFileService.quota(userId).getUsed()).isEqualTo(used);
+    }
+
+    /**
+     * 删除通过真实接口校验归属、终态、云端优先、链接失效和积分不返还。
+     */
+    @Test
+    void creationDeletionKeepsOwnershipQuotaAndRetrySafety() throws Exception {
+        register("delete-author", "delete-author@example.test");
+        register("delete-other", "delete-other@example.test");
+        String author = login("delete-author");
+        String other = login("delete-other");
+        long userId = userMapper.findByUsername("delete-author").getId();
+        long modelId = enableAiModel();
+        var request = generationRequest(modelId);
+        String id = post("/api/app/generations", request, author).path("data").path("id").asText();
+        String path = "/api/app/generations/" + id;
+        assertThat(sharingRequest(path, HttpMethod.DELETE, null, null).path("code").asInt()).isEqualTo(401);
+        assertThat(sharingRequest(path, HttpMethod.DELETE, null, other).path("code").asInt()).isEqualTo(404);
+        assertThat(sharingRequest(path, HttpMethod.DELETE, null, author).path("code").asInt()).isEqualTo(409);
+        verifyNoInteractions(storage);
+        assertThat(imageFileService.quota(userId).getReserved()).isEqualTo(1);
+
+        when(aiImageClient.generate(any())).thenReturn(png());
+        aiGenerationService.runTask(userId, id);
+        String shareId = sharingRequest(path + "/share", HttpMethod.PUT, Map.of(), author).path("data").path("shareId").asText();
+        when(ossTemplate.delete(any(FileInfo.class))).thenReturn(false);
+        assertThat(sharingRequest(path, HttpMethod.DELETE, null, author).path("code").asInt()).isEqualTo(502);
+        assertThat(aiGenerationMapper.selectById(id)).isNotNull();
+        assertThat(imageMapper.findOwned(userId, id)).isNotNull();
+        assertThat(get("/api/app/public/creations/" + shareId, null).path("code").asInt()).isEqualTo(200);
+
+        when(ossTemplate.delete(any(FileInfo.class))).thenReturn(true);
+        assertThat(sharingRequest(path, HttpMethod.DELETE, null, author).path("code").asInt()).isEqualTo(200);
+        assertThat(imageMapper.findOwned(userId, id)).isNull();
+        assertThat(aiGenerationMapper.selectById(id)).isNull();
+        assertThat(get(path, author).path("code").asInt()).isEqualTo(404);
+        assertThat(get("/api/app/generations", author).path("data").path("total").asInt()).isZero();
+        assertThat(get("/api/app/images", author).path("data").path("page").path("total").asInt()).isZero();
+        assertThat(get("/api/app/public/creations/" + shareId, null).path("code").asInt()).isEqualTo(404);
+        assertThat(sharingRequest(path + "/share", HttpMethod.PUT, Map.of(), author).path("code").asInt()).isEqualTo(404);
+        assertThat(sharingRequest(path, HttpMethod.DELETE, null, author).path("code").asInt()).isEqualTo(404);
+        assertThat(post("/api/app/generations", request, author).path("code").asInt()).isEqualTo(410);
+        quotaState.clear();
+        assertThat(imageFileService.quota(userId).getUsed()).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_quota_usage WHERE user_id=?", Long.class, userId)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("SELECT deleted FROM hub_ai_generation WHERE id=?", Integer.class, id)).isEqualTo(1);
+        verify(aiImageClient, times(1)).generate(any());
+
+        // 图库先删、或云文件已经不存在时，仍能清除对应创作，不影响他人数据。
+        String second = post("/api/app/generations", generationRequest(modelId), author).path("data").path("id").asText();
+        aiGenerationService.runTask(userId, second);
+        assertThat(delete(second, author).path("code").asInt()).isEqualTo(200);
+        clearInvocations(storage, ossTemplate);
+        assertThat(sharingRequest("/api/app/generations/" + second, HttpMethod.DELETE, null, author).path("code").asInt()).isEqualTo(200);
+        verifyNoInteractions(storage, ossTemplate);
+    }
+
+    /**
+     * 失败补偿和数据库删除中断均可重试；持锁任务不可被另一请求清理。
+     */
+    @Test
+    void creationDeletionRetriesPendingFilesAndDatabaseFailures() throws Exception {
+        register("delete-retry", "delete-retry@example.test");
+        String token = login("delete-retry");
+        long userId = userMapper.findByUsername("delete-retry").getId();
+        String id = post("/api/app/generations", generationRequest(enableAiModel()), token).path("data").path("id").asText();
+        String path = "/api/app/generations/" + id;
+        when(aiImageClient.generate(any())).thenReturn(png());
+        doThrow(new org.springframework.dao.DataIntegrityViolationException("simulated rollback")).when(imageMapper).insert(any(ImageFile.class));
+        when(ossTemplate.delete(any(FileInfo.class))).thenReturn(false);
+        aiGenerationService.runTask(userId, id);
+        String pending = aiGenerationMapper.selectById(id).getPendingStorageInfo();
+        assertThat(pending).isNotBlank();
+        clearInvocations(ossTemplate);
+        var lock = redissonClient.getLock("image-hub:generation:" + id);
+        assertThat(lock.tryLock()).isTrue();
+        try {
+            assertThat(sharingRequest(path, HttpMethod.DELETE, null, token).path("code").asInt()).isEqualTo(409);
+            verify(ossTemplate, never()).delete(any(FileInfo.class));
+        } finally {
+            lock.unlock();
+        }
+        assertThat(sharingRequest(path, HttpMethod.DELETE, null, token).path("code").asInt()).isEqualTo(502);
+        assertThat(aiGenerationMapper.selectById(id).getPendingStorageInfo()).isEqualTo(pending);
+        // 首次云删除已成功、随后数据库写失败：任务仍可访问，重试不要求文件存在。
+        when(ossTemplate.delete(any(FileInfo.class))).thenReturn(true);
+        doThrow(new org.springframework.dao.DataAccessResourceFailureException("simulated delete failure"))
+                .when(aiGenerationMapper).deleteOwned(userId, id);
+        assertThat(sharingRequest(path, HttpMethod.DELETE, null, token).path("code").asInt()).isEqualTo(500);
+        assertThat(aiGenerationMapper.selectById(id)).isNotNull();
+        reset(aiGenerationMapper);
+        assertThat(sharingRequest(path, HttpMethod.DELETE, null, token).path("code").asInt()).isEqualTo(200);
+        assertThat(aiGenerationMapper.selectById(id)).isNull();
+        assertThat(imageFileService.quota(userId).getUsed()).isZero();
+        assertThat(imageFileService.quota(userId).getReserved()).isZero();
+        verify(aiImageClient, times(1)).generate(any());
     }
 
     /**

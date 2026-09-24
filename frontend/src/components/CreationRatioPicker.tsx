@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { GENERATION_RESOLUTIONS, generationResolution } from '../lib/rules'
+import {GEMINI_IMAGE_RESOLUTIONS, GENERATION_RESOLUTIONS, generationResolution} from '../lib/rules'
 
 /** 按模型支持的比例选图；原生 popover 负责点击外部和 Escape 关闭。 */
 export function CreationRatioPicker({ value, options, size, sizes, disabled, onChange, onSizeChange }: {
@@ -15,6 +15,7 @@ export function CreationRatioPicker({ value, options, size, sizes, disabled, onC
   const trigger = useRef<HTMLButtonElement>(null)
   const panel = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
+    const resolutions = sizes.some(item => generationResolution(item) === '512') ? GEMINI_IMAGE_RESOLUTIONS : GENERATION_RESOLUTIONS
 
   function positionPanel() {
     if (!trigger.current || !panel.current) return
@@ -72,7 +73,8 @@ export function CreationRatioPicker({ value, options, size, sizes, disabled, onC
           {options.map(option => <label key={option} className="creation-ratio-option">
             <input type="radio" name={id} value={option} checked={value === option} disabled={disabled}
               onChange={() => onChange(option)} aria-label={option} />
-            <span className="creation-ratio-symbol" aria-hidden="true"><span style={frameStyle(option)}>{option}</span></span>
+              <span className="creation-ratio-symbol" aria-hidden="true"><span style={frameStyle(option)}/></span>
+              <span className="creation-ratio-label" aria-hidden="true">{option}</span>
           </label>)}
         </div>
         <div className="creation-ratio-preview" role="img" aria-label={'画幅预览 ' + value}>
@@ -81,8 +83,9 @@ export function CreationRatioPicker({ value, options, size, sizes, disabled, onC
       </div>
       <section className="creation-resolution-panel" aria-label="分辨率">
         <div className="creation-resolution-heading"><span>分辨率</span><span>{size.replace('x', '×')}</span></div>
-        <div id="creation-resolution" className="creation-resolution-tiers" role="radiogroup" aria-label="分辨率">
-          {GENERATION_RESOLUTIONS.map(tier => {
+          <div id="creation-resolution" className="creation-resolution-tiers" role="radiogroup" aria-label="分辨率"
+               style={{gridTemplateColumns: `repeat(${resolutions.length}, minmax(0, 1fr))`}}>
+              {resolutions.map(tier => {
             const candidate = sizes.find(item => generationResolution(item) === tier)
             return <label key={tier} className="creation-resolution-tier" title={candidate ? candidate.replace('x', '×') : '当前比例不可用'}>
               <input type="radio" name={id + '-resolution'} value={candidate || tier} checked={!!candidate && size === candidate}

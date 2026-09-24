@@ -1,6 +1,22 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { calculateGenerationSize, fileError, formatSize, GENERATION_PRESETS, GENERATION_SIZES, generationResolution, generationSizeForRatio, imageAspectRatio, MAX_BYTES, passwordError, toDateTime } from './rules.ts'
+import {
+    calculateGenerationSize,
+    fileError,
+    formatSize,
+    GENERATION_PRESETS,
+    GENERATION_SIZES,
+    GEMINI_IMAGE_PRESETS,
+    GEMINI_IMAGE_SIZES,
+    GEMINI_IMAGE_RESOLUTIONS,
+    generationSizesForModel,
+    generationResolution,
+    generationSizeForRatio,
+    imageAspectRatio,
+    MAX_BYTES,
+    passwordError,
+    toDateTime
+} from './rules.ts'
 
 test('resolution presets retain exact aspect ratios and stay inside GPT Image 2 limits', () => {
   assert.deepEqual(GENERATION_PRESETS.map(item => item.ratio), ['1:1', '3:2', '2:3', '16:9', '9:16', '4:3', '3:4', '21:9'])
@@ -44,6 +60,34 @@ test('resolution presets retain exact aspect ratios and stay inside GPT Image 2 
   assert.equal(generationResolution('1536x864'), '')
   assert.equal(imageAspectRatio('2560x1080'), '64:27')
   for (const size of ['', 'auto', '0x0', '1024x', 'bad']) assert.equal(imageAspectRatio(size), size)
+})
+
+test('Gemini presets preserve official nominal ratios, four tiers and extreme dimensions without changing GPT options', () => {
+    assert.deepEqual(GEMINI_IMAGE_PRESETS.map(item => item.ratio), ['1:1', '1:4', '1:8', '2:3', '3:2', '3:4', '4:1', '4:3', '4:5', '5:4', '8:1', '9:16', '16:9', '21:9'])
+    assert.equal(new Set(GEMINI_IMAGE_SIZES).size, 56)
+    for (const code of ['gemini-3.1-flash-image', 'gemini-3.1-flash-image-preview']) {
+        assert.equal(generationSizesForModel(code), GEMINI_IMAGE_SIZES)
+    }
+    for (const code of ['gpt-image-2', 'gpt-image-2-preview', 'gemini-3.1-flash-imageother']) {
+        assert.equal(generationSizesForModel(code), GENERATION_SIZES)
+    }
+    for (const preset of GEMINI_IMAGE_PRESETS) {
+        preset.sizes.forEach((size, index) => {
+            const [width, height] = size.split('x').map(Number)
+            assert.equal(imageAspectRatio(size), preset.ratio)
+            assert.equal(generationResolution(size), GEMINI_IMAGE_RESOLUTIONS[index])
+            assert.ok(width * height <= 18874368)
+        })
+    }
+    assert.equal(imageAspectRatio('848x1264'), '2:3')
+    assert.equal(imageAspectRatio('1376x768'), '16:9')
+    assert.equal(generationResolution('4096x4096'), '4K')
+    assert.equal(generationSizeForRatio(GEMINI_IMAGE_SIZES, '1:8', '4096x4096'), '1536x12288')
+    assert.equal(generationSizeForRatio(GEMINI_IMAGE_SIZES, '8:1', '1536x12288'), '12288x1536')
+    assert.equal(generationSizeForRatio(GEMINI_IMAGE_SIZES, '1:8', '512x512'), '192x1536')
+    assert.equal(generationSizeForRatio(['192x1536', '384x3072'], '1:8', '4096x4096'), '384x3072')
+    assert.equal(generationSizeForRatio(['192x1536'], '1:8', '1024x1024'), '192x1536')
+    assert.equal(generationSizeForRatio(GENERATION_SIZES, '1:8', '1024x1024'), '')
 })
 
 test('empty storage displays zero while nonempty files retain their size formatting', () => {

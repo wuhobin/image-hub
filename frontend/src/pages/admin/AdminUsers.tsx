@@ -4,8 +4,10 @@ import { MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise'
 import { CaretLeft } from '@phosphor-icons/react/dist/csr/CaretLeft'
 import { CaretRight } from '@phosphor-icons/react/dist/csr/CaretRight'
+import {Eye} from '@phosphor-icons/react/dist/csr/Eye'
 import { adminApi } from '../../lib/admin/api'
 import type { UserPage } from '../../lib/admin/api'
+import {AdminSelect} from './AdminSelect'
 
 const message = (error: unknown) => error instanceof Error ? error.message : '请求失败，请稍后重试'
 
@@ -38,12 +40,17 @@ export default function AdminUsers() {
   return <div className="admin-users-page">
     <div className="admin-page-title"><div><span className="admin-eyebrow">账户与使用情况</span><h1>用户管理</h1><p>查找平台用户，查看他们的剩余积分。</p></div></div>
     <section className="admin-directory" aria-labelledby="admin-users-title">
-      <div className="admin-directory-heading"><h2 id="admin-users-title">用户列表 <span>{!loading && data ? data.total.toLocaleString() : '—'}</span></h2><span className="admin-readonly">只读视图</span></div>
+        <div className="admin-directory-heading"><h2
+            id="admin-users-title">用户列表 <span>{!loading && data ? data.total.toLocaleString() : '—'}</span></h2>
+            <span className="admin-readonly"><Eye size={14} aria-hidden="true"/>只读视图</span></div>
       <div className="admin-toolbar">
         <form className="admin-search" role="search" onSubmit={event => { event.preventDefault(); update(1, keyword.trim()); setRefresh(value => value + 1) }}>
           <MagnifyingGlass size={19} aria-hidden="true" /><label htmlFor="admin-search" className="visually-hidden">搜索用户名或邮箱</label><input id="admin-search" value={keyword} onChange={event => setKeyword(event.target.value)} maxLength={254} placeholder="搜索用户名或邮箱" type="search" /><button className="button button-secondary button-small" type="submit">搜索</button>
         </form>
-        <button className="button button-small admin-refresh" onClick={() => setRefresh(value => value + 1)} disabled={loading}><ArrowClockwise size={17} />刷新列表</button>
+          <button className="button button-small admin-refresh" aria-label="刷新用户列表" title="刷新用户列表"
+                  onClick={() => setRefresh(value => value + 1)} disabled={loading}><ArrowClockwise size={17}
+                                                                                                    aria-hidden="true"/><span>刷新列表</span>
+          </button>
       </div>
       <div className="admin-table-scroll" aria-busy={loading} tabIndex={0} aria-label="用户列表">
         <table className="admin-table"><thead><tr><th scope="col">用户</th><th scope="col">邮箱</th><th scope="col">注册时间</th><th scope="col" className="admin-number">剩余积分</th></tr></thead>
@@ -54,7 +61,9 @@ export default function AdminUsers() {
         </table>
       </div>
       <div className="admin-pagination"><span role="status" aria-live="polite">{loading ? '正在加载用户…' : data ? '共 ' + data.total + ' 位用户' : '暂未加载用户'}</span>
-        <div><label htmlFor="admin-page-size" className="visually-hidden">每页条数</label><select id="admin-page-size" value={pageSize} onChange={event => update(1, search, Number(event.target.value))}>{[20, 50, 100].map(size => <option key={size} value={size}>{size} 条 / 页</option>)}</select>
+          <div><AdminSelect id="admin-page-size" label="每页条数" value={String(pageSize)}
+                            options={[20, 50, 100].map(size => ({value: String(size), label: size + ' 条 / 页'}))}
+                            onChange={value => update(1, search, Number(value))}/>
           <button className="icon-button" aria-label="上一页" disabled={loading || page <= 1} onClick={() => update(page - 1)}><CaretLeft size={17} /></button><span>{page} / {totalPages}</span><button className="icon-button" aria-label="下一页" disabled={loading || !!error || page >= totalPages} onClick={() => update(page + 1)}><CaretRight size={17} /></button></div></div>
     </section>
     <p className="admin-scroll-hint">左右滑动表格，查看完整用户信息。</p>

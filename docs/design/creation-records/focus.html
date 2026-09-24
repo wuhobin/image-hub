@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>创作记录 · C 方案</title>
+    <link rel="stylesheet" href="design.css">
+    <script src="design.js" defer></script>
+</head>
+<body data-variant="c">
+<div class="preview-bar"><strong>创作记录 · 设计预览</strong>
+    <nav class="preview-tabs" aria-label="设计方案"><a href="index.html">A · 沉浸画廊</a><a href="archive.html">B ·
+        作品手册</a><a href="focus.html" aria-current="page">C · 大图工作台</a></nav>
+    <span class="preview-note">示例素材 · 可点击体验</span></div>
+<header class="topbar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">✳</span> Image Hub</div>
+    <div class="topnav"><span class="secondary">创作空间</span><span class="current">创作记录</span><span
+            class="secondary">我的图片</span><span class="avatar">林</span></div>
+</header>
+<main>
+    <header class="titlebar">
+        <div><p class="eyebrow">YOUR CREATIVE SPACE</p>
+            <h1>创作记录</h1>
+            <p class="subline">回到某个灵感，看看当时的每一个细节。</p></div>
+        <button class="primary" id="new-creation">＋ 开始创作</button>
+    </header>
+    <div class="toolbar">
+        <div class="filters" aria-label="记录状态">
+            <button data-filter="all" aria-pressed="true">全部 <span class="count">8</span></button>
+            <button data-filter="done" aria-pressed="false">已完成</button>
+            <button data-filter="running" aria-pressed="false">进行中</button>
+            <button data-filter="failed" aria-pressed="false">失败</button>
+        </div>
+        <div class="tools"><label class="search"><span aria-hidden="true">⌕</span><input type="search" id="search"
+                                                                                         placeholder="搜索创作记录"
+                                                                                         aria-label="搜索创作记录"></label><select
+                id="sort" aria-label="排列顺序">
+            <option value="desc">最新在前 ↓</option>
+            <option value="asc">最早在前 ↑</option>
+        </select></div>
+    </div>
+    <div id="content"></div>
+    <p class="footnote">设计预览 · 图片为 Unsplash 示例素材，记录为演示数据<br>点击图片查看详情；顶部可切换三个方案</p>
+</main>
+<dialog id="detail" aria-labelledby="dialog-title">
+    <div class="modal-head"><span id="dialog-title">创作详情</span>
+        <button aria-label="关闭详情" id="close-detail">×</button>
+    </div>
+    <div id="detail-body"></div>
+</dialog>
+</body>
+</html>

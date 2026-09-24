@@ -28,8 +28,9 @@ public class AiModelConfigParam {
     @Size(max = 512)
     private String apiKey;
 
-    @NotEmpty @Size(max = 32)
-    private List<@NotBlank @Pattern(regexp = "[0-9]{3,4}x[0-9]{3,4}") String> sizes;
+    @NotEmpty
+    @Size(max = 64)
+    private List<@NotBlank @Pattern(regexp = "[0-9]{3,5}x[0-9]{3,5}") String> sizes;
 
     @NotBlank
     private String defaultSize;

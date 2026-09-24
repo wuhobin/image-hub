@@ -30,7 +30,8 @@ public final class GeneratedImageFile implements MultipartFile {
                 }
                 reader.setInput(input, true, true);
                 int width = reader.getWidth(0), height = reader.getHeight(0);
-                if (width <= 0 || height <= 0 || (long) width * height > 8_294_400) {
+                // 最大支持 Gemini 4K 的 12288×1536 长图；仍在完整解码前限制像素，防止异常图片耗尽内存。
+                if (width <= 0 || height <= 0 || (long) width * height > 18_874_368) {
                     throw new BizException(400, "生成图片尺寸无效或超过像素上限");
                 }
                 reader.addIIOReadWarningListener((source, warning) -> { throw new IllegalArgumentException("Invalid image"); });

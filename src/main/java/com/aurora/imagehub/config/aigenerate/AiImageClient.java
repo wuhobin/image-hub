@@ -83,10 +83,12 @@ public class AiImageClient {
                                 }
                             }))
                             .requestInterceptor((request, body, execution) -> {
-                                // 当前 Spring AI 图片参数未提供 moderation，在发送前固定补充到 JSON。
                                 var objectMapper = new ObjectMapper();
-                                var requestBody = (com.fasterxml.jackson.databind.node.ObjectNode) objectMapper.readTree(   body);
-                                requestBody.put("moderation", "low");
+                                var requestBody = (com.fasterxml.jackson.databind.node.ObjectNode) objectMapper.readTree(body);
+                                // moderation 仅补充给已支持的 GPT Image 2；Gemini 等兼容渠道会拒绝该字段。
+                                if (task.getModelCode().equals("gpt-image-2") || task.getModelCode().startsWith("gpt-image-2-")) {
+                                    requestBody.put("moderation", "low");
+                                }
                                 if (task.getReferenceImageSource() != null) {
                                     requestBody.putArray("images").addObject().put("image_url", task.getReferenceImageSource());
                                 }

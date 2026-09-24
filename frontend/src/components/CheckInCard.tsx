@@ -5,7 +5,7 @@ import {api} from '../lib/api'
 import type {CheckIn} from '../lib/types'
 
 /** 状态只读加载；主动点击才领取，跨天和重新聚焦时更新资格。 */
-export function CheckInCard({onClaimed}: { onClaimed: () => void }) {
+export function CheckInCard({onClaimed, enabled = true}: { onClaimed: () => void; enabled?: boolean }) {
     const [status, setStatus] = useState<CheckIn | null>(null)
     const [loading, setLoading] = useState(true)
     const [busy, setBusy] = useState(false)
@@ -34,6 +34,7 @@ export function CheckInCard({onClaimed}: { onClaimed: () => void }) {
     }
 
     useEffect(() => {
+        if (!enabled) return
         void load()
         const refresh = () => {
             if (!document.hidden) void load()
@@ -46,7 +47,7 @@ export function CheckInCard({onClaimed}: { onClaimed: () => void }) {
             window.removeEventListener('focus', refresh)
             document.removeEventListener('visibilitychange', refresh)
         }
-    }, [])
+    }, [enabled])
 
     useEffect(() => {
         if (!status) return

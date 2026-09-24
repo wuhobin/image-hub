@@ -197,12 +197,65 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
         return task == null ? null : response(task);
     }
 
+    /**
+     * 与工作线程共用任务锁，先清理云文件再逻辑删除；中途失败保留任务供重试，积分流水不变。
+     */
+    @Override
+    public void delete(long userId, String id) {
+        requireOwned(userId, id);
+        withTaskLock(id, () -> {
+            AiGeneration task = requireOwned(userId, id);
+            if (!List.of("SUCCEEDED", "FAILED", "SAVE_FAILED", "EXPIRED", "ABANDONED").contains(task.getStatus())
+                    || task.getActiveUserId() != null || task.getWorkToken() != null) {
+                throw new BizException(409, "创作仍在处理中，请结束后再删除");
+            }
+            // 复用图库删除的归属校验和云端优先顺序；图片已从图库删除时仍可删除创作记录。
+            if (imageMapper.findOwned(userId, id) != null) imageFileService.delete(userId, id);
+            cleanupPendingUpload(task);
+            requireTaskLock(id);
+            if (aiGenerationMapper.deleteOwned(userId, id) != 1) {
+                throw new BizException(409, "创作状态已变化，请刷新后重试");
+            }
+            return null;
+        });
+    }
+
+    /**
+     * 旧调用仍查询全部状态，使用同一分页实现以保留归属校验与图片批量读取。
+     */
     @Override
     public Page<GenerationVO> history(long userId, int page, int pageSize) {
-        if (page < 1 || pageSize < 1 || pageSize > 50) throw new BizException(400, "分页参数无效");
+        var param = new com.aurora.imagehub.model.param.GenerationHistoryParam();
+        param.setPage(page);
+        param.setPageSize(pageSize);
+        return history(userId, param);
+    }
+
+    /**
+     * 在数据库中先筛选再分页，避免一页混合状态被前端过滤后只剩少量作品。
+     */
+    @Override
+    public Page<GenerationVO> history(long userId, com.aurora.imagehub.model.param.GenerationHistoryParam param) {
+        if (param.getPage() < 1 || param.getPageSize() < 1 || param.getPageSize() > 50) throw new BizException(400, "分页参数无效");
         uploadQuotaCache.releaseInterruptedGeneration(userId);
-        Page<AiGeneration> tasks = page(PageUtils.buildPage(page, pageSize), Wrappers.<AiGeneration>lambdaQuery()
-                .eq(AiGeneration::getUserId, userId).orderByDesc(AiGeneration::getCreateTime, AiGeneration::getId));
+        var query = Wrappers.<AiGeneration>lambdaQuery().eq(AiGeneration::getUserId, userId);
+        if (param.getStatus() != null) {
+            List<String> statuses = switch (param.getStatus()) {
+                case "done" -> List.of("SUCCEEDED");
+                case "running" -> List.of("QUEUED", "GENERATING", "SAVING");
+                case "failed" -> List.of("FAILED", "SAVE_FAILED", "EXPIRED", "ABANDONED");
+                default -> throw new BizException(400, "创作状态无效");
+            };
+            query.in(AiGeneration::getStatus, statuses);
+        }
+        if (param.getKeyword() != null && !param.getKeyword().isBlank()) {
+            String keyword = param.getKeyword().trim();
+            // OR 限定在同一括号内，不能绕过外层用户归属和状态条件。
+            query.and(condition -> condition.like(AiGeneration::getPrompt, keyword)
+                    .or().like(AiGeneration::getModelName, keyword));
+        }
+        query.orderBy(true, "asc".equals(param.getOrder()), AiGeneration::getCreateTime, AiGeneration::getId);
+        Page<AiGeneration> tasks = page(PageUtils.buildPage(param.getPage(), param.getPageSize()), query);
         var imageIds = tasks.getRecords().stream().filter(task -> TaskStatus.SUCCEEDED.name().equals(task.getStatus()))
                 .map(AiGeneration::getId).toList();
         var images = new java.util.HashMap<String, ImageVO>();
@@ -466,7 +519,11 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
     }
 
     private AiGeneration byRequest(long userId, String requestId) {
-        return getOne(Wrappers.<AiGeneration>lambdaQuery().eq(AiGeneration::getUserId, userId).eq(AiGeneration::getRequestId, requestId));
+        AiGeneration task = aiGenerationMapper.findByRequestIncludingDeleted(userId, requestId);
+        if (task != null && Integer.valueOf(1).equals(task.getDeleted())) {
+            throw new BizException(410, "该创作已删除，请重新发起创作");
+        }
+        return task;
     }
 
     private AiGeneration activeEntity(long userId) {

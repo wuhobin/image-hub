@@ -36,7 +36,7 @@ image-hub:
 | 默认质量 | `medium` |
 | 可选质量 | `low,medium,high,auto` |
 
-用户端独立选择比例、分辨率和质量，分辨率选项同时显示自动计算的实际像素。计算规则：
+用户端根据当前模型白名单选择比例、分辨率和质量，分辨率选项显示实际像素。以下计算规则仅用于 GPT-Image-2：
 
 - 按比例确定档位基准：3:2/2:3 最长边使用 1536、2160、3840；16:9/9:16 使用 1280、2560、3840；其余使用 1024、2048、3840。横竖版共用基准，保持最简宽高比，并按 16 像素对齐。
 - 超过 8294400 总像素时等比缩小，比例单位向下对齐到 32；因此方形 4K 为 2880×2880，4:3 的 4K 为 3200×2400，仍保留 4K 档位。
@@ -54,9 +54,24 @@ image-hub:
 | 3:4 | 768x1024 | 1536x2048 | 2400x3200 |
 | 21:9 | 1344x576 | 2016x864 | 3808x1632 |
 
-管理员自定义尺寸仍可使用，非计算预设显示为“自定义”。请求继续提交实际 `size`，服务端按模型白名单校验；历史任务保持原像素，详情显示比例、可识别的档位和像素。每张按所选模型配置消耗积分，结果受 `image-hub.ai.max-image-size` 文件上限和调用超时约束。
+Gemini 3.1 Flash Image 使用 [Google 官方尺寸表](https://ai.google.dev/gemini-api/docs/image-generation)，提供 14
+种比例（1:1、1:4、1:8、2:3、3:2、3:4、4:1、4:3、4:5、5:4、8:1、9:16、16:9、21:9）和 512、1K、2K、4K 四档，共 56 种尺寸。1:8 为
+192×1536、384×3072、768×6144、1536×12288，8:1 宽高相反；方形 4K 为 4096×4096。实际像素存在取整，界面使用官方名义比例。官网目前将
+21:9 的 512 档列为 792×168，与名义比例不一致，预设暂保留官网原值（核对日期：2026-09-24）。
 
-本期调用 OpenAI Images 兼容协议：JSON `model,prompt,n=1,size,quality,moderation=low`（moderation 固定为 low，不提供配置项），Bearer API Key，响应支持 `b64_json` 或图片 URL。使用 Spring AI `spring-ai-openai:1.1.8`，按任务配置创建客户端，不引入依赖全局 Key 的 starter。仅支持相同请求/响应协议及上述质量枚举；其他供应商的私有字段或多步接口需要另行适配。地址需使用公网 HTTPS 标准端口，不支持内网、身份信息、重定向或将密钥放入查询参数。
+升级后，在后台编辑现有 Gemini 配置，点击“使用全部预设”并保存，即可替换原先复用的 GPT 尺寸并清理模型缓存。新增时填写 Gemini
+模型代码会自动选择对应预设。后台先选择画面比例，再勾选该比例的分辨率，各比例独立保留选择；支持当前比例全选、清空，以及使用全部预设、清空全部。非当前模型预设的旧尺寸收在“已有其他尺寸”中，原选择保留。默认参数按比例、分辨率联动，只能选择已开放的尺寸。后台最多允许
+64 个尺寸，Gemini 边长上限为 12288、总像素上限为 18874368；其他模型保持原限制。仍通过中转站的 OpenAI Images 兼容协议提交实际
+`size`，不改为 Google 原生 `imageConfig`，中转站是否开放全部档位以实际支持为准。
+
+管理员自定义尺寸仍可使用，非预设显示为“自定义”。请求继续提交实际 `size`
+，服务端按模型白名单校验；历史任务保持原像素，详情显示比例、可识别的档位和像素。每张按所选模型配置消耗积分，结果受
+`image-hub.ai.max-image-size` 文件上限和调用超时约束。
+
+本期调用 OpenAI Images 兼容协议：JSON `model,prompt,n=1,size,quality`（仅 GPT-Image-2 额外发送 `moderation=low`，Gemini
+不发送此字段），Bearer API Key，响应支持 `b64_json` 或图片 URL。使用 Spring AI `spring-ai-openai:1.1.8`，按任务配置创建客户端，不引入依赖全局
+Key 的 starter。仅支持相同请求/响应协议及上述质量枚举；其他供应商的私有字段或多步接口需要另行适配。地址需使用公网 HTTPS
+标准端口，不支持内网、身份信息、重定向或将密钥放入查询参数。
 
 供应商模型的可用性和账户权限需以实际账户为准。代码测试使用本地 HTTP 桩和虚构 Key，未执行付费生图或真实七牛上传。
 
@@ -70,6 +85,9 @@ image-hub:
 - `GET /api/app/images/quota` 返回 `total,used,reserved,remaining`，其中 `remaining=max(0,total-used-reserved)`。删除图片不退还积分，已计费的图片记录不可物理清理。
 - 使用客户端生成的 UUID `requestId` 保证提交幂等。网络结果不明时须用**原 requestId 和参数**重试确认；更换 ID 会被视为新创作。
 - 离开页面不取消后台任务；返回后从服务端恢复当前任务和历史。
+- 创作记录支持删除本人已结束的作品（含失败记录）；排队、生成及保存中的任务返回
+  409。确认后先清理云图片和失败上传的遗留对象，再逻辑删除记录，分享链接同时失效；云端失败保留记录供重试，不退还已用积分。图片已从图库删除时仍可清除创作记录。原
+  requestId 继续占用，重放已删除创作返回 410，不再次生图。删除使用已有字段，无需数据库迁移。
 - 已接收任务使用模型配置快照，之后停用或删除模型只影响新任务。
 - `hub_image.source_type` 为 `UPLOAD` 或 `AI`，既有 `type` 继续表示 JPG/PNG 等文件格式。历史图片默认 `UPLOAD`。
 
@@ -84,7 +102,9 @@ flowchart LR
   S --> F
 ```
 
-一次领取完成生成与保存，不等待下一轮轮询，不保留跨请求、跨重启的图片字节。模型响应在 JSON 解析前按配置计算上限（Base64 长度 + 1 MiB JSON 包络），包含分块响应；Base64 解码后及 URL 下载过程继续校验实际字节数。上传前校验格式、首帧内容和 8294400 总像素上限。生成、校验、上传或记录保存失败均进入 FAILED 并释放预留，失败请求不会自动重新生成；用户重新提交会创建新任务，可能再次产生供应商费用。
+一次领取完成生成与保存，不等待下一轮轮询，不保留跨请求、跨重启的图片字节。模型响应在 JSON 解析前按配置计算上限（Base64 长度 +
+1 MiB JSON 包络），包含分块响应；Base64 解码后及 URL 下载过程继续校验实际字节数。上传前校验格式、首帧内容和 18874368
+总像素上限。生成、校验、上传或记录保存失败均进入 FAILED 并释放预留，失败请求不会自动重新生成；用户重新提交会创建新任务，可能再次产生供应商费用。
 
 任务提交持久化并释放积分锁后立即通知本实例派发，已处理任务结束后立即补位；默认每 2 秒轮询作为跨实例、重启和通知失败的兜底。派发入口串行执行短查询，并排除本实例已派发但尚未认领的任务；未处理异常交回定时轮询，避免故障忙循环。每个任务使用独立的 JDK 21 虚拟线程。`image-hub.ai.concurrency` 通过信号量限制单实例并发，默认 2，支持 1–8；任务结束或异常后释放许可，不复用虚拟线程。worker 只派发生成任务，不再执行过期扫描、结果清理或云文件清理。模型连接超时由 `image-hub.ai.connect-timeout-seconds` 配置，默认 30 秒，支持 1–60 秒；模型响应等待由 `image-hub.ai.timeout-seconds` 配置，默认 300 秒，支持 1–600 秒。开始和失败日志分别显示两项配置，修改后重启后端生效；返回 URL 后的图片下载仍使用原有独立超时。生成执行期限为响应超时加 60 秒；同一工作线程转入保存时设置 120 秒执行期限。网络操作在数据库事务外，成功终态与图片记录在同一短事务中提交。AI 保存遇到普通上传持有积分锁时，最多等待 10 秒；等待预算扣除已用保存时间并预留 5 秒给提交，数据库截止时间仍是最终提交条件。等待不占数据库事务，超时或中断不重放生图和上传。
 
@@ -108,18 +128,19 @@ ID 时仍用最近历史确认原提交，不自动重放生成。历史接口�
 
 外层沿用平台 `Result<T>`，分页沿用 MyBatis-Plus `Page<T>`。用户 ID 取自 Sa-Token，所有任务和图片查询校验归属。
 
-| 方法 / 路径 | 用途 |
-| --- | --- |
-| GET `/api/app/generations/models` | 用户可选模型（无地址和密钥） |
-| POST `/api/app/generations` | 提交 `requestId,modelId,prompt,size,quality` |
-| GET `/api/app/generations/active` | 当前未结束任务，没有时 data 为 null |
-| GET `/api/app/generations?page=1&pageSize=12` | 本人创作历史 |
-| GET `/api/app/generations/{id}` | 本人任务详情 |
-| POST `/api/app/generations/{id}/retry-save` | 兼容旧客户端；验证归属后返回 409，不重新生成 |
-| POST `/api/app/generations/{id}/abandon` | 兼容旧客户端；验证归属后返回 409，无暂存结果可放弃 |
-| GET `/api/app/images?sourceType=AI` | 按来源筛选图片；也可传 UPLOAD 或空 |
-| GET / POST `/api/admin/ai-models` | 管理分页 / 新增模型 |
-| PUT / DELETE `/api/admin/ai-models/{id}` | 编辑 / 逻辑删除模型 |
+| 方法 / 路径                                       | 用途                                         |
+|-----------------------------------------------|--------------------------------------------|
+| GET `/api/app/generations/models`             | 用户可选模型（无地址和密钥）                             |
+| POST `/api/app/generations`                   | 提交 `requestId,modelId,prompt,size,quality` |
+| GET `/api/app/generations/active`             | 当前未结束任务，没有时 data 为 null                    |
+| GET `/api/app/generations?page=1&pageSize=12` | 本人创作历史                                     |
+| GET `/api/app/generations/{id}`               | 本人任务详情                                     |
+| DELETE `/api/app/generations/{id}`            | 删除本人终态作品及图片，撤销分享，不退积分                      |
+| POST `/api/app/generations/{id}/retry-save`   | 兼容旧客户端；验证归属后返回 409，不重新生成                   |
+| POST `/api/app/generations/{id}/abandon`      | 兼容旧客户端；验证归属后返回 409，无暂存结果可放弃                |
+| GET `/api/app/images?sourceType=AI`           | 按来源筛选图片；也可传 UPLOAD 或空                      |
+| GET / POST `/api/admin/ai-models`             | 管理分页 / 新增模型                                |
+| PUT / DELETE `/api/admin/ai-models/{id}`      | 编辑 / 逻辑删除模型                                |
 
 管理员配置字段：`name,modelCode,baseUrl,imagesPath,apiKey,sizes,defaultSize,qualities,defaultQuality,pointsCost,enabled,sortOrder`。名称包括已删除记录在内不得重复。默认尺寸和质量必须属于允许列表。提示词最大 4000 字符；用户任务分页每页最多 50 条，管理员模型分页每页最多 100 条。
 

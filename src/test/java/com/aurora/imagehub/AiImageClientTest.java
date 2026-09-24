@@ -90,7 +90,9 @@ class AiImageClientTest {
         }
     }
 
-    /** 真实 HTTP 桩验证 edits JSON 参考图字段，且无参考图时保持原有文字生图请求。 */
+    /**
+     * 真实 HTTP 桩验证文字和参考图请求；GPT 保留 moderation，Gemini 不发送该字段。
+     */
     @Test
     void sendsReferenceImageToEditsWithoutChangingTextOnlyRequests() throws Exception {
         var captured = new AtomicReference<String>();
@@ -115,28 +117,38 @@ class AiImageClientTest {
             task.setId("reference-test");
             task.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
             task.setApiKeyCiphertext(modelKeyCipher.encrypt("test-only-key"));
-            task.setModelCode("gpt-image-2");
             task.setPrompt("保留参考图主体，背景改成海边");
             task.setImageSize("1024x1024");
             task.setQuality("medium");
-            for (boolean withReference : new boolean[]{true, false}) {
-                task.setImagesPath(withReference ? "/v1/images/edits" : "/v1/images/generations");
-                task.setReferenceImageSource(withReference ? "data:image/png;base64,cHJpdmF0ZS1yZWZlcmVuY2U=" : null);
-                assertThat(aiImageClient.generate(task)).containsExactly(1, 2, 3);
-                String[] request = captured.get().split("\n", 2);
-                assertThat(request[0]).isEqualTo(task.getImagesPath());
-                var body = new ObjectMapper().readTree(request[1]);
-                assertThat(body.path("moderation").asText()).isEqualTo("low");
-                assertThat(body.path("n").asInt()).isEqualTo(1);
-                if (withReference) {
-                    assertThat(body.path("images").size()).isEqualTo(1);
-                    assertThat(body.path("images").get(0).path("image_url").asText()).isEqualTo(task.getReferenceImageSource());
-                    assertThat(diagnosticLogs()).contains("[参考图 Base64 内容已省略]").doesNotContain(task.getReferenceImageSource());
-                } else {
-                    assertThat(body.has("images")).isFalse();
+            for (String modelCode : new String[]{"gpt-image-2", "gemini-3.1-flash-image"}) {
+                task.setModelCode(modelCode);
+                task.setImageSize(modelCode.equals("gemini-3.1-flash-image") ? "12288x1536" : "1024x1024");
+                for (boolean withReference : new boolean[]{true, false}) {
+                    task.setImagesPath(withReference ? "/v1/images/edits" : "/v1/images/generations");
+                    task.setReferenceImageSource(withReference ? "data:image/png;base64,cHJpdmF0ZS1yZWZlcmVuY2U=" : null);
+                    assertThat(aiImageClient.generate(task)).containsExactly(1, 2, 3);
+                    String[] request = captured.get().split("\n", 2);
+                    assertThat(request[0]).isEqualTo(task.getImagesPath());
+                    var body = new ObjectMapper().readTree(request[1]);
+                    assertThat(body.path("model").asText()).isEqualTo(modelCode);
+                    if (modelCode.equals("gpt-image-2")) {
+                        assertThat(body.path("moderation").asText()).isEqualTo("low");
+                    } else {
+                        assertThat(body.has("moderation")).isFalse();
+                    }
+                    assertThat(body.path("n").asInt()).isEqualTo(1);
+                    assertThat(body.path("size").asText()).isEqualTo(task.getImageSize());
+                    assertThat(body.path("quality").asText()).isEqualTo(task.getQuality());
+                    if (withReference) {
+                        assertThat(body.path("images").size()).isEqualTo(1);
+                        assertThat(body.path("images").get(0).path("image_url").asText()).isEqualTo(task.getReferenceImageSource());
+                        assertThat(diagnosticLogs()).contains("[参考图 Base64 内容已省略]").doesNotContain(task.getReferenceImageSource());
+                    } else {
+                        assertThat(body.has("images")).isFalse();
+                    }
                 }
             }
-            assertThat(calls.get()).isEqualTo(2);
+            assertThat(calls.get()).isEqualTo(4);
         } finally { server.stop(0); }
     }
 
@@ -344,6 +356,16 @@ class AiImageClientTest {
         // PNG IHDR中的宽高位于16、20字节；尺寸检查应发生在像素分配之前。
         java.nio.ByteBuffer.wrap(oversized).putInt(16, 100_000).putInt(20, 100_000);
         assertThatThrownBy(() -> new com.aurora.imagehub.config.aigenerate.GeneratedImageFile(oversized, new AiImageLimits("10MB"))).isInstanceOf(BizException.class);
+        // 覆盖 Gemini 方形 4K 和最大像素长图，旧的 GPT 像素上限会拒绝这两种合法结果。
+        for (int[] dimensions : new int[][]{{4096, 4096}, {12288, 1536}}) {
+            bytes.reset();
+            ImageIO.write(new BufferedImage(dimensions[0], dimensions[1], BufferedImage.TYPE_BYTE_GRAY), "png", bytes);
+            assertThat(new com.aurora.imagehub.config.aigenerate.GeneratedImageFile(bytes.toByteArray(), new AiImageLimits("10MB")).getSize())
+                    .isEqualTo(bytes.size());
+        }
+        java.nio.ByteBuffer.wrap(oversized).putInt(16, 12289).putInt(20, 1536);
+        assertThatThrownBy(() -> new com.aurora.imagehub.config.aigenerate.GeneratedImageFile(oversized, new AiImageLimits("10MB")))
+                .isInstanceOf(BizException.class).hasMessageContaining("像素上限");
     }
 
     /** 覆盖配置增大、Base64 填充边界，以及有长度和分块 URL 下载。 */

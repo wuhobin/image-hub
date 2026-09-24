@@ -68,20 +68,21 @@ export default function Profile({ app }: { app: AppState }) {
             </dd>
           </div>)}
         </dl>
-        {(loading || quotaError || quota?.remaining === 0) && <div className="profile-quota-status" role="status">
+          <div className="profile-quota-status" role="status">
           {loading ? '正在读取积分…' : quotaError ? <button type="button" className="text-button" onClick={retry}>{quotaError} · 重试</button>
-            : '共享积分已用完。'}
-        </div>}
+              : quota?.remaining === 0 ? '共享积分已用完。' : '\u00a0'}
+          </div>
       </section>
     </div>
-      {app.user && <CheckInCard key={app.user} onClaimed={() => {
+      {(app.initializing || app.user) && <CheckInCard enabled={!!app.user} key={app.user} onClaimed={() => {
           setPage(1)
           setRevision(value => value + 1)
           void app.refreshQuota().catch(() => {
           })
       }}/>}
     <div className="profile-dashboard">
-    {app.user && <section className="profile-usage" aria-labelledby="profile-usage-title" aria-busy={recordsLoading}>
+        {(app.initializing || app.user) &&
+            <section className="profile-usage" aria-labelledby="profile-usage-title" aria-busy={recordsLoading}>
       <header>
           <div><h2 id="profile-usage-title">积分明细</h2><p>签到奖励与创作消费，每一笔都有记录。</p></div>
         <button type="button" className="profile-refresh" disabled={recordsLoading} onClick={() => setRevision(value => value + 1)}>

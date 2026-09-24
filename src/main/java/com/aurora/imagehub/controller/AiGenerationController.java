@@ -46,11 +46,12 @@ public class AiGenerationController {
         return Result.data(aiGenerationService.submit(StpUtil.getLoginIdAsLong(), param, references.getFirst()));
     }
 
-    /** 返回本人历史，不包含模型密钥。 */
+    /**
+     * 返回本人历史，先筛选再分页；不传筛选参数时保持旧接口行为，不包含模型密钥。
+     */
     @GetMapping
-    public Result<Page<GenerationVO>> history(@RequestParam(defaultValue = "1") int page,
-                                              @RequestParam(defaultValue = "12") int pageSize) {
-        return Result.data(aiGenerationService.history(StpUtil.getLoginIdAsLong(), page, pageSize));
+    public Result<Page<GenerationVO>> history(@Valid @ModelAttribute com.aurora.imagehub.model.param.GenerationHistoryParam param) {
+        return Result.data(aiGenerationService.history(StpUtil.getLoginIdAsLong(), param));
     }
 
     /** 页面重新打开时恢复尚未结束的任务。 */
@@ -63,6 +64,15 @@ public class AiGenerationController {
     @GetMapping("/{id}")
     public Result<GenerationVO> task(@PathVariable String id) {
         return Result.data(aiGenerationService.task(StpUtil.getLoginIdAsLong(), id));
+    }
+
+    /**
+     * 删除本人已结束的创作及图片，文件删除失败时保留记录供重试。
+     */
+    @DeleteMapping("/{id}")
+    public Result<Void> delete(@PathVariable String id) {
+        aiGenerationService.delete(StpUtil.getLoginIdAsLong(), id);
+        return Result.success();
     }
 
     /**

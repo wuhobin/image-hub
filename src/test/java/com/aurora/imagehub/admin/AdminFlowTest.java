@@ -293,6 +293,59 @@ class AdminFlowTest {
     @Autowired
     private ModelKeyCipher modelKeyCipher;
 
+    /**
+     * 通过真实管理接口验证 Gemini 全部档位、五位数长边及模型间边界隔离。
+     */
+    @Test
+    void geminiSizesAllowOfficialPresetsWithoutRelaxingOtherModels() {
+        String admin = login("/api/admin/auth/login", "operator");
+        var body = new HashMap<String, Object>();
+        body.put("name", "Gemini size validation");
+        body.put("modelCode", "gemini-3.1-flash-image");
+        body.put("baseUrl", "https://api.openai.com");
+        body.put("qualities", List.of("medium"));
+        body.put("defaultQuality", "medium");
+        var sizes = List.of(
+                "512x512", "1024x1024", "2048x2048", "4096x4096",
+                "256x1024", "512x2048", "1024x4096", "2048x8192",
+                "192x1536", "384x3072", "768x6144", "1536x12288",
+                "424x632", "848x1264", "1696x2528", "3392x5056",
+                "632x424", "1264x848", "2528x1696", "5056x3392",
+                "448x600", "896x1200", "1792x2400", "3584x4800",
+                "1024x256", "2048x512", "4096x1024", "8192x2048",
+                "600x448", "1200x896", "2400x1792", "4800x3584",
+                "464x576", "928x1152", "1856x2304", "3712x4608",
+                "576x464", "1152x928", "2304x1856", "4608x3712",
+                "1536x192", "3072x384", "6144x768", "12288x1536",
+                "384x688", "768x1376", "1536x2752", "3072x5504",
+                "688x384", "1376x768", "2752x1536", "5504x3072",
+                "792x168", "1584x672", "3168x1344", "6336x2688");
+        body.put("sizes", sizes);
+        body.put("defaultSize", "1536x12288");
+        try {
+            var result = post("/api/admin/ai-models", body, admin);
+            assertThat(result.path("code").asInt()).isEqualTo(200);
+            assertThat(result.path("data").path("sizes").size()).isEqualTo(56);
+            assertThat(result.path("data").path("defaultSize").asText()).isEqualTo("1536x12288");
+            String path = "/api/admin/ai-models/" + result.path("data").path("id").asText();
+            for (String code : List.of("gemini-3.1-flash-image-preview", "gpt-image-2", "gpt-image-2-preview", "another-model")) {
+                body.put("modelCode", code);
+                assertThat(request(path, HttpMethod.PUT, body, admin).path("code").asInt())
+                        .isEqualTo(code.startsWith("gemini-") ? 200 : 400);
+            }
+            body.put("modelCode", "gemini-3.1-flash-image");
+            for (String invalid : List.of("167x1024", "12289x1536", "4096x8192", "12288x512", "100000x192")) {
+                body.put("sizes", List.of("1024x1024", invalid));
+                body.put("defaultSize", "1024x1024");
+                assertThat(request(path, HttpMethod.PUT, body, admin).path("code").asInt()).isEqualTo(400);
+            }
+            body.put("sizes", Collections.nCopies(65, "1024x1024"));
+            assertThat(request(path, HttpMethod.PUT, body, admin).path("code").asInt()).isEqualTo(400);
+        } finally {
+            jdbcTemplate.update("DELETE FROM hub_ai_model WHERE name='Gemini size validation'");
+        }
+    }
+
     @MockitoBean
     private AiEndpointPolicy aiEndpointPolicy;
 

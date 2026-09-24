@@ -53,6 +53,12 @@ export type CheckIn = {
 
 export type AiModel = { id: number; name: string; sizes: string[]; defaultSize: string; qualities: string[]; defaultQuality: string; pointsCost: number }
 export type AiModelConfig = AiModel & { modelCode: string; baseUrl: string; imagesPath: string; keyConfigured: boolean; enabled: boolean; sortOrder: number; updateTime: string }
+export type GenerationHistoryFilter = {
+    status: 'done' | 'running' | 'failed'
+    keyword: string
+    order: 'asc' | 'desc'
+}
+
 export type Generation = {
   id: string; requestId: string; modelName: string; prompt: string; size: string; quality: string
   status: 'QUEUED' | 'GENERATING' | 'SAVING' | 'SAVE_FAILED' | 'SUCCEEDED' | 'FAILED' | 'EXPIRED' | 'ABANDONED'

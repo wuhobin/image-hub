@@ -10,12 +10,12 @@ import { useImageHub } from './lib/useImageHub'
 
 const NoticeToast = lazy(() => import('./components/NoticeToast').then(module => ({default: module.NoticeToast})))
 const ImagePreview = lazy(() => import('./components/ImagePreview').then(module => ({default: module.ImagePreview})))
-const Profile = lazy(() => import('./pages/Profile'))
-const History = lazy(() => import('./pages/History'))
-const Upload = lazy(() => import('./pages/Home'))
-const Auth = lazy(() => import('./pages/Auth'))
-const Explore = lazy(() => import('./pages/Explore'))
-const SharedCreation = lazy(() => import('./pages/SharedCreation'))
+import Profile from './pages/Profile'
+import History from './pages/History'
+import Upload from './pages/Home'
+import Auth from './pages/Auth'
+import Explore from './pages/Explore'
+import SharedCreation from './pages/SharedCreation'
 export type AppState = ReturnType<typeof useImageHub>
 
 function Header({ app }: { app: AppState }) {
@@ -115,15 +115,10 @@ export default function App() {
   return <>
     <a className="skip-link" href="#main">跳到主要内容</a>
     <Header app={app} />
-    <Suspense fallback={location.pathname === '/history' ? <HistoryLoading /> : <main id="main" className="empty-state" role="status">正在加载页面…</main>}>
+      {/* 页面主体随入口加载，异步等待只更新数据区，避免路由占位导致整页塌缩。 */}
     <Routes>
-        <Route path="/" element={app.initializing ?
-            <main id="main" className="creation-page hero creation-loading" aria-busy="true">
-                <div className="starfield ambient-layer" aria-hidden="true"/>
-                <p role="status">正在恢复创作空间…</p></main> :
-            <Create key={app.user ? 'user:' + app.user : 'guest'} app={app}/>}/>
-        <Route path="/creations" element={app.initializing ?
-            <main id="main" className="empty-state" role="status">正在恢复创作记录…</main> : app.user ?
+        <Route path="/" element={<Create key={app.user ? 'user:' + app.user : 'guest'} app={app}/>}/>
+        <Route path="/creations" element={app.initializing || app.user ?
                 <Create key={'history:' + app.user} app={app} view="history"/> :
                 <Navigate to="/login" state={{from: '/creations'}} replace/>}/>
       <Route path="/create" element={<Navigate to="/" state={location.state} replace />} />
@@ -136,7 +131,6 @@ export default function App() {
       <Route path="/register" element={<Auth app={app} mode="register" />} />
       <Route path="*" element={<main id="main" className="not-found"><h1>这里还没有图片。</h1><p>页面不存在，回首页开始一次新的创作。</p><Link to="/" className="button button-primary">返回首页</Link></main>} />
     </Routes>
-    </Suspense>
     <footer className="footer">
       <span className="footer-brand">ImgHub</span>
       <span>从一个想法，到一张图片。</span>

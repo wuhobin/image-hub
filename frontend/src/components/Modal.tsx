@@ -22,7 +22,10 @@ export function Modal({ title, onClose, children, className = '' }: { title: str
       })
     }
   }, [])
-  return <dialog ref={ref} className={`modal ${className}`} onCancel={onClose}
+    return <dialog ref={ref} className={`modal ${className}`} onCancel={event => {
+        event.preventDefault();
+        onClose()
+    }}
     onClick={event => { if (event.target === event.currentTarget) onClose() }} aria-labelledby={titleId}>
     <div className="modal-inner">
       <div className="modal-header"><h2 id={titleId}>{title}</h2><button className="icon-button" onClick={onClose} aria-label="关闭弹窗"><X size={21} /></button></div>
@@ -30,4 +33,3 @@ export function Modal({ title, onClose, children, className = '' }: { title: str
     </div>
   </dialog>
 }
-

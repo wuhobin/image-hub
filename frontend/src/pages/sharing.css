@@ -39,80 +39,159 @@
     color: var(--text);
 }
 
-.explore-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 34px 24px;
+/* 广场沿用创作记录的中性深色画廊，以作品本身为主。 */
+body:has(.explore-page) {
+    background: #101214;
+}
+
+.explore-page {
+    max-width: 1320px;
+    --muted: #a0a6aa;
+    --surface: #1a1d20;
 }
 
 .explore-card {
-    min-width: 0;
     display: block;
-    border-radius: 10px;
+    min-width: 0;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: #f1f2f3;
+    text-decoration: none;
 }
 
 .explore-image {
-    position: relative;
-    aspect-ratio: 4 / 3;
-    background: var(--surface);
+    display: block;
     overflow: hidden;
-    border-radius: 10px;
-    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: transparent;
 }
 
 .explore-image img {
+    display: block;
     width: 100%;
-    height: 100%;
-    object-fit: contain;
+    height: auto;
 }
 
-.explore-image > span {
-    position: absolute;
-    left: 12px;
-    bottom: 12px;
-    padding: 4px 8px;
-    background: #090b10d9;
-    border: 1px solid #ffffff26;
-    border-radius: 5px;
-    font-size: 10px;
-    color: #e4edff;
-}
-
-.explore-card:hover .explore-image {
-    border-color: var(--accent);
-}
-
-.explore-caption {
+.explore-copy {
     display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 14px;
-    margin: 14px 0 8px;
-    font-size: 11px;
-    color: var(--muted);
+    flex-direction: column;
+    min-width: 0;
+    gap: 9px;
+    padding: 14px 1px 0;
 }
 
-.explore-caption > span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.explore-caption .explore-author {
-    font-size: 14px;
-    color: var(--text);
-    font-weight: 600;
+.explore-avatar {
+    flex: 0 0 32px;
+    width: 32px;
+    height: 32px;
 }
 
 .explore-prompt {
-    color: var(--muted);
-    font-size: 12px;
-    line-height: 1.7;
+    margin: 0;
+    color: #f1f2f3;
+    font-size: 14px;
+    line-height: 1.6;
     overflow: hidden;
     display: -webkit-box;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
     overflow-wrap: anywhere;
+}
+
+.explore-caption {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    margin: 0;
+    color: #a0a6aa;
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.explore-author {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.explore-card:focus-visible .explore-prompt {
+    text-decoration: underline;
+    text-underline-offset: 4px;
+}
+
+.explore-card:focus-visible {
+    outline: none;
+}
+
+.explore-card:focus-visible .explore-prompt {
+    color: #fff;
+}
+
+.explore-loading {
+    grid-auto-rows: auto;
+}
+
+.explore-loading .explore-image {
+    aspect-ratio: 1;
+    background: #191f2980;
+}
+
+.explore-loading .explore-copy .skeleton-block {
+    max-width: 100%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .explore-heading, .explore-toolbar {
+        animation: explore-enter .4s ease-out backwards;
+    }
+
+    a.explore-card {
+        animation: explore-enter .42s cubic-bezier(.22, 1, .36, 1) backwards;
+    }
+}
+
+@keyframes explore-enter {
+    from {
+        opacity: 0;
+        transform: translateY(12px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+    a.explore-card .explore-image {
+        transition: transform .24s cubic-bezier(.22, 1, .36, 1), box-shadow .24s ease;
+    }
+
+    a.explore-card:hover .explore-image {
+        transform: translateY(-3px);
+        box-shadow: 0 10px 24px #0005;
+    }
+}
+
+@media (max-width: 1200px) {
+    .explore-loading .explore-card:nth-child(n + 4) {
+        display: none;
+    }
+}
+
+@media (max-width: 960px) {
+    .explore-loading .explore-card:nth-child(n + 3) {
+        display: none;
+    }
+}
+
+@media (max-width: 560px) {
+    .explore-loading .explore-card:nth-child(n + 2) {
+        display: none;
+    }
 }
 
 .sharing-state {
@@ -417,11 +496,6 @@
         padding: 36px 24px 60px;
     }
 
-    .explore-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 26px 18px;
-    }
-
     .shared-work {
         gap: 28px;
         grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
@@ -440,10 +514,6 @@
         margin-bottom: 28px;
     }
 
-    .explore-grid {
-        grid-template-columns: minmax(0, 1fr);
-    }
-
     .shared-work {
         grid-template-columns: minmax(0, 1fr);
         gap: 20px;
@@ -456,4 +526,13 @@
     .shared-information {
         padding-top: 0;
     }
+}
+
+/* 占位沿用真实作品网格；刷新时保留旧内容，请求失败仍清除撤销的公开作品。 */
+.shared-skeleton .shared-artwork {
+    aspect-ratio: 1;
+}
+
+.shared-prompt-placeholder {
+    height: 180px;
 }

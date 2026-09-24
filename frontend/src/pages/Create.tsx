@@ -6,18 +6,19 @@ import { ArrowUpRight } from '@phosphor-icons/react/dist/csr/ArrowUpRight'
 import { ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp'
 import { ImageSquare } from '@phosphor-icons/react/dist/csr/ImageSquare'
 import { X } from '@phosphor-icons/react/dist/csr/X'
-import { ArrowUUpLeft } from '@phosphor-icons/react/dist/csr/ArrowUUpLeft'
+import {Warning} from '@phosphor-icons/react/dist/csr/Warning'
 import type { AppState } from '../App'
-import type {AiModel, CreationPreset, Generation, ImageRecord, Page} from '../lib/types'
+import type {AiModel, CreationPreset, Generation, GenerationHistoryFilter, ImageRecord, Page} from '../lib/types'
 import { api, ApiError } from '../lib/api'
 import { MAX_BYTES, fileError, generationResolution, generationSizeForRatio, imageAspectRatio } from '../lib/rules'
 import { Ambient } from '../components/Ambient'
 import { QuotaStatus } from '../components/QuotaStatus'
+import {Modal} from '../components/Modal'
 import { CreationRatioPicker } from '../components/CreationRatioPicker'
 import './create.css'
 
 const CreationCurrent = lazy(() => import('../components/CreationCurrent'))
-const CreationRecords = lazy(() => import('../components/CreationRecords'))
+import CreationRecords from '../components/CreationRecords'
 const CreationDetail = lazy(() => import('../components/CreationDetail'))
 
 const labels: Record<Generation['status'], string> = {
@@ -61,10 +62,18 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
   const [active, setActive] = useState<Generation | null>(null)
   const [latestTask, setLatestTask] = useState<Generation | null>(null)
   const [detail, setDetail] = useState<Generation | null>(null)
+    const [deleting, setDeleting] = useState<Generation | null>(null)
+    const [deletingBusy, setDeletingBusy] = useState(false)
+    const [deleteError, setDeleteError] = useState('')
   const [history, setHistory] = useState<Page<Generation> | null>(null)
   const [page, setPage] = useState(1)
+    const [historyFilter, setHistoryFilter] = useState<GenerationHistoryFilter>({
+        status: 'done',
+        keyword: '',
+        order: 'desc'
+    })
   const [loading, setLoading] = useState(!!app.user)
-  const [historyLoading, setHistoryLoading] = useState(!!app.user)
+    const [historyLoading, setHistoryLoading] = useState(!!app.user || app.initializing)
   const [error, setError] = useState('')
   const [modelsError, setModelsError] = useState('')
   const [modelsLoading, setModelsLoading] = useState(!!app.user)
@@ -75,6 +84,8 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
   const [modelsRevision, setModelsRevision] = useState(0)
   const [historyError, setHistoryError] = useState('')
   const observedTask = useRef<Generation | null>(null)
+    const historyDeletion = useRef(0)
+    const focusAfterDelete = useRef(false)
   const pending = useRef<Submission | null>(null)
   const submitting = useRef(false)
   const mounted = useRef(false)
@@ -84,8 +95,8 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
     // 工作台只展示本次提交或进入页面时恢复的活动任务，不加载已完成的历史作品。
   const currentTask = active || latestTask
   const historyRecords = history?.records || []
-  const visibleRecords = page === 1 && currentTask && !historyRecords.some(item => item.id === currentTask.id)
-    ? [currentTask, ...historyRecords].slice(0, 12) : historyRecords
+    // 记录页只使用服务端筛选后的结果，不能把不匹配状态的活动任务插入当前页。
+    const visibleRecords = historyRecords
   const ratio = imageAspectRatio(size)
   const ratios = [...new Set(model?.sizes.map(imageAspectRatio) || [])]
   const ratioSizes = model?.sizes.filter(value => imageAspectRatio(value) === ratio) || []
@@ -117,12 +128,12 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
     mounted.current = true
       document.title = historyView ? 'ImgHub · 创作记录' : 'ImgHub · AI 创作'
       // 登录或记录页传来的描述、参考图只消费一次，避免浏览器返回时重新填入。
-      if (location.state?.creationPrompt || location.state?.referenceImage) {
+      if (!app.initializing && (location.state?.creationPrompt || location.state?.referenceImage)) {
           navigate(location.pathname, {replace: true, state: null})
           requestAnimationFrame(() => document.getElementById('creation-prompt')?.focus({preventScroll: true}))
       }
     return () => { mounted.current = false }
-  }, [])
+  }, [app.initializing])
 
   useEffect(() => {
       if (!app.user || historyView) return
@@ -158,6 +169,14 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
     observedTask.current = null
   }, [app.user])
 
+    useEffect(() => {
+        if (deleting || !focusAfterDelete.current) return
+        focusAfterDelete.current = false
+        // 等确认弹窗卸载、解除原生 dialog 的焦点限制后，再聚焦列表标题。
+        const frame = requestAnimationFrame(() => document.getElementById('creation-history-title')?.focus({preventScroll: true}))
+        return () => cancelAnimationFrame(frame)
+    }, [deleting])
+
     // 只有记录页请求分页；工作台的任务轮询不依赖历史列表。
   useEffect(() => {
       if (!app.user || !historyView) return
@@ -167,14 +186,23 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
     async function refreshHistory() {
       if (document.hidden) { timer = setTimeout(refreshHistory, 5000); return }
       const beforeRequest = observedTask.current
+        const beforeDeletion = historyDeletion.current
       try {
-        const records = await api<Page<Generation>>('/generations?page=' + page + '&pageSize=12', { signal: controller.signal })
-        if (controller.signal.aborted) return
+          const search = new URLSearchParams({
+              page: String(page), pageSize: '12', status: historyFilter.status,
+              keyword: historyFilter.keyword.trim(), order: historyFilter.order
+          })
+          const records = await api<Page<Generation>>('/generations?' + search, {signal: controller.signal})
+          if (controller.signal.aborted || beforeDeletion !== historyDeletion.current) return
         const latest = observedTask.current
         // 请求途中已经观察到更新状态时，不能被较早发出的历史响应覆盖。
         if (latest && latest !== beforeRequest) {
           records.records = records.records.map(item => updateHistoryTask(item, latest))
         }
+          if (page > Math.max(1, records.pages)) {
+              setPage(Math.max(1, records.pages))
+              return
+          }
         setHistory(records)
         setHistoryError('')
       } catch (error) {
@@ -186,9 +214,10 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
         if (!controller.signal.aborted) setHistoryLoading(false)
       }
     }
-    void refreshHistory()
+
+      timer = setTimeout(refreshHistory, historyFilter.keyword.trim() ? 250 : 0)
     return () => { controller.abort(); clearTimeout(timer) }
-  }, [page, historyRevision, revision, app.user, historyView])
+  }, [page, historyFilter, historyRevision, revision, app.user, historyView])
 
   useEffect(() => {
     if (!app.user) return
@@ -253,6 +282,7 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+      if (app.initializing) return
     if (!app.user) { navigate('/login', { state: { from: '/', creationPrompt: prompt } }); return }
     if (submitting.current || active || (!pending.current && (!model || !prompt.trim()))) return
     submitting.current = true
@@ -307,6 +337,37 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
     requestAnimationFrame(() => document.getElementById('creation-prompt')?.focus())
   }
 
+    async function confirmDelete() {
+        if (!deleting || deletingBusy) return
+        setDeletingBusy(true)
+        setDeleteError('')
+        try {
+            try {
+                await api<void>('/generations/' + encodeURIComponent(deleting.id), {method: 'DELETE'})
+            } catch (error) {
+                // 响应丢失后重试、或另一页面已删除时，将不存在视为操作已完成。
+                if (!(error instanceof ApiError) || error.code !== 404) throw error
+            }
+            if (!mounted.current) return
+            historyDeletion.current++
+            setHistory(previous => previous ? {
+                ...previous,
+                records: previous.records.filter(item => item.id !== deleting.id)
+            } : previous)
+            setDetail(previous => previous?.id === deleting.id ? null : previous)
+            setLatestTask(previous => previous?.id === deleting.id ? null : previous)
+            if (observedTask.current?.id === deleting.id) observedTask.current = null
+            focusAfterDelete.current = true
+            setDeleting(null)
+            setHistoryRevision(value => value + 1)
+            app.notify('作品和创作记录已删除')
+        } catch (error) {
+            if (mounted.current) setDeleteError(message(error))
+        } finally {
+            if (mounted.current) setDeletingBusy(false)
+        }
+    }
+
   function editImage(task: Generation) {
     if (!task.image || busy || uncertain) return
     if (task.image.size > MAX_BYTES) { app.notify('参考图不能超过 10 MB', true); return }
@@ -352,7 +413,8 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
         {referenceError && <p className="creation-reference-error" role="alert">{referenceError}</p>}
         <label className="visually-hidden" htmlFor="creation-prompt">画面描述</label>
         <textarea id="creation-prompt" value={prompt} onChange={event => setPrompt(event.target.value)} maxLength={4000} aria-required="true"
-          disabled={busy || uncertain} placeholder="描述你想创作的画面…&#10;例如：海边的书店，午后阳光，胶片摄影质感。" />
+                  disabled={app.initializing || busy || uncertain}
+                  placeholder="描述你想创作的画面…&#10;例如：海边的书店，午后阳光，胶片摄影质感。"/>
         <div className="creation-toolbar">
           <div className="creation-options">
             <button type="button" className={'creation-reference-add' + (reference ? ' has-reference' : '')}
@@ -361,7 +423,8 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
             <div className="creation-model-option">
               <label className="visually-hidden" htmlFor="creation-model">生成模型</label>
               <select className="format-select" id="creation-model" value={modelId} onChange={event => { setModelId(event.target.value); setSizeNotice('') }} disabled={!app.user || !models.length || busy || uncertain}>
-                {!models.length && <option value="">{!app.user ? '登录后选择模型' : modelsLoading ? '正在加载模型…' : '暂无可用模型'}</option>}
+                  {!models.length && <option
+                      value="">{app.initializing ? '正在加载模型…' : !app.user ? '登录后选择模型' : modelsLoading ? '正在加载模型…' : '暂无可用模型'}</option>}
                 {models.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
               </select>
             </div>
@@ -372,7 +435,10 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
               {model?.qualities.map(value => <option key={value} value={value}>{qualityNames[value] || value}</option>)}
             </select></div>
           </div>
-          {app.user ? <button className="creation-submit" title={uncertain ? '确认本次提交' : '生成图片'} aria-describedby="creation-submit-status" disabled={busy || loading || !!active || (!model && !uncertain) || !prompt.trim() || (!uncertain && (!app.quota || !!app.quotaError || app.quota.remaining < (model?.pointsCost ?? 1)))}>
+            {app.initializing || app.user ?
+                <button className="creation-submit" title={uncertain ? '确认本次提交' : '生成图片'}
+                        aria-describedby="creation-submit-status"
+                        disabled={app.initializing || busy || loading || !!active || (!model && !uncertain) || !prompt.trim() || (!uncertain && (!app.quota || !!app.quotaError || app.quota.remaining < (model?.pointsCost ?? 1)))}>
             <span className="visually-hidden">{uncertain ? '确认本次提交' : '生成图片'}</span><ArrowUp size={21} aria-hidden="true" />
           </button> : <button type="button" className="creation-submit" title="登录创作" onClick={() => navigate('/login', { state: { from: '/', creationPrompt: prompt } })}><span className="visually-hidden">登录创作</span><ArrowUp size={21} aria-hidden="true" /></button>}
         </div>
@@ -380,14 +446,16 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
     </div>
     <div className="creation-caption">
       <div className="creation-quota"><span>{model ? `单张生成 · 消耗 ${model.pointsCost} 积分` : '选择模型查看消耗积分'}</span><QuotaStatus app={app} /></div>
-      <span id="creation-submit-status" role="status">{!app.user ? '登录创作' : busy ? '正在提交…' : active ? '任务进行中' : uncertain ? '确认本次提交' : app.quotaError ? '积分待更新' : app.quota && model && app.quota.remaining < model.pointsCost ? '积分不足' : '生成图片'}</span>
+        <span id="creation-submit-status"
+              role="status">{app.initializing ? '正在加载…' : !app.user ? '登录创作' : busy ? '正在提交…' : active ? '任务进行中' : uncertain ? '确认本次提交' : app.quotaError ? '积分待更新' : app.quota && model && app.quota.remaining < model.pointsCost ? '积分不足' : '生成图片'}</span>
     </div>
     {sizeNotice && <p className="creation-help creation-notice" role="status">{sizeNotice}</p>}
     {modelsError && <div className="creation-error creation-alert" role="alert">{modelsError}<button className="quiet-link" onClick={() => setModelsRevision(value => value + 1)}>重新加载模型</button></div>}
     {app.user && !models.length && !modelsError && !modelsLoading && <p className="creation-help creation-notice">管理员配置并启用模型后，即可开始创作。</p>}
-    {app.user && <p className="creation-help creation-notice">与上传共用积分。生成并保存成功后扣除，失败返还预留积分。</p>}
+            {(app.initializing || app.user) &&
+                <p className="creation-help creation-notice">与上传共用积分。生成并保存成功后扣除，失败返还预留积分。</p>}
             <nav className="creation-records-entry" aria-label="创作记录入口">
-                <Link to={app.user ? '/creations' : '/login'}
+                <Link to={app.initializing || app.user ? '/creations' : '/login'}
                       state={app.user ? undefined : {from: '/creations'}}><ClockCounterClockwise size={16}
                                                                                                  aria-hidden="true"/>创作记录<ArrowUpRight
                     size={14} aria-hidden="true"/></Link>
@@ -401,8 +469,8 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
             </Suspense>}
         </>}
         {historyView && <header className="creation-records-heading">
-            <div><Link className="quiet-link" to="/"><ArrowUUpLeft size={16} aria-hidden="true"/>返回创作</Link>
-                <h1>创作记录</h1><p>每一次想象，都留在这里。查看结果，或继续编辑。</p></div>
+            <div><span className="creation-records-eyebrow">A COLLECTION OF YOUR IDEAS</span>
+                <h1>创作记录</h1><p>把灵感留在这里。回看每一次想象成形。</p></div>
             <Link className="button button-primary" to="/">开始创作<ArrowUpRight size={16} aria-hidden="true"/></Link>
         </header>}
         {detail && <Suspense fallback={null}><CreationDetail task={detail} app={app}
@@ -427,13 +495,42 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
             <div className="creation-error creation-alert" role="alert">历史记录加载失败：{historyError}
                 <button className="quiet-link" onClick={() => setHistoryRevision(value => value + 1)}>刷新历史</button>
             </div>}
-        {historyView && app.user &&
-            <Suspense fallback={<div className="creation-history-loading" role="status">正在加载创作记录…</div>}>
-                <CreationRecords records={visibleRecords} history={history} loading={historyLoading}
+        {historyView && (app.initializing || app.user) &&
+            <CreationRecords records={visibleRecords} history={history} loading={app.initializing || historyLoading}
                                  historyError={historyError}
-                                 selectedId={detail?.id} page={page} labels={labels} runningStatuses={runningStatuses}
-                                 onSelect={setDetail} onPageChange={setPage}/>
-            </Suspense>}
+                             selectedId={detail?.id} page={page} runningStatuses={runningStatuses}
+                             filter={historyFilter}
+                             onFilterChange={next => {
+                                 setHistoryFilter(next)
+                                 setPage(1)
+                                 setHistoryLoading(true)
+                                 setHistoryError('')
+                             }}
+                             onSelect={setDetail} onDelete={task => {
+                setDeleteError('');
+                setDeleting(task)
+            }} onPageChange={setPage}/>
+        }
+
+        {deleting && <Modal title="删除这次创作？" className="confirm-modal creation-delete-modal"
+                            onClose={() => {
+                                if (!deletingBusy) setDeleting(null)
+                            }}>
+            <div className="delete-preview">
+                {deleting.image && <img src={deleting.image.preview} alt=""/>}
+                <div><strong>{deleting.prompt}</strong><span>{deleting.modelName} · {deleting.createTime}</span></div>
+            </div>
+            <p className="delete-warning"><Warning size={19} aria-hidden="true"/>
+                创作记录和对应图片将同时删除，分享链接将失效。此操作无法撤销，已消耗的积分不退还。</p>
+            {deleteError && <p className="creation-error" role="alert">{deleteError}</p>}
+            <div className="modal-actions">
+                <button type="button" className="button button-secondary" disabled={deletingBusy}
+                        onClick={() => setDeleting(null)}>保留作品
+                </button>
+                <button type="button" className="button button-danger" disabled={deletingBusy}
+                        onClick={confirmDelete}>{deletingBusy ? '删除中…' : '确认删除'}</button>
+            </div>
+        </Modal>}
 
   </main>
 }

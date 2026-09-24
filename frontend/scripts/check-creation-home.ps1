@@ -42,7 +42,7 @@ window.fetch = async (url, options = {}) => {
   if (path.endsWith('/auth/login')) data = { token: 'qa-placeholder', user: { username: 'guest' } };
   else if (path.endsWith('/auth/me')) data = { username: 'guest' };
   else if (path.endsWith('/auth/logout')) data = null;
-  else if (path.endsWith('/generations/models')) data = [{ id: 1, name: 'QA image model', sizes: ['1024x1024', '2048x2048', '2880x2880', '1536x1024', '2160x1440', '3456x2304', '1024x1536', '1440x2160', '2304x3456', '1280x720', '2560x1440', '3840x2160', '720x1280', '1440x2560', '2160x3840', '1024x768', '2048x1536', '3200x2400', '768x1024', '1536x2048', '2400x3200', '1344x576', '2016x864', '3808x1632'], defaultSize: '1024x1024', qualities: ['medium', 'high'], defaultQuality: 'medium', pointsCost: 1 }, { id: 2, name: 'Custom size model', sizes: ['1536x864'], defaultSize: '1536x864', qualities: ['medium'], defaultQuality: 'medium', pointsCost: 1 }];
+  else if (path.endsWith('/generations/models')) data = [{ id: 1, name: 'QA image model', sizes: ['1024x1024', '2048x2048', '2880x2880', '1536x1024', '2160x1440', '3456x2304', '1024x1536', '1440x2160', '2304x3456', '1280x720', '2560x1440', '3840x2160', '720x1280', '1440x2560', '2160x3840', '1024x768', '2048x1536', '3200x2400', '768x1024', '1536x2048', '2400x3200', '1344x576', '2016x864', '3808x1632'], defaultSize: '1024x1024', qualities: ['medium', 'high'], defaultQuality: 'medium', pointsCost: 1 }, { id: 2, name: 'Custom size model', sizes: ['1536x864'], defaultSize: '1536x864', qualities: ['medium'], defaultQuality: 'medium', pointsCost: 1 }, { id: 3, name: 'Gemini 3.1 Flash Image', sizes: ["512x512","1024x1024","2048x2048","4096x4096","256x1024","512x2048","1024x4096","2048x8192","192x1536","384x3072","768x6144","1536x12288","424x632","848x1264","1696x2528","3392x5056","632x424","1264x848","2528x1696","5056x3392","448x600","896x1200","1792x2400","3584x4800","1024x256","2048x512","4096x1024","8192x2048","600x448","1200x896","2400x1792","4800x3584","464x576","928x1152","1856x2304","3712x4608","576x464","1152x928","2304x1856","4608x3712","1536x192","3072x384","6144x768","12288x1536","384x688","768x1376","1536x2752","3072x5504","688x384","1376x768","2752x1536","5504x3072","792x168","1584x672","3168x1344","6336x2688"], defaultSize: '1024x1024', qualities: ['medium', 'high'], defaultQuality: 'medium', pointsCost: 1 }];
   else if (path.endsWith('/generations/active')) data = ['QUEUED', 'GENERATING', 'SAVING'].includes(window.creationTask?.status) ? window.creationTask : null;
   else if (path.endsWith('/generations') && options.method === 'POST') {
     window.creationRequest = JSON.parse(options.body instanceof FormData ? await options.body.get('param').text() : options.body);
@@ -185,24 +185,15 @@ try {
         Browser press Escape | Out-Null
     }
     Browser screenshot (Join-Path $outputDir 'creation-resolutions-desktop.png') | Out-Null
-    AssertJs '!document.querySelector("main > .creation-result") && !!document.querySelector(".creation-history-item img")'
-    AssertJs '(() => { sessionStorage.setItem("qa-hold-history", "1"); return true; })()'
-    Browser reload | Out-Null
-    Browser wait '.creation-history-loading' | Out-Null
-    Browser wait --fn 'typeof window.releaseHistory === "function"' | Out-Null
-    AssertJs '(() => { window.historyPlaceholderHeight = document.querySelector(".creation-history-grid").getBoundingClientRect().height; return document.querySelector(".creation-history").getAttribute("aria-busy") === "true" && window.historyPlaceholderHeight > 350; })()'
-    Browser screenshot (Join-Path $outputDir 'creation-history-loading.png') | Out-Null
-    AssertJs '(() => { sessionStorage.removeItem("qa-hold-history"); window.releaseHistory(); return true; })()'
-    Browser wait '.creation-history-item' | Out-Null
-    Browser wait --fn 'window.historyEntrances === 1 && document.querySelector(".creation-history-item").getAnimations().length === 0' | Out-Null
-    AssertJs 'Math.abs(document.querySelector(".creation-history-grid").getBoundingClientRect().height - window.historyPlaceholderHeight) < 3 && getComputedStyle(document.querySelector(".creation-history-item")).opacity === "1"'
-    Browser fill '#creation-prompt' '检查输入不会重复播放列表动画' | Out-Null
-    AssertJs 'window.historyEntrances === 1 && document.querySelector(".creation-history-item").getAnimations().length === 0'
-    AssertJs '!document.querySelector(".creation-result") && !document.querySelector("dialog[open]")'
-    Browser focus '.creation-history-item' | Out-Null
+    # 历史列表已独立到 /creations；工作台只显示本次作品，不请求历史分页。
+    AssertJs '!!document.querySelector(".creation-current-task img") && !document.querySelector(".creation-history")'
+    Browser fill '#creation-prompt' '检查输入不会重复播放作品动画' | Out-Null
+    AssertJs 'document.querySelector(".creation-current-task").getAnimations().length === 0'
+    AssertJs '(() => { delete window.creationRequest; window.referenceRequests = []; return true; })()'
+    Browser focus '.creation-current-actions > button' | Out-Null
     Browser press Enter | Out-Null
     Browser wait '.creation-detail-modal[open]' | Out-Null
-    AssertJs '!!document.querySelector(".creation-detail-modal .creation-image img") && document.querySelector(".creation-detail-badges").textContent.includes("21:9") && document.querySelector(".creation-detail-parameters").textContent.includes("3808×1632") && document.querySelector(".creation-detail-parameters").textContent.includes("4K") && !document.querySelector("main > .creation-result")'
+    AssertJs '!!document.querySelector(".creation-detail-modal .creation-image img") && document.querySelector(".creation-detail-badges").textContent.includes("21:9") && document.querySelector(".creation-detail-parameters").textContent.replace(/\s/g, "").includes("3808×1632") && document.querySelector(".creation-detail-parameters").textContent.includes("4K") && !document.querySelector("main > .creation-result")'
     Browser set viewport 390 844 | Out-Null
     AssertJs 'document.querySelector(".creation-detail-modal").scrollWidth <= document.querySelector(".creation-detail-modal").clientWidth'
     Browser screenshot (Join-Path $outputDir 'creation-detail-mobile.png') | Out-Null
@@ -223,21 +214,46 @@ try {
     Browser click '.creation-reference-remove' | Out-Null
     Browser click '.creation-submit' | Out-Null
     Browser wait --fn 'window.creationRequest && !window.creationRequest.referenceImageId && !document.querySelector(".creation-submit").disabled' | Out-Null
-    foreach ($status in @('GENERATING', 'FAILED')) {
+    Browser select '#creation-model' '3' | Out-Null
+    AssertJs 'document.querySelectorAll(".creation-ratio-option input").length === 14 && document.querySelectorAll("#creation-resolution input").length === 4'
+    SelectRatio '1:8'
+    AssertJs 'document.querySelector("#creation-resolution input:checked").value === "384x3072"'
+    Browser click '#creation-size' | Out-Null
+    Browser check '#creation-resolution input[value="1536x12288"]' | Out-Null
+    Browser press Escape | Out-Null
+    SelectRatio '8:1'
+    AssertJs 'document.querySelector("#creation-resolution input:checked").value === "12288x1536"'
+    Browser click '.creation-submit' | Out-Null
+    Browser wait --fn 'window.creationRequest?.modelId === 3 && window.creationRequest?.size === "12288x1536" && !document.querySelector(".creation-submit").disabled' | Out-Null
+    Browser click '#creation-size' | Out-Null
+    Browser check '#creation-resolution input[value="1536x192"]' | Out-Null
+    Browser press Escape | Out-Null
+    SelectRatio '2:3'
+    AssertJs 'document.querySelector("#creation-resolution input:checked").value === "424x632" && document.querySelector("#creation-size").textContent.includes("512")'
+    foreach ($width in @(320, 390, 1440)) {
+        Browser set viewport $width 844 | Out-Null
+        Browser click '#creation-size' | Out-Null
+        AssertJs '(() => { const box = document.querySelector(".creation-ratio-popover").getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight && document.documentElement.scrollWidth <= innerWidth; })()'
+        Browser screenshot (Join-Path $outputDir "gemini-ratios-$width.png") | Out-Null
+        Browser press Escape | Out-Null
+    }
+    Browser select '#creation-model' '1' | Out-Null
+    AssertJs 'document.querySelectorAll(".creation-ratio-option input").length === 8 && document.querySelectorAll("#creation-resolution input").length === 3'
+    foreach ($status in @('GENERATING')) {
         AssertJs "(() => { window.creationTask.status = '$status'; window.creationTask.image = null; sessionStorage.setItem('qa-creation-task', JSON.stringify(window.creationTask)); return true; })()"
         Browser reload | Out-Null
-        Browser wait '.creation-history-item' | Out-Null
+        Browser wait '.creation-current-task' | Out-Null
         AssertJs '!document.querySelector(".creation-result") && !document.querySelector("dialog[open]")'
         AssertJs "document.getElementById('creation-submit-status').textContent === ('$status' === 'GENERATING' ? '任务进行中' : '生成图片')"
         if ($status -eq 'GENERATING') {
-            AssertJs '!!document.querySelector(".creation-history-item.is-running") && getComputedStyle(document.querySelector(".is-running .creation-history-thumb"), "::after").animationName === "creation-orbit"'
+            AssertJs '!!document.querySelector(".creation-current-task.is-running") && getComputedStyle(document.querySelector(".is-running .creation-detail-loader"), "::after").animationName === "creation-orbit"'
             Browser screenshot (Join-Path $outputDir 'creation-generating-desktop.png') --full | Out-Null
             Browser set viewport 390 844 | Out-Null
             AssertJs 'document.documentElement.scrollWidth <= innerWidth'
             Browser screenshot (Join-Path $outputDir 'creation-generating-mobile.png') --full | Out-Null
             Browser set viewport 1440 1000 | Out-Null
         }
-        Browser focus '.creation-history-item' | Out-Null
+        Browser focus '.creation-current-actions > button' | Out-Null
         Browser press Enter | Out-Null
         Browser wait '.creation-detail-modal[open]' | Out-Null
         AssertJs '!!document.querySelector(".creation-detail-modal .creation-placeholder") && !document.querySelector("main > .creation-result") && !document.querySelector(".creation-detail-edit")'
@@ -254,7 +270,7 @@ try {
     Browser open "$BaseUrl/create" | Out-Null
     Browser wait '#creation-prompt' | Out-Null
     AssertJs 'location.pathname === "/"'
-    Browser click '.navigation a:nth-child(2)' | Out-Null
+    Browser click '.navigation a:nth-child(3)' | Out-Null
     Browser wait '.upload-shell' | Out-Null
     AssertJs 'location.pathname === "/upload" && document.querySelector(".navigation a[aria-current=page]").textContent === "上传图片"'
     Browser focus 'a.button-upload' | Out-Null
@@ -280,7 +296,7 @@ try {
     Browser wait '.creation-page canvas' | Out-Null
     AssertJs 'document.querySelectorAll(".creation-page canvas").length === 1 && !document.querySelector(".webgl-unavailable")'
     Browser screenshot (Join-Path $outputDir 'creation-home-desktop.png') --full | Out-Null
-    Write-Output 'PASS: Single reference preview/replace/remove, validation, multipart retry identity, responsive layout; AI homepage, 24 calculated ratio/resolution submissions, retained tiers and custom models, refresh without auto-opening tasks, history detail dialogs, active-task recovery, login and mobile layout.'
+    Write-Output 'PASS: Single reference preview/replace/remove, validation, multipart retry identity, responsive layout; AI homepage, 24 GPT submissions and Gemini 14 ratios/four resolutions/4K extreme dimensions, retained tiers and custom models, refresh without auto-opening tasks, history detail dialogs, active-task recovery, login and mobile layout.'
 } catch {
     Browser snapshot | Write-Output
     throw

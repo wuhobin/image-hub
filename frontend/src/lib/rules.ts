@@ -34,7 +34,37 @@ export const GENERATION_PRESETS = ['1:1', '3:2', '2:3', '16:9', '9:16', '4:3', '
 }))
 export const GENERATION_SIZES = GENERATION_PRESETS.flatMap(preset => GENERATION_RESOLUTIONS.map(tier => preset[tier]))
 
+export const GEMINI_IMAGE_RESOLUTIONS = ['512', ...GENERATION_RESOLUTIONS] as const
+
+// Gemini 3.1 Flash Image 使用官方离散尺寸，不能套用 GPT 的等比计算或用像素最大公约数识别名义比例。
+// https://ai.google.dev/gemini-api/docs/image-generation#aspect_ratios_and_image_size
+export const GEMINI_IMAGE_PRESETS = [
+    ['1:1', '512x512', '1024x1024', '2048x2048', '4096x4096'],
+    ['1:4', '256x1024', '512x2048', '1024x4096', '2048x8192'],
+    ['1:8', '192x1536', '384x3072', '768x6144', '1536x12288'],
+    ['2:3', '424x632', '848x1264', '1696x2528', '3392x5056'],
+    ['3:2', '632x424', '1264x848', '2528x1696', '5056x3392'],
+    ['3:4', '448x600', '896x1200', '1792x2400', '3584x4800'],
+    ['4:1', '1024x256', '2048x512', '4096x1024', '8192x2048'],
+    ['4:3', '600x448', '1200x896', '2400x1792', '4800x3584'],
+    ['4:5', '464x576', '928x1152', '1856x2304', '3712x4608'],
+    ['5:4', '576x464', '1152x928', '2304x1856', '4608x3712'],
+    ['8:1', '1536x192', '3072x384', '6144x768', '12288x1536'],
+    ['9:16', '384x688', '768x1376', '1536x2752', '3072x5504'],
+    ['16:9', '688x384', '1376x768', '2752x1536', '5504x3072'],
+    // 官网 512 档的 21:9 标为 792×168；暂按原表保留，不自行推算替换。
+    ['21:9', '792x168', '1584x672', '3168x1344', '6336x2688'],
+].map(([ratio, ...sizes]) => ({ratio, sizes}))
+
+export const GEMINI_IMAGE_SIZES = GEMINI_IMAGE_PRESETS.flatMap(preset => preset.sizes)
+
+export function generationSizesForModel(modelCode: string) {
+    return /^gemini-3\.1-flash-image(?:-|$)/.test(modelCode.trim()) ? GEMINI_IMAGE_SIZES : GENERATION_SIZES
+}
+
 export function generationResolution(size: string) {
+    const gemini = GEMINI_IMAGE_PRESETS.find(item => item.sizes.includes(size))
+    if (gemini) return GEMINI_IMAGE_RESOLUTIONS[gemini.sizes.indexOf(size)]
   const preset = GENERATION_PRESETS.find(item => Object.values(item).includes(size))
   return GENERATION_RESOLUTIONS.find(tier => preset?.[tier] === size) || ''
 }
@@ -43,13 +73,16 @@ export function generationResolution(size: string) {
 export function generationSizeForRatio(sizes: string[], ratio: string, previous: string) {
   const candidates = sizes.filter(size => imageAspectRatio(size) === ratio)
   const tier = generationResolution(previous)
+    const rank = (size: string) => GEMINI_IMAGE_RESOLUTIONS.findIndex(item => item === generationResolution(size))
   return candidates.find(size => generationResolution(size) === tier)
-    || candidates.filter(size => generationResolution(size) < tier).sort((a, b) => generationResolution(b).localeCompare(generationResolution(a)))[0]
+      || candidates.filter(size => rank(size) < rank(previous)).sort((a, b) => rank(b) - rank(a))[0]
     || candidates[0] || ''
 }
 
 export function imageAspectRatio(size: string) {
-  if (!/^[1-9]\d{0,3}x[1-9]\d{0,3}$/.test(size)) return size
+    const gemini = GEMINI_IMAGE_PRESETS.find(item => item.sizes.includes(size))
+    if (gemini) return gemini.ratio
+    if (!/^[1-9]\d{0,4}x[1-9]\d{0,4}$/.test(size)) return size
   const [width, height] = size.split('x').map(Number)
   let a = width, b = height
   while (b) [a, b] = [b, a % b]

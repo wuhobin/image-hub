@@ -10,6 +10,24 @@ import org.apache.ibatis.annotations.*;
 public interface AiGenerationMapper extends BaseMapper<AiGeneration> {
 
     /**
+     * 幂等键包含已删除记录，防止删除后重放原请求再次生成和计费。
+     */
+    @Select("SELECT * FROM hub_ai_generation WHERE user_id = #{userId} AND request_id = #{requestId}")
+    AiGeneration findByRequestIncludingDeleted(@Param("userId") long userId, @Param("requestId") String requestId);
+
+    /**
+     * 云文件清理成功后才隐藏终态记录；保留请求唯一键与积分审计数据。
+     */
+    @Update("""
+            UPDATE hub_ai_generation SET deleted = 1, share_id = NULL, share_status = 'PRIVATE',
+                published_time = NULL, api_key_ciphertext = NULL, update_time = CURRENT_TIMESTAMP
+            WHERE user_id = #{userId} AND id = #{id} AND deleted = 0
+              AND status IN ('SUCCEEDED', 'FAILED', 'SAVE_FAILED', 'EXPIRED', 'ABANDONED')
+              AND active_user_id IS NULL AND work_token IS NULL AND pending_storage_info IS NULL
+            """)
+    int deleteOwned(@Param("userId") long userId, @Param("id") String id);
+
+    /**
      * 公共列表和详情共用可见性条件；在 SQL 中隐藏提示词，避免误带入公开响应。
      */
     @Select("""

@@ -10,7 +10,7 @@ import { Users } from '@phosphor-icons/react/dist/csr/Users'
 import { Ambient } from '../../components/Ambient'
 import { ADMIN_SESSION, adminApi, getAdminToken } from '../../lib/admin/api'
 import type { Admin } from '../../lib/admin/api'
-import AdminLayout from './AdminLayout'
+import AdminLayout, {AdminLoading} from './AdminLayout'
 import AdminUsers from './AdminUsers'
 import AdminSettings from './AdminSettings'
 import AdminModels from './AdminModels'
@@ -22,7 +22,7 @@ const message = (error: unknown) => error instanceof Error ? error.message : '�
 export default function AdminApp() {
   const [token, setToken] = useState(getAdminToken)
   const [admin, setAdmin] = useState<Admin | null>(null)
-  const [initializing, setInitializing] = useState(true)
+    const [initializing, setInitializing] = useState(!!getAdminToken())
   const [sessionError, setSessionError] = useState('')
   const [retry, setRetry] = useState(0)
   const [loggingOut, setLoggingOut] = useState(false)
@@ -64,7 +64,7 @@ export default function AdminApp() {
     finally { setLoggingOut(false) }
   }
 
-  if (initializing) return <AdminPublicLayout><main id="admin-main" className="admin-state" role="status">正在确认管理员身份…</main></AdminPublicLayout>
+    if (initializing) return <AdminLoading/>
   if (token && !admin) return <AdminPublicLayout><main id="admin-main" className="admin-state"><p role="alert">{sessionError || '无法确认登录状态'}</p><button className="button button-primary" onClick={() => setRetry(value => value + 1)}>重新连接</button><button className="quiet-link admin-text-button" onClick={() => { localStorage.removeItem(ADMIN_SESSION.tokenKey); setToken(null) }}>返回登录</button></main></AdminPublicLayout>
 
   return <Routes>

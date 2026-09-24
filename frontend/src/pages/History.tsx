@@ -1,6 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
-import { useGSAP } from '@gsap/react'
-import gsap from 'gsap'
+import {useEffect, useState} from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowDown } from '@phosphor-icons/react/dist/csr/ArrowDown'
 import { ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp'
@@ -13,18 +11,15 @@ import { Warning } from '@phosphor-icons/react/dist/csr/Warning'
 import { X } from '@phosphor-icons/react/dist/csr/X'
 import type { AppState } from '../App'
 import { Modal } from '../components/Modal'
-import HistoryLoading, { HistoryCardsSkeleton, HistoryHeading } from '../components/HistoryLoading'
+import HistoryLoading, {HistoryHeading} from '../components/HistoryLoading'
 import HistoryViewToggle, { getHistoryView } from '../components/HistoryViewToggle'
 import { formatSize, toDateTime } from '../lib/rules'
 import type { ImageRecord, ImageList } from '../lib/types'
 import { api } from '../lib/api'
 
 const timeFormat = new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
-gsap.registerPlugin(useGSAP)
 
 export default function History({ app }: { app: AppState }) {
-  const pageRef = useRef<HTMLElement>(null)
-  const hasEntered = useRef(false)
   const [search, setSearch] = useState('')
   const [format, setFormat] = useState('全部格式')
   const [sourceType, setSourceType] = useState('')
@@ -65,29 +60,6 @@ export default function History({ app }: { app: AppState }) {
   const bytes = images?.totalBytes || 0
   const hasFilters = !!query || format !== '全部格式' || !!sourceType
 
-  useGSAP(() => {
-    if (loading || !pageRef.current) return
-    const firstEntry = !hasEntered.current
-    hasEntered.current = true
-    const media = gsap.matchMedia()
-    media.add('(prefers-reduced-motion: no-preference)', () => {
-      const timeline = gsap.timeline({ defaults: { duration: .5, ease: 'power2.out', clearProps: 'opacity,transform' } })
-      // 首批数据到达再入场，筛选和翻页只更新内容区，避免标题反复闪动。
-      if (firstEntry) timeline.from('.page-heading, .library-summary, .library-toolbar', {
-        opacity: .35, y: 14, stagger: .07,
-      }, 0)
-      const content = pageRef.current!.querySelectorAll('.library-card, .empty-state')
-      if (content.length) {
-        // 暂停 CSS hover 过渡，避免与 GSAP 同时插值 transform；结束后恢复。
-        gsap.set(content, { transition: 'none' })
-        timeline.from(content, {
-          opacity: 0, y: 18, stagger: { amount: .28 }, clearProps: 'opacity,transform,transition',
-        }, firstEntry ? .18 : 0)
-      }
-    })
-    return () => media.revert()
-  }, { scope: pageRef, dependencies: [loading], revertOnUpdate: true })
-
   async function confirmDelete() {
     if (!deleting || deletingBusy) return
     setDeletingBusy(true)
@@ -101,7 +73,7 @@ export default function History({ app }: { app: AppState }) {
 
   if (loading && !data) return <HistoryLoading view={view} />
 
-  return <main ref={pageRef} id="main" className="history-page" aria-busy={loading}>
+    return <main id="main" className="history-page library-ready" aria-busy={loading}>
     <HistoryHeading />
     <div className="library-summary">
       <div><strong>{count.toString().padStart(2, '0')}</strong><span>张图片</span></div>
@@ -125,8 +97,11 @@ export default function History({ app }: { app: AppState }) {
         <HistoryViewToggle view={view} onChange={setView} />
       </div>
     </div>
-    {error ? <div className="empty-state" role="alert"><p>{error}</p><button className="button button-secondary" onClick={() => setReload(value => value + 1)}>重新加载</button></div> : loading ? <HistoryCardsSkeleton view={view} /> : filtered.length > 0 ? <div className={`image-library ${view === 'list' ? 'is-list' : ''}`}>
-      {filtered.map((record, index) => <article className="library-card" key={record.id}>
+        {error ? <div className="empty-state" role="alert"><p>{error}</p>
+            <button className="button button-secondary" onClick={() => setReload(value => value + 1)}>重新加载</button>
+        </div> : filtered.length > 0 ? <div className={`image-library ${view === 'list' ? 'is-list' : ''}`}>
+            {filtered.map((record, index) => <article className="library-card" key={record.id}
+                                                      style={{animationDelay: Math.min(index, 7) * 40 + 180 + 'ms'}}>
         <button className="library-preview" onClick={() => app.setPreview(record)} aria-label={`预览 ${record.name}`}>
           <img src={record.preview} alt={record.name} loading={index > 3 ? 'lazy' : 'eager'} />
           <span className="preview-hint">查看图片 <ArrowUpRight size={16} /></span>
@@ -147,10 +122,14 @@ export default function History({ app }: { app: AppState }) {
       <p>{hasFilters || count ? '换个关键词、格式或来源，再试一次。' : '生成第一张 AI 作品，或上传你已有的图片。'}</p>
       {hasFilters || count ? <button className="button button-secondary" onClick={() => { setSearch(''); setFormat('全部格式'); setSourceType('') }}>重置筛选</button> : <div className="creation-result-actions"><Link className="button button-primary" to="/">开始创作 <ArrowUpRight size={17} /></Link><Link className="button button-secondary" to="/upload">上传图片</Link></div>}
     </div>}
-    {!loading && !error && data && data.total > 0 && <div className="library-pagination">
-      <button className="button button-secondary" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>上一页</button>
+        {!error && data && data.total > 0 && <div className="library-pagination">
+            <button className="button button-secondary" disabled={loading || page <= 1}
+                    onClick={() => setPage(value => value - 1)}>上一页
+            </button>
       <span>第 {page} / {data.pages} 页 · 共 {data.total} 张</span>
-      <button className="button button-secondary" disabled={page * data.size >= data.total} onClick={() => setPage(value => value + 1)}>下一页</button>
+            <button className="button button-secondary" disabled={loading || page * data.size >= data.total}
+                    onClick={() => setPage(value => value + 1)}>下一页
+            </button>
     </div>}
     {deleting && <Modal title="删除这张图片？" onClose={() => { if (!deletingBusy) setDeleting(null) }} className="confirm-modal">
       <div className="delete-preview"><img src={deleting.preview} alt="" /><div><strong>{deleting.name}</strong><span>{formatSize(deleting.size)}</span></div></div>

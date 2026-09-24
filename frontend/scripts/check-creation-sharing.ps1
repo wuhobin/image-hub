@@ -79,6 +79,26 @@ try {
     B open "$BaseUrl/explore" | Out-Null
     B wait '.explore-card' | Out-Null
     A '!localStorage.getItem("imagehub.token") && document.querySelectorAll(".explore-card").length===2'
+    # 混合画幅、长短提示词：图片保持原比例，后续卡片填入较短列。
+    E 'window.savedWorks=window.works; window.works=[[800,800],[1200,800],[800,1200],[1200,600],[600,900],[800,800],[1200,800],[800,800]].map(([width,height],i)=>({...window.savedWorks[i%2],shareId:"masonry-"+i,width,height,promptPublic:i!==3,prompt:i===1?"两行提示词".repeat(20):"山间的一束光",imageUrl:"data:image/svg+xml,"+encodeURIComponent(decodeURIComponent(window.savedWorks[i%2].imageUrl.split(",")[1]).replace("width=\"1200\" height=\"800\"","width=\""+width+"\" height=\""+height+"\" viewBox=\"0 0 1200 800\" preserveAspectRatio=\"none\""))})); window.dispatchEvent(new Event("focus"))' | Out-Null
+    B wait --fn 'document.querySelectorAll("a.explore-card").length===8' | Out-Null
+    E 'window.galleryFits=()=>{const grid=document.querySelector(".explore-grid"),box=grid.getBoundingClientRect(),cols=getComputedStyle(grid).gridTemplateColumns.split(" ").length,gap=parseFloat(getComputedStyle(grid).columnGap),width=(box.width-gap*(cols-1))/cols,tops=Array(cols).fill(box.top); return [...grid.children].every(card=>{const r=card.getBoundingClientRect(),col=Math.round((r.left-box.left)/(width+gap)),img=card.querySelector("img"),ir=img.getBoundingClientRect(),frame=img.parentElement.getBoundingClientRect(); if(Math.abs(r.top-Math.min(...tops))>1.5 || Math.abs(r.top-tops[col])>1.5 || Math.abs(ir.width/ir.height-img.naturalWidth/img.naturalHeight)>.01 || Math.abs(ir.height-frame.height)>1) return false; tops[col]=r.top+Math.ceil(card.offsetHeight+32); return true;});}' | Out-Null
+    B wait --fn '[...document.querySelectorAll(".explore-image img")].every(img=>img.complete && img.naturalWidth>0) && document.getAnimations().every(a=>a.effect.getTiming().iterations===Infinity || a.playState==="finished")' | Out-Null
+    A 'window.galleryFits() && getComputedStyle(document.querySelector(".explore-grid")).gridTemplateColumns.split(" ").length===4'
+    B hover '.explore-card:first-child' | Out-Null
+    A 'window.galleryFits()'
+    B screenshot (Join-Path $qaDirectory 'explore-masonry-desktop.png') --full | Out-Null
+    foreach ($width in @(1100,768,390,320)) {
+        B set viewport $width 844 | Out-Null
+        B wait --fn 'window.galleryFits()' | Out-Null
+        A 'document.documentElement.scrollWidth<=innerWidth && window.galleryFits()'
+        B screenshot (Join-Path $qaDirectory "explore-masonry-$width.png") --full | Out-Null
+    }
+    B set media dark reduced-motion | Out-Null
+    A 'getComputedStyle(document.querySelector(".explore-card")).animationName==="none"'
+    B set media dark no-preference | Out-Null
+    E 'window.works=window.savedWorks; window.dispatchEvent(new Event("focus"))' | Out-Null
+    B wait --fn 'document.querySelectorAll("a.explore-card").length===2' | Out-Null
     B screenshot (Join-Path $qaDirectory 'sharing-gallery.png') --full | Out-Null
     foreach ($width in @(390,320)) {
         B set viewport $width 844 | Out-Null
