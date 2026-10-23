@@ -214,9 +214,8 @@ class AiImageClientTest {
                             "AiImageClient$1.handleError")
                     .doesNotContain("elapsedMs=", "AI generation timing")
                     .contains("OpenAI 请求：taskId=request-response-test-task, 请求参数=" + requestBody.get(),
-                            "OpenAI 响应：taskId=request-response-test-task, httpStatus=200, 响应正文={\"created\":1,\"data\":[{\"b64_json\":\"" + Base64.getEncoder().encodeToString(bytes.toByteArray()) + "\"}]}",
                             "OpenAI 响应：taskId=request-response-test-task, httpStatus=429, 正文截断=false, 响应正文=" + errorBody.get())
-                    .doesNotContain("Authorization", "test-only-key", task.getApiKeyCiphertext());
+                    .doesNotContain("httpStatus=200, 响应正文=", "Authorization", "test-only-key", task.getApiKeyCiphertext());
 
             String unsafeMessage = "The generated images appear to be unsafe. Try modifying the prompts or the seeds.";
             status.set(451);
@@ -293,8 +292,9 @@ class AiImageClientTest {
                             "httpStatus=200", "httpStatus=-1", "耗时=", "模型连接超时=30 秒", "模型响应超时=1 秒", "TimeoutException", "Caused by:")
                     .contains("JSON parse error: Cannot deserialize value", "HttpTimeoutException: Request timed out",
                             "AiImageClient.generate")
-                    .contains(task.getPrompt(), "响应正文={\"data\":\"invalid-response-value\"}")
-                    .doesNotContain("Authorization", "private-test-key", task.getApiKeyCiphertext());
+                    .contains(task.getPrompt())
+                    .doesNotContain("响应正文={\"data\":\"invalid-response-value\"}",
+                            "Authorization", "private-test-key", task.getApiKeyCiphertext());
         } finally {
             release.countDown();
             server.stop(0);
@@ -374,13 +374,29 @@ class AiImageClientTest {
         var image = new AtomicReference<>(new byte[4]);
         var urlResponse = new java.util.concurrent.atomic.AtomicBoolean();
         var chunked = new java.util.concurrent.atomic.AtomicBoolean();
+        var oversizedDownloadsClosed = new java.util.concurrent.CountDownLatch(2);
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/image", exchange -> {
             byte[] bytes = image.get();
-            exchange.sendResponseHeaders(200, chunked.get() ? 0 : bytes.length);
-            try (var body = exchange.getResponseBody()) { body.write(bytes); }
-            catch (java.io.IOException ignored) { /* 超限客户端关闭连接。 */ }
-            finally { exchange.close(); }
+            exchange.sendResponseHeaders(200, chunked.get() ? 0 : bytes.length == 5 ? 100_000 : bytes.length);
+            try (var body = exchange.getResponseBody()) {
+                body.write(bytes);
+                body.flush();
+                // 超限后仍持续发送，客户端必须关闭流，不能在 response.close 中排空剩余正文。
+                if (bytes.length == 5) {
+                    for (int index = 0; index < 60; index++) {
+                        body.write(0);
+                        body.flush();
+                        Thread.sleep(50);
+                    }
+                }
+            } catch (java.io.IOException ignored) {
+                if (bytes.length == 5) oversizedDownloadsClosed.countDown();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                exchange.close();
+            }
         });
         server.createContext("/v1/images/generations", exchange -> {
             exchange.getRequestBody().readAllBytes();
@@ -416,9 +432,12 @@ class AiImageClientTest {
                     assertThat(small.generate(task)).hasSize(4);
                     // 4、5、6 字节的 Base64 都为 8 字符，必须校验解码后的实际长度。
                     image.set(new byte[5]);
+                    long started = System.nanoTime();
                     assertThatThrownBy(() -> small.generate(task)).isInstanceOf(BizException.class).hasMessageContaining("4B");
+                    if (useUrl) assertThat((System.nanoTime() - started) / 1_000_000).isLessThan(2_000L);
                 }
             }
+            assertThat(oversizedDownloadsClosed.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
             urlResponse.set(false);
             image.set(new byte[17 * 1024 * 1024]);
             var large = new AiImageClient(modelKeyCipher, aiEndpointPolicy, new AiImageLimits("20MB"), 10, 30);
@@ -428,6 +447,86 @@ class AiImageClientTest {
         } finally { server.stop(0); }
         for (String invalid : new String[]{"0MB", "-1MB", "51MB", "garbage"}) {
             assertThatThrownBy(() -> new AiImageLimits(invalid)).isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    /**
+     * 真实回环连接持续发送零星数据；总期限必须同时覆盖响应头和正文，结束后连接应关闭。
+     */
+    @Test
+    void urlDownloadsTimeoutDuringSlowHeadersAndBodyWithoutRetry() throws Exception {
+        var calls = new AtomicInteger();
+        var downloadUrl = new AtomicReference<String>();
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/images/generations", exchange -> {
+            calls.incrementAndGet();
+            exchange.getRequestBody().readAllBytes();
+            byte[] body = ("{\"data\":[{\"url\":\"" + downloadUrl.get() + "\"}]}").getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (var output = exchange.getResponseBody()) {
+                output.write(body);
+            }
+        });
+        server.start();
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var modelKeyCipher = new ModelKeyCipher("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+            var aiEndpointPolicy = mock(AiEndpointPolicy.class);
+            when(aiEndpointPolicy.requirePublicHttps(anyString())).thenAnswer(call -> URI.create(call.getArgument(0)));
+            var aiImageClient = new AiImageClient(modelKeyCipher, aiEndpointPolicy, new AiImageLimits("10MB"), 5, 30);
+            var downloadRequestFactory = (org.springframework.http.client.JdkClientHttpRequestFactory)
+                    org.springframework.test.util.ReflectionTestUtils.getField(aiImageClient, "imageDownloadRequestFactory");
+            assertThat(org.springframework.test.util.ReflectionTestUtils.getField(downloadRequestFactory, "readTimeout"))
+                    .isEqualTo(java.time.Duration.ofSeconds(30));
+            downloadRequestFactory.setReadTimeout(java.time.Duration.ofMillis(500));
+            var task = new AiGeneration();
+            task.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
+            task.setImagesPath("/v1/images/generations");
+            task.setApiKeyCiphertext(modelKeyCipher.encrypt("test-only-key"));
+            task.setModelCode("gpt-image-2");
+            task.setPrompt("test");
+            task.setImageSize("1024x1024");
+            task.setQuality("medium");
+            for (boolean slowHeaders : new boolean[]{true, false}) {
+                try (var downloadServer = new java.net.ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1"))) {
+                    downloadUrl.set("http://127.0.0.1:" + downloadServer.getLocalPort() + "/image");
+                    var progress = new AtomicInteger();
+                    var connectionClosed = new java.util.concurrent.atomic.AtomicBoolean();
+                    var serving = executor.submit(() -> {
+                        try (var socket = downloadServer.accept()) {
+                            var input = new java.io.BufferedReader(new java.io.InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII));
+                            while (!input.readLine().isEmpty()) {
+                            }
+                            var output = socket.getOutputStream();
+                            output.write((slowHeaders ? "HTTP/1.1 200 OK\r\nX-Slow: "
+                                    : "HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+                            output.flush();
+                            try {
+                                for (int index = 0; index < 40; index++) {
+                                    output.write('a');
+                                    output.flush();
+                                    progress.incrementAndGet();
+                                    Thread.sleep(75);
+                                }
+                            } catch (java.io.IOException expected) {
+                                connectionClosed.set(true);
+                            }
+                        } catch (Exception e) {
+                            throw new IllegalStateException(e);
+                        }
+                    });
+                    long started = System.nanoTime();
+                    assertThatThrownBy(() -> aiImageClient.generate(task)).isInstanceOf(BizException.class)
+                            .hasMessageContaining("生成请求超时或未取得有效结果");
+                    assertThat((System.nanoTime() - started) / 1_000_000).isBetween(400L, 2_000L);
+                    serving.get(5, java.util.concurrent.TimeUnit.SECONDS);
+                    assertThat(progress.get()).isGreaterThanOrEqualTo(2);
+                    assertThat(connectionClosed.get()).isTrue();
+                }
+            }
+            assertThat(calls.get()).isEqualTo(2);
+        } finally {
+            server.stop(0);
         }
     }
 

@@ -39,6 +39,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * 持久化任务编排；网络操作在事务外，图片记录与成功终态在一个短事务内提交。
@@ -95,7 +97,7 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
         GenerationVO submitted = uploadQuotaCache.reserveGeneration(userId, model.getPointsCost(), () -> {
             AiGeneration existing = byRequest(userId, param.getRequestId());
             return existing == null ? null : response(existing);
-        }, () -> {
+        }, admittedTotal -> {
             if (!List.of(model.getSizes().split(",")).contains(param.getSize())
                     || !List.of(model.getQualities().split(",")).contains(param.getQuality())) {
                 throw new BizException(400, "所选尺寸或质量不属于该模型，请刷新选项");
@@ -135,6 +137,7 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
             task.setQuality(param.getQuality());
             task.setStatus(TaskStatus.QUEUED.name());
             boolean cachedReference = false;
+            var rollbackConfirmed = new java.util.concurrent.atomic.AtomicBoolean();
             try {
                 if (reference != null) {
                     String mime = imageFileService.validateReference(reference);
@@ -149,17 +152,24 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
                     cachedReference = true;
                     referenceBucket(task).set(referenceBytes, java.time.Duration.ofMinutes(10));
                 }
-                uploadQuotaCache.checkOwnership(userId);
-                aiGenerationMapper.insert(task);
+                // 参考图校验及缓存已完成；用户行锁与额度复核只覆盖任务入库的短事务。
+                TransactionTemplate transaction = new TransactionTemplate(platformTransactionManagerProvider.getObject());
+                transaction.setIsolationLevel(org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
+                transaction.executeWithoutResult(status -> {
+                    TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                        @Override
+                        public void afterCompletion(int completionStatus) {
+                            rollbackConfirmed.set(completionStatus == STATUS_ROLLED_BACK);
+                        }
+                    });
+                    uploadQuotaCache.checkQuota(userId, model.getPointsCost(), admittedTotal);
+                    aiGenerationMapper.insert(task);
+                });
             } catch (RuntimeException e) {
-                // 写库结果不明时先查本任务；无法确认则交给 TTL，不能删掉已接收任务的参考图。
+                // 只有确认回滚才删除参考图；提交未知或事务尚未开始时交给已有 TTL，避免误删迟到提交的输入。
                 if (cachedReference) {
-                    try {
-                        AiGeneration saved = byRequest(userId, param.getRequestId());
-                        if (saved == null || !task.getId().equals(saved.getId())) discardReference(task);
-                    } catch (RuntimeException verification) {
-                        log.info("参考图入库状态无法确认，等待缓存过期：taskId={}", task.getId(), verification);
-                    }
+                    if (rollbackConfirmed.get()) discardReference(task);
+                    else log.info("参考图提交结果待确认，等待缓存过期：taskId={}", task.getId());
                 }
                 if (e instanceof DuplicateKeyException) {
                     AiGeneration duplicate = byRequest(userId, param.getRequestId());
@@ -477,6 +487,7 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
             long waitMillis = Math.max(0, 115_000 - (System.nanoTime() - savingStarted) / 1_000_000);
             uploadQuotaCache.completeGeneration(task.getUserId(), waitMillis, () -> {
                 TransactionTemplate transaction = new TransactionTemplate(platformTransactionManagerProvider.getObject());
+                transaction.setIsolationLevel(org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
                 return transaction.execute(status -> {
                     requireTaskLock(task.getId());
                     uploadQuotaCache.checkOwnership(task.getUserId());

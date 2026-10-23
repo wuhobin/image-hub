@@ -9,10 +9,10 @@ import org.apache.ibatis.annotations.*;
 public interface UserMapper extends BaseMapper<UserAccount> {
 
     /**
-     * 在签到事务内串行化同账号请求，跨后端实例仍只能领取一次。
+     * 在短事务内串行化同账号的签到与积分变更，Redis 锁失效时仍由数据库兜底。
      */
     @Select("SELECT id FROM hub_user WHERE id = #{id} AND deleted = 0 FOR UPDATE")
-    Long lockForCheckIn(long id);
+    Long lockById(long id);
 
     @Select("SELECT * FROM hub_user WHERE username = #{username} AND deleted = 0")
     UserAccount findByUsername(String username);

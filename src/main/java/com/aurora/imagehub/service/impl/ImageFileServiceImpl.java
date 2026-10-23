@@ -34,6 +34,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.dromara.x.file.storage.core.FileInfo;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
 /** 图片实体服务实现，负责内容校验、云端文件与数据库记录的一致性及用户隔离。 */
@@ -107,7 +109,7 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
         String mime = validateUpload(file);
         ImageDimensionsBO dimensions = dimensions(file);
         String id = UUID.randomUUID().toString();
-        return uploadQuotaCache.consume(userId, id, () -> uploadValidated(userId, file, mime, dimensions, id));
+        return uploadQuotaCache.consume(userId, id, total -> uploadValidated(userId, file, mime, dimensions, id, total));
     }
 
     /**
@@ -147,22 +149,29 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
     }
 
     /** 普通上传先保存云文件，再写库；回读失败不撤销已经成功保存的图片。 */
-    private ImageVO uploadValidated(long userId, MultipartFile file, String mime, ImageDimensionsBO dimensions, String id) {
+    private ImageVO uploadValidated(long userId, MultipartFile file, String mime, ImageDimensionsBO dimensions, String id,
+                                    long admittedTotal) {
         ImageFile image = storeValidated(userId, file, mime, dimensions, id, "UPLOAD");
+        var rollbackConfirmed = new java.util.concurrent.atomic.AtomicBoolean();
         try {
             // 网络上传已结束，计费图片和流水在同一短事务提交。
-            new org.springframework.transaction.support.TransactionTemplate(platformTransactionManager).executeWithoutResult(status -> {
-                uploadQuotaCache.checkOwnership(userId);
+            var transaction = new org.springframework.transaction.support.TransactionTemplate(platformTransactionManager);
+            transaction.setIsolationLevel(org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
+            transaction.executeWithoutResult(status -> {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCompletion(int completionStatus) {
+                        rollbackConfirmed.set(completionStatus == STATUS_ROLLED_BACK);
+                    }
+                });
+                uploadQuotaCache.checkQuota(userId, 1, admittedTotal);
                 imageMapper.insert(image);
                 quotaUsageService.recordConsumption(image);
             });
         } catch (Exception e) {
-            // 提交响应丢失时不能误删已经入库的文件；无法确认则保留文件并记录补偿线索。
-            try {
-                if (imageMapper.findOwned(userId, id) == null) discardUncommitted(image);
-            } catch (RuntimeException verification) {
-                log.warn("上传入库状态无法确认，保留云文件：imageId={}", id, verification);
-            }
+            // 普通查询暂时不可见不代表回滚；只有事务管理器确认回滚后才删除云对象。
+            if (rollbackConfirmed.get()) discardUncommitted(image);
+            else log.warn("上传提交结果待确认，保留云文件：imageId={}", id);
             throw new BizException(500, "上传记录保存失败，请稍后重试", e);
         }
         ImageFile saved;
@@ -346,7 +355,9 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
         }
     }
 
-    /** 仅读取首帧尺寸，避免为校验尺寸解码完整图片。 */
+    /**
+     * 实际解码首帧验证内容，保留原尺寸和动图文件；采样限制校验输出大小。
+     */
     private ImageDimensionsBO dimensions(MultipartFile file) {
         try (var stream = new MemoryCacheImageInputStream(file.getInputStream())) {
             var readers = ImageIO.getImageReaders(stream);
@@ -356,6 +367,18 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
                 reader.setInput(stream, true, true);
                 int width = reader.getWidth(0), height = reader.getHeight(0);
                 if (width <= 0 || height <= 0) throw new BizException(400, "图片尺寸无效");
+                if (!(file instanceof GeneratedImageFile)) {
+                    // AI 包装文件已校验；仅将截断警告视为损坏，兼容 WebP 等解码器的功能提示。
+                    reader.addIIOReadWarningListener((source, warning) -> {
+                        if ("Truncated File - Missing EOI marker".equals(warning)
+                                || "Corrupt JPEG data: premature end of data segment".equals(warning))
+                            throw new IllegalArgumentException("Invalid image");
+                    });
+                    var readParam = reader.getDefaultReadParam();
+                    int sampling = Math.max((width - 1) / 4096 + 1, (height - 1) / 4096 + 1);
+                    readParam.setSourceSubsampling(sampling, sampling, 0, 0);
+                    reader.read(0, readParam);
+                }
                 return new ImageDimensionsBO(width, height);
             } finally {
                 reader.dispose();

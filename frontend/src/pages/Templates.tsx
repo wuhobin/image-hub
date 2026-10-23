@@ -74,74 +74,126 @@ export default function Templates() {
 
     return <main id="main" className="template-page">
         <header className="template-heading">
-            <div><span className="section-kicker">从一个用途开始</span><h1>这次，你想创作什么？</h1>
-                <p>选一个模板，填入你的内容。让第一张图片，从这里开始。</p></div>
-            <Link className="quiet-link" to="/">自由创作 <ArrowUpRight size={17}/></Link>
-        </header>
-        <div className="template-filters">
-            <nav className="template-categories" aria-label="模板分类">
-                <button type="button" aria-pressed={!category} onClick={() => filter('category', '')}>全部模板</button>
-                {terms.filter(term => term.kind === 'CATEGORY').map(term => <button type="button" key={term.id}
-                                                                                    aria-pressed={category === String(term.id)}
-                                                                                    onClick={() => filter('category', String(term.id))}>{term.name}</button>)}
-            </nav>
-            <form className="template-search" onSubmit={event => {
-                event.preventDefault();
-                filter('search', searchInput.trim())
-            }}>
-                <label className="visually-hidden" htmlFor="template-search">搜索模板</label>
-                <MagnifyingGlass size={18} aria-hidden="true"/>
-                <input id="template-search" value={searchInput} maxLength={100} placeholder="搜索用途、风格或标签"
-                       onChange={event => setSearchInput(event.target.value)}/>
-                <button className="quiet-link" type="submit">搜索</button>
-            </form>
-        </div>
-        <div className="template-subfilters">
-            <label>标签 <select className="format-select" aria-label="按标签筛选" value={tag}
-                                onChange={event => filter('tag', event.target.value)}>
-                <option value="">全部标签</option>
-                {terms.filter(term => term.kind === 'TAG').map(term => <option key={term.id}
-                                                                               value={term.id}>{term.name}</option>)}
-            </select></label>
-            {(category || tag || search) &&
-                <button className="quiet-link" onClick={() => setParams({})}>清除筛选</button>}
-            <span role="status">{loading ? '正在读取模板…' : data ? data.total + ' 个模板' : ''}</span>
-        </div>
-        {error ? <div className="template-state" role="alert"><p>{error}</p>
-                <button className="button button-secondary" onClick={() => setRevision(value => value + 1)}>重新加载
-                </button>
+            <div>
+                <span className="template-eyebrow">场景模板库</span>
+                <h1>给灵感，一个<span>起点。</span></h1>
+                <p>从头像到商品海报，选好场景，填入你的想法。</p>
             </div>
-            : !loading && !data?.records.length ?
-                <div className="template-state"><h2>暂时没有匹配的模板</h2><p>换个关键词，或查看全部模板。</p>
-                    <button className="button button-secondary" onClick={() => setParams({})}>查看全部</button>
+            <Link className="template-free-create" to="/">自由创作 <ArrowUpRight size={17} aria-hidden="true"/></Link>
+        </header>
+        <div className="template-workbench">
+            <aside className="template-sidebar">
+                <span className="template-sidebar-label">按用途浏览</span>
+                <nav className="template-categories" aria-label="模板分类">
+                    <button type="button" aria-pressed={!category} onClick={() => filter('category', '')}>
+                        全部模板<ArrowUpRight size={15} aria-hidden="true"/>
+                    </button>
+                    {terms.filter(term => term.kind === 'CATEGORY').map(term => <button type="button" key={term.id}
+                                                                                        aria-pressed={category === String(term.id)}
+                                                                                        onClick={() => filter('category', String(term.id))}>
+                        {term.name}<ArrowUpRight size={15} aria-hidden="true"/>
+                    </button>)}
+                </nav>
+                <div className="template-start-guide">
+                    <p>第一次创作？</p>
+                    <ol>
+                        <li>选一个适合的场景</li>
+                        <li>把示例换成你的内容</li>
+                        <li>确认参数，开始生成</li>
+                    </ol>
+                    <span>提示词已准备好，<br/>随时可以继续修改。</span>
                 </div>
-                : <div className="template-grid" aria-busy={loading}>{data?.records.map(item => <Link
-                    className="template-card" key={item.id}
-                    to={{
-                        pathname: '/templates',
-                        search: '?' + new URLSearchParams({...Object.fromEntries(params), template: String(item.id)})
+            </aside>
+            <section className="template-results" aria-label="可用模板">
+                <div className="template-filters">
+                    <form className="template-search" onSubmit={event => {
+                        event.preventDefault();
+                        filter('search', searchInput.trim())
                     }}>
-                    {item.exampleUrl ?
-                        <div className="template-art"><img src={item.exampleUrl} alt={item.title + '示例效果'}
-                                                           loading="lazy"/></div>
-                        : <div className="template-text-art"><span>提示词示例</span><p>{examplePrompt(item)}</p></div>}
-                    <div className="template-card-copy"><span
-                        className="template-category-label">{item.category.name}</span>
-                        <h2>{item.title}<ArrowUpRight size={19} aria-hidden="true"/></h2><p>{item.description}</p>
-                        <div className="template-card-tags">{item.tags.map(tag => <span
-                            key={tag.id}>{tag.name}</span>)}</div>
-                        <small>{item.fields.length ? item.fields.length + ' 项填写 · 可修改提示词' : '直接使用 · 可修改提示词'}</small>
+                        <label className="visually-hidden" htmlFor="template-search">搜索模板</label>
+                        <MagnifyingGlass size={19} aria-hidden="true"/>
+                        <input id="template-search" value={searchInput} maxLength={100}
+                               placeholder="搜索场景、用途或风格"
+                               onChange={event => setSearchInput(event.target.value)}/>
+                        <button type="submit">搜索</button>
+                    </form>
+                    <label className="template-tag-filter"><span className="visually-hidden">标签</span>
+                        <select className="format-select" aria-label="按标签筛选" value={tag}
+                                onChange={event => filter('tag', event.target.value)}>
+                            <option value="">全部标签</option>
+                            {terms.filter(term => term.kind === 'TAG').map(term => <option key={term.id}
+                                                                                           value={term.id}>{term.name}</option>)}
+                        </select>
+                    </label>
+                </div>
+                <div className="template-subfilters">
+                    <h2>{search ? '搜索结果' : terms.find(term => String(term.id) === category)?.name || '全部模板'}</h2>
+                    <span role="status">{loading ? '正在读取…' : data ? data.total + ' 个模板' : ''}</span>
+                    {(category || tag || search) &&
+                        <button className="quiet-link" onClick={() => setParams({})}>清除筛选</button>}
+                </div>
+                {error ? <div className="template-state" role="alert"><p>{error}</p>
+                        <button className="button button-secondary"
+                                onClick={() => setRevision(value => value + 1)}>重新加载
+                        </button>
                     </div>
-                </Link>)}</div>}
-        {data && data.pages > 1 && <nav className="template-pagination" aria-label="模板分页">
-            <button className="button button-secondary" disabled={loading || page <= 1}
-                    onClick={() => setParams({...Object.fromEntries(params), page: String(page - 1)})}>上一页
-            </button>
-            <span>{page} / {data.pages}</span>
-            <button className="button button-secondary" disabled={loading || page >= data.pages}
-                    onClick={() => setParams({...Object.fromEntries(params), page: String(page + 1)})}>下一页
-            </button>
-        </nav>}
+                    : !loading && !data?.records.length ?
+                        <div className="template-state"><MagnifyingGlass size={30} aria-hidden="true"/>
+                            <h2>暂时没有匹配的模板</h2><p>换个关键词，或查看全部模板。</p>
+                            <button className="button button-secondary" onClick={() => setParams({})}>查看全部</button>
+                        </div>
+                        : <div className="template-grid" aria-busy={loading}>
+                            {loading && !data && <p className="template-loading" role="status">正在准备场景模板…</p>}
+                            {data?.records.map(item => <Link className="template-card" key={item.id}
+                                                             aria-label={'使用“' + item.title + '”模板'}
+                                                             to={{
+                                                                 pathname: '/templates',
+                                                                 search: '?' + new URLSearchParams({
+                                                                     ...Object.fromEntries(params),
+                                                                     template: String(item.id)
+                                                                 })
+                                                             }}>
+                                <div className="template-card-copy">
+                                    <div className="template-card-meta">
+                                        <span className="template-category-label">{item.category.name}</span>
+                                        <span>{item.fields.length ? item.fields.length + ' 项填写' : '直接使用'}</span>
+                                    </div>
+                                    <h3>{item.title}</h3>
+                                    <p>{item.description}</p>
+                                </div>
+                                {item.exampleUrl ?
+                                    <div className="template-art"><img src={item.exampleUrl}
+                                                                       alt={item.title + '示例效果'} loading="lazy"/>
+                                    </div>
+                                    : <div className="template-text-art">
+                                        <span>提示词示例</span>
+                                        <p>{examplePrompt(item)}</p>
+                                    </div>}
+                                {item.fields.length > 0 &&
+                                    <div className="template-field-hints" aria-label="需要填写的内容">
+                                        {item.fields.slice(0, 3).map(field => <span
+                                            key={field.key}>{field.label}</span>)}
+                                        {item.fields.length > 3 && <span>+{item.fields.length - 3} 项</span>}
+                                    </div>}
+                                <div className="template-card-footer">
+                                    <div className="template-card-tags">{item.tags.map(tag => <span
+                                        key={tag.id}>{tag.name}</span>)}</div>
+                                    <span className="template-card-action">使用模板<ArrowUpRight size={16}
+                                                                                                 aria-hidden="true"/></span>
+                                </div>
+                            </Link>)}
+                        </div>}
+                {data && data.pages > 1 && <nav className="template-pagination" aria-label="模板分页">
+                    <button className="button button-secondary" disabled={loading || page <= 1}
+                            onClick={() => setParams({...Object.fromEntries(params), page: String(page - 1)})}>上一页
+                    </button>
+                    <span>{page} / {data.pages}</span>
+                    <button className="button button-secondary" disabled={loading || page >= data.pages}
+                            onClick={() => setParams({...Object.fromEntries(params), page: String(page + 1)})}>下一页
+                    </button>
+                </nav>}
+            </section>
+        </div>
         {selected && <TemplateDialog key={selected} id={selected} draft={location.state?.templateDraft}
                                      onClose={() => setParams(previous => {
                                          const next = new URLSearchParams(previous);
@@ -210,7 +262,8 @@ function TemplateDialog({id, draft, onClose}: { id: string; draft?: TemplateDraf
         }
     }
 
-    return <Modal title={item?.title || '正在读取模板'} className="template-dialog" onClose={busy ? () => {
+    return <Modal title={item?.title || '正在读取模板'} className="template-dialog template-use-dialog"
+                  onClose={busy ? () => {
     } : onClose}>
         {error && <p className="template-error" role="alert">{error}</p>}
         {!item ? error ? <button className="button button-secondary"
@@ -219,7 +272,7 @@ function TemplateDialog({id, draft, onClose}: { id: string; draft?: TemplateDraf
             : <form onSubmit={apply} className="template-form">
                 {item.exampleUrl &&
                     <img className="template-dialog-image" src={item.exampleUrl} alt={item.title + '示例效果'}/>}
-                <p className="template-description">{item.description}</p>
+                <div className="template-use-intro"><span>{item.category.name}</span><p>{item.description}</p></div>
                 <div className="template-fields">{item.fields.map(field => <label key={field.key}
                                                                                   htmlFor={'template-field-' + field.key}>
                     <span>{field.label}{!field.required && <small>选填</small>}</span>

@@ -51,7 +51,7 @@ public class UserCheckInServiceImpl extends ServiceImpl<UserCheckInMapper, UserC
     @Override
     @Transactional(rollbackFor = Exception.class)
     public CheckInVO checkIn(long userId) {
-        if (userMapper.lockForCheckIn(userId) == null) throw new BizException(401, "账号不可用，请重新登录");
+        if (userMapper.lockById(userId) == null) throw new BizException(401, "账号不可用，请重新登录");
         LocalDate date = today();
         UserCheckIn latest = userCheckInMapper.latest(userId);
         if (latest != null && !latest.getCheckInDate().isBefore(date)) {

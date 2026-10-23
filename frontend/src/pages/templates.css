@@ -1,22 +1,44 @@
-/* 沿用 ImgHub 的冷灰画廊；文字模板以真实提示词示例作为封面。 */
+/* 场景优先：用途导航、短提示词预览与填写项各自承担一层信息。 */
 .template-page {
-    max-width: 1280px;
+    --template-surface: #121820;
+    --template-raised: #1a2532;
+    --template-ink: #edf2fa;
+    --template-muted: #a1adbd;
+    --template-accent: #b1cbed;
+    --template-line: #293440;
+    max-width: 1360px;
     margin: 0 auto;
-    padding: 52px 40px 80px;
+    padding: 48px 40px 80px;
 }
 
 .template-heading {
     display: flex;
     justify-content: space-between;
-    align-items: end;
+    align-items: center;
     gap: 24px;
-    margin-bottom: 38px;
+    padding-bottom: 36px;
+    margin-bottom: 32px;
+    border-bottom: 1px solid var(--line);
+}
+
+.template-eyebrow {
+    display: block;
+    color: var(--template-muted);
+    font-size: 12px;
+    letter-spacing: .12em;
 }
 
 .template-heading h1 {
-    font-size: clamp(27px, 3.5vw, 42px);
-    letter-spacing: -.035em;
-    margin: 12px 0 14px;
+    margin: 14px 0;
+    color: var(--template-ink);
+    font-size: clamp(30px, 3.2vw, 44px);
+    font-weight: 500;
+    line-height: 1.35;
+    letter-spacing: -.04em;
+}
+
+.template-heading h1 span {
+    color: var(--template-accent);
 }
 
 .template-heading p, .template-description {
@@ -25,15 +47,46 @@
     line-height: 1.8;
 }
 
-.template-filters {
-    display: flex;
+.template-free-create {
+    display: inline-flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 24px;
-    padding: 18px 0;
-    border-block: 1px solid var(--line);
+    justify-content: center;
+    gap: 14px;
+    flex-shrink: 0;
+    min-height: 44px;
+    padding: 0 16px;
+    border: 1px solid #354251;
+    border-radius: 9px;
+    color: var(--template-ink);
+    font-size: 13px;
 }
 
+.template-free-create:hover {
+    background: var(--template-raised);
+}
+
+.template-workbench {
+    display: grid;
+    grid-template-columns: 172px minmax(0, 1fr);
+    gap: 36px;
+    align-items: start;
+}
+
+.template-sidebar {
+    position: sticky;
+    top: 28px;
+    min-width: 0;
+}
+
+.template-sidebar-label {
+    display: block;
+    padding: 6px 12px 18px;
+    color: var(--muted);
+    font-size: 11px;
+    letter-spacing: .08em;
+}
+
+/* 分类按钮与标签文字也供后台使用；前台导航单独限定布局。 */
 .template-categories {
     display: flex;
     gap: 8px;
@@ -54,53 +107,171 @@
     background: #293448;
 }
 
+.template-sidebar .template-categories {
+    flex-direction: column;
+    gap: 6px;
+}
+
+.template-sidebar .template-categories button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 46px;
+    padding: 12px;
+    text-align: left;
+    color: var(--template-muted);
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.template-sidebar .template-categories button svg {
+    flex-shrink: 0;
+    opacity: 0;
+}
+
+.template-sidebar .template-categories button:hover {
+    color: var(--template-ink);
+    background: #141d28;
+}
+
+.template-sidebar .template-categories button[aria-pressed=true] {
+    color: #d5e6ff;
+    background: #223147;
+}
+
+.template-sidebar .template-categories button[aria-pressed=true] svg {
+    opacity: 1;
+}
+
+.template-sidebar .template-categories button:focus-visible {
+    color: #fff;
+    background: #30445f;
+}
+
+.template-start-guide {
+    margin: 38px 12px 0;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    font-size: 12px;
+}
+
+.template-start-guide p {
+    color: #c6d0df;
+}
+
+.template-start-guide ol {
+    padding-left: 18px;
+    margin: 16px 0;
+    color: var(--template-muted);
+    line-height: 2.3;
+}
+
+.template-start-guide li::marker {
+    color: #7187a2;
+    font-family: Consolas, monospace;
+    font-size: 11px;
+}
+
+.template-start-guide > span {
+    color: #8391a4;
+    font-size: 11px;
+    line-height: 1.9;
+}
+
+.template-results {
+    min-width: 0;
+}
+
+.template-filters {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
 .template-search {
     display: flex;
-    gap: 10px;
+    flex: 1;
     align-items: center;
-    background: #171d27;
-    padding: 4px 12px;
-    border-radius: 8px;
-    min-width: 240px;
-    color: var(--muted);
+    min-width: 0;
+    min-height: 48px;
+    gap: 10px;
+    padding: 5px 6px 5px 16px;
+    border-radius: 10px;
+    background: #161f2a;
+    color: var(--template-muted);
+}
+
+.template-search:focus-within {
+    background: #25354a;
+    color: #eef5ff;
+}
+
+.template-search > svg {
+    flex-shrink: 0;
 }
 
 .template-search input {
     min-width: 0;
     width: 100%;
-    padding: 10px 4px;
+    padding: 8px 0;
     background: transparent;
     color: var(--text);
+    font: inherit;
     font-size: 13px;
 }
 
+.template-search input::placeholder {
+    color: #8f9eb2;
+}
+
 .template-search button {
-    flex-shrink: 0;
+    min-height: 36px;
+    padding: 0 16px;
     border: 0;
-    background: transparent;
-    padding: 8px;
+    border-radius: 6px;
+    background: #29394d;
+    color: #dbe8fa;
+    flex-shrink: 0;
+    font-size: 12px;
+}
+
+.template-search button:hover {
+    background: #364d69;
+}
+
+.template-tag-filter {
+    flex-shrink: 0;
+}
+
+.template-tag-filter .format-select {
+    min-height: 48px;
+    width: 154px;
+    border-color: var(--template-line);
 }
 
 .template-subfilters {
     display: flex;
-    gap: 18px;
+    gap: 12px;
     align-items: center;
-    margin: 20px 0 26px;
-    color: var(--muted);
+    min-height: 70px;
     font-size: 12px;
 }
 
-.template-subfilters > span:last-child {
-    margin-left: auto;
+.template-subfilters h2 {
+    font-size: 15px;
+    font-weight: 500;
+    color: #dbe3ee;
 }
 
-.template-subfilters label {
-    display: flex;
-    align-items: center;
-    gap: 12px;
+.template-subfilters > span {
+    color: #90a0b5;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
 }
 
 .template-subfilters button {
+    margin-left: auto;
+    padding: 10px 0 10px 10px;
     border: 0;
     background: transparent;
 }
@@ -108,31 +279,71 @@
 .template-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 28px 24px;
+    gap: 18px;
 }
-
 .template-card {
-    background: #11151d;
-    border: 1px solid #252c37;
-    border-radius: 12px;
-    overflow: hidden;
-    min-width: 0;
     display: flex;
     flex-direction: column;
+    min-width: 0;
+    padding: 21px 20px 0;
+    border: 1px solid var(--template-line);
+    border-radius: 14px;
+    background: var(--template-surface);
+    transition: background .18s, border-color .18s, transform .18s;
 }
 
 .template-card:hover {
-    border-color: #53617a;
-    transform: translateY(-2px);
+    background: #17212c;
+    border-color: #61758d;
+    transform: translateY(-3px);
+}
+
+.template-card:focus-visible {
+    background: #223147;
+    border-color: #adc9ed;
+    text-decoration: none;
+}
+
+.template-card-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    color: #8797ac;
+    font-size: 10px;
+    line-height: 1.6;
+}
+
+.template-category-label {
+    color: var(--template-accent);
+}
+
+.template-card h3 {
+    margin: 13px 0 9px;
+    font-size: 20px;
+    line-height: 1.5;
+    font-weight: 550;
+    letter-spacing: -.035em;
+    overflow-wrap: anywhere;
+    color: var(--template-ink);
+}
+
+.template-card-copy > p {
+    min-height: 42px;
+    color: var(--template-muted);
+    font-size: 12px;
+    line-height: 1.8;
 }
 
 .template-art, .template-text-art {
-    height: 210px;
+    height: 112px;
+    margin-top: 20px;
+    border-radius: 8px;
     overflow: hidden;
 }
 
 .template-art {
-    background: #090b10;
+    background: #090e16;
 }
 
 .template-art img {
@@ -142,54 +353,44 @@
 }
 
 .template-text-art {
-    position: relative;
-    padding: 24px;
-    background: #1a2230;
+    padding: 13px 14px;
+    background: #0b1119;
 }
 
 .template-text-art > span {
+    display: block;
+    color: #899cb5;
     font-size: 10px;
-    color: #afc4e4;
-    letter-spacing: .08em;
+    margin-bottom: 8px;
 }
 
 .template-text-art p {
-    font-size: 15px;
-    line-height: 1.9;
-    color: #cdd7e8;
-    margin-top: 15px;
     display: -webkit-box;
-    -webkit-line-clamp: 4;
+    -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
     overflow: hidden;
-}
-
-.template-card-copy {
-    padding: 22px;
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-}
-
-.template-category-label {
+    color: #b2bfd0;
     font-size: 11px;
-    color: #9dafc8;
+    line-height: 1.9;
+    overflow-wrap: anywhere;
 }
 
-.template-card h2 {
-    font-size: 19px;
-    margin: 10px 0;
+.template-field-hints {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 12px 0 0;
 }
 
-.template-card-copy > p {
-    font-size: 12px;
-    color: var(--muted);
-    line-height: 1.8;
-    min-height: 44px;
+.template-field-hints span {
+    max-width: 100%;
+    padding: 4px 7px;
+    border-radius: 4px;
+    color: #bacde4;
+    background: #233043;
+    font-size: 10px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
 }
 
 .template-card-tags {
@@ -207,25 +408,78 @@
     color: #a6b2c3;
 }
 
-.template-card-copy > small {
-    font-size: 11px;
-    color: #a2aab9;
+.template-card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
     margin-top: auto;
+    min-height: 66px;
+    padding: 18px 0;
+}
+
+.template-card-footer .template-card-tags {
+    gap: 4px 10px;
+    margin: 0;
+    min-width: 0;
+}
+
+.template-card-footer .template-card-tags span {
+    padding: 0;
+    background: transparent;
+    color: #94a3b7;
+    font-size: 10px;
+    overflow-wrap: anywhere;
+}
+
+.template-card-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    flex-shrink: 0;
+    color: #c4d9f5;
+    font-size: 11px;
+}
+
+.template-card:hover .template-card-action {
+    color: #fff;
+}
+
+.template-card:hover .template-card-action svg {
+    transform: translate(2px, -2px);
+}
+
+.template-card-action svg {
+    transition: transform .18s;
 }
 
 .template-state {
-    min-height: 300px;
+    min-height: 340px;
     display: flex;
     align-items: center;
     justify-content: center;
     flex-direction: column;
-    gap: 22px;
+    gap: 18px;
+    padding: 32px 16px;
+    border: 1px dashed var(--line);
+    border-radius: 12px;
     color: var(--muted);
+    text-align: center;
+    font-size: 13px;
 }
 
 .template-state h2 {
     color: var(--text);
-    font-size: 22px;
+    font-size: 20px;
+    font-weight: 500;
+}
+
+.template-loading {
+    grid-column: 1 / -1;
+    padding: 64px 0;
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
 }
 
 .template-pagination {
@@ -369,58 +623,231 @@
     padding: 4px;
 }
 
-@media (max-width: 1000px) {
+/* 填写弹窗以用户内容为主，样式不影响后台维护弹窗。 */
+.modal.template-use-dialog {
+    background: #111923;
+    border-color: #38485c;
+}
+
+.template-use-dialog .modal-inner {
+    padding: 30px;
+}
+
+.template-use-dialog .modal-header {
+    margin-bottom: 12px;
+}
+
+.template-use-dialog .modal-header h2 {
+    font-size: 25px;
+    letter-spacing: -.035em;
+    font-weight: 500;
+}
+
+.template-use-intro {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 2px;
+}
+
+.template-use-intro > span {
+    width: fit-content;
+    padding: 4px 9px;
+    border-radius: 4px;
+    background: #223147;
+    color: #bad0ed;
+    font-size: 11px;
+}
+
+.template-use-intro p {
+    color: #a4b0c1;
+    line-height: 1.8;
+    font-size: 13px;
+}
+
+.template-use-dialog .template-fields {
+    gap: 18px;
+}
+
+.template-use-dialog .template-fields > label:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+}
+
+.template-use-dialog .template-fields textarea {
+    min-height: 90px;
+    background: #1b2736;
+    color: #e4edf9;
+}
+
+.template-use-dialog .template-fields textarea:focus-visible {
+    background: #30445f;
+}
+
+.template-use-dialog .template-prompt-editor {
+    padding: 18px 0;
+}
+
+.template-use-dialog .template-form > .button-primary {
+    min-height: 48px;
+}
+
+@media (max-width: 1150px) {
+    .template-workbench {
+        grid-template-columns: 156px minmax(0, 1fr);
+        gap: 26px;
+    }
+
     .template-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
-
-    .template-filters {
-        align-items: stretch;
-        flex-direction: column;
-        gap: 14px;
-    }
 }
 
-@media (max-width: 600px) {
+@media (max-width: 760px) {
     .template-page {
-        padding: 30px 20px 50px;
+        padding: 30px 24px 56px;
     }
 
     .template-heading {
-        align-items: start;
+        align-items: flex-start;
+        padding-bottom: 26px;
+        margin-bottom: 22px;
+    }
+
+    .template-heading h1 {
+        font-size: 32px;
+    }
+
+    .template-workbench {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 22px;
+    }
+
+    .template-sidebar {
+        position: static;
+    }
+
+    .template-sidebar-label, .template-start-guide {
+        display: none;
+    }
+
+    .template-sidebar .template-categories {
+        flex-direction: row;
+        gap: 6px;
+    }
+
+    .template-sidebar .template-categories button {
+        flex: 1 1 auto;
+        justify-content: center;
+        padding: 10px 12px;
+        min-height: 44px;
+    }
+
+    .template-sidebar .template-categories button svg {
+        display: none;
+    }
+}
+
+@media (max-width: 540px) {
+    .template-page {
+        padding: 26px 18px 48px;
+    }
+
+    .template-heading {
         flex-direction: column;
-        gap: 16px;
-        margin-bottom: 24px;
+        gap: 18px;
+    }
+
+    .template-heading h1 {
+        font-size: 32px;
+        margin: 12px 0;
+    }
+
+    .template-heading p {
+        max-width: 28em;
+        font-size: 13px;
+    }
+
+    .template-free-create {
+        min-height: 40px;
+        font-size: 12px;
+    }
+
+    .template-sidebar .template-categories {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .template-sidebar .template-categories button {
+        font-size: 12px;
+    }
+
+    .template-filters {
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+
+    .template-search {
+        flex-basis: 100%;
+    }
+
+    .template-tag-filter, .template-tag-filter .format-select {
+        width: 100%;
+    }
+
+    .template-subfilters {
+        min-height: 60px;
+        flex-wrap: wrap;
+        gap: 8px;
     }
 
     .template-grid, .template-fields {
         grid-template-columns: minmax(0, 1fr);
     }
 
-    .template-categories {
-        gap: 2px;
+    .template-card {
+        padding: 21px 20px 0;
     }
 
-    .template-categories button {
-        padding: 10px;
+    .template-card-copy > p {
+        min-height: 0;
     }
 
-    .template-dialog .modal-inner {
-        padding: 20px;
+    .template-card h3 {
+        font-size: 22px;
     }
 
-    .template-subfilters {
+    .template-dialog .modal-inner, .template-use-dialog .modal-inner {
+        padding: 22px 20px;
+    }
+
+    .template-use-dialog .modal-header h2 {
+        font-size: 22px;
+    }
+
+    .template-prompt-editor summary {
+        display: flex;
         flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
     }
 
-    .template-subfilters > span:last-child {
-        margin-left: 0;
+    .template-prompt-editor summary span {
+        float: none;
+        margin-left: auto;
     }
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .template-card:hover {
+    .template-card, .template-card-action svg {
+        transition: none;
+    }
+
+    .template-card:hover, .template-card:hover .template-card-action svg {
         transform: none;
+    }
+
+    .modal.template-use-dialog[open] {
+        animation: none;
     }
 }
 
@@ -737,6 +1164,10 @@
 }
 
 @media (max-width: 600px) {
+    .template-admin .template-fields {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
     .template-admin-row {
         flex-wrap: wrap;
         gap: 12px;

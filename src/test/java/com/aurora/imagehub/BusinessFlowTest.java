@@ -533,6 +533,47 @@ class BusinessFlowTest {
         assertThat(get("/api/app/images", token).path("data").path("page").path("total").asInt()).isZero();
     }
 
+    /**
+     * 损坏图片必须在积分预占、云上传及写库之前拒绝。
+     */
+    @Test
+    void truncatedUploadsAreRejectedBeforeQuotaReservation() throws Exception {
+        register("invalid-content", "invalid-content@example.test");
+        String token = login("invalid-content");
+        var originalQuota = Map.copyOf(quotaState);
+        clearInvocations(redissonClient, storage);
+        byte[] content = png();
+        for (int length : new int[]{33, content.length / 2}) {
+            assertThat(upload(token, "truncated.png", java.util.Arrays.copyOf(content, length)).path("code").asInt()).isEqualTo(400);
+        }
+        var jpeg = new ByteArrayOutputStream();
+        ImageIO.write(new BufferedImage(30, 20, BufferedImage.TYPE_INT_RGB), "jpg", jpeg);
+        assertThat(upload(token, "truncated.jpg", java.util.Arrays.copyOf(jpeg.toByteArray(), jpeg.size() - 12))
+                .path("code").asInt()).isEqualTo(400);
+        byte[] oversized = content.clone();
+        java.nio.ByteBuffer.wrap(oversized).putInt(16, 100_000).putInt(20, 100_000);
+        assertThat(upload(token, "oversized-pixels.png", oversized).path("code").asInt()).isEqualTo(400);
+        assertThat(quotaState).isEqualTo(originalQuota);
+        verify(redissonClient, never()).getLock(anyString());
+        verify(storage, never()).of(any(MultipartFile.class));
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_image", Long.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_quota_usage", Long.class)).isZero();
+    }
+
+    /**
+     * 内容校验不能引入普通上传原本没有的像素上限，仍返回原始尺寸。
+     */
+    @Test
+    void validLargeImageRetainsOriginalDimensions() throws Exception {
+        register("large-image", "large-image@example.test");
+        var bytes = new ByteArrayOutputStream();
+        ImageIO.write(new BufferedImage(6000, 4000, BufferedImage.TYPE_BYTE_BINARY), "png", bytes);
+        JsonNode response = upload(login("large-image"), "large.png", bytes.toByteArray());
+        assertThat(response.path("code").asInt()).isEqualTo(200);
+        assertThat(response.path("data").path("width").asInt()).isEqualTo(6000);
+        assertThat(response.path("data").path("height").asInt()).isEqualTo(4000);
+    }
+
     @Test
     void supportedFormatsAndUploadRollbackAreChecked() throws Exception {
         register("formats", "formats@example.test");
@@ -734,6 +775,11 @@ class BusinessFlowTest {
         register("parallel", "parallel@example.test");
         String token = login("parallel");
         long userId = userMapper.findByUsername("parallel").getId();
+        // 缓存与持久化消耗保持一致，验证最后一分，而非只构造虚假的缓存余额。
+        jdbcTemplate.update("""
+                INSERT INTO hub_image (id,user_id,name,url,type,size,width,height,storage_info,quota_charged,points_cost,deleted)
+                VALUES (?,?,'prior.png','https://cdn.example.test/prior.png','PNG',1,1,1,'{}',1,99,1)
+                """, java.util.UUID.randomUUID().toString(), userId);
         quotaState.put("image-hub:quota:{" + userId + "}", "u:99");
         var entered = new java.util.concurrent.CountDownLatch(1);
         var finish = new java.util.concurrent.CountDownLatch(1);
@@ -759,9 +805,94 @@ class BusinessFlowTest {
             assertThat(get("/api/app/images/quota", token).path("data").path("remaining").asInt()).isZero();
             assertThat(upload(token, "third.png", bytes).path("code").asInt()).isEqualTo(40301);
             verify(uploadPretreatment).upload();
-        } finally { finish.countDown(); executor.shutdownNow(); }
+        } finally { finish.countDown(); executor.shutdownNow();
+        }
     }
 
+    /**
+     * Redis 锁在复核后失效时，未提交图片仍受用户行锁保护，接任上传必须等待后再恢复余额。
+     */
+    @Test
+    void expiredRedisLockCannotOverspendBeforePreviousUploadCommits() throws Exception {
+        register("lease-loss", "lease-loss@example.test");
+        String token = login("lease-loss");
+        long userId = userMapper.findByUsername("lease-loss").getId();
+        jdbcTemplate.update("UPDATE hub_settings SET config_value='1' WHERE config_key='upload.free-total'");
+        var owner = new java.util.concurrent.atomic.AtomicReference<Thread>();
+        var acquisitions = new java.util.concurrent.atomic.AtomicInteger();
+        var successorAcquired = new java.util.concurrent.CountDownLatch(1);
+        var beforeInsert = new java.util.concurrent.CountDownLatch(1);
+        var finishInsert = new java.util.concurrent.CountDownLatch(1);
+        var quotaLock = mock(org.redisson.api.RLock.class);
+        when(redissonClient.getLock("image-hub:quota:{" + userId + "}:lock")).thenReturn(quotaLock);
+        when(quotaLock.tryLock()).thenAnswer(call -> {
+            boolean acquired = owner.compareAndSet(null, Thread.currentThread());
+            if (acquired && acquisitions.incrementAndGet() == 2) successorAcquired.countDown();
+            return acquired;
+        });
+        when(quotaLock.isHeldByCurrentThread()).thenAnswer(call -> owner.get() == Thread.currentThread());
+        doAnswer(call -> {
+            owner.compareAndSet(Thread.currentThread(), null);
+            return null;
+        }).when(quotaLock).unlock();
+        doAnswer(call -> {
+            ImageFile image = call.getArgument(0);
+            if ("first.png".equals(image.getName())) {
+                assertThat(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+                beforeInsert.countDown();
+                if (!finishInsert.await(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("first upload did not resume");
+                }
+            }
+            // MyBatis Mapper 是接口代理；沿用 Spy 的委托执行真实 SQL，不能调用抽象接口方法。
+            return mockingDetails(imageMapper).getMockCreationSettings().getDefaultAnswer().answer(call);
+        }).when(imageMapper).insert(any(ImageFile.class));
+
+        var executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+        byte[] bytes = png();
+        try {
+            var first = executor.submit(() -> upload(token, "first.png", bytes));
+            assertThat(beforeInsert.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(owner.get()).isNotNull();
+            owner.set(null);
+            var second = executor.submit(() -> upload(token, "second.png", bytes));
+            assertThat(successorAcquired.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> second.get(200, java.util.concurrent.TimeUnit.MILLISECONDS))
+                    .isInstanceOf(java.util.concurrent.TimeoutException.class);
+            finishInsert.countDown();
+            assertThat(first.get(5, java.util.concurrent.TimeUnit.SECONDS).path("code").asInt()).isEqualTo(200);
+            assertThat(second.get(5, java.util.concurrent.TimeUnit.SECONDS).path("code").asInt()).isEqualTo(40301);
+            assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_image WHERE user_id=?", Long.class, userId)).isEqualTo(1);
+            assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_quota_usage WHERE user_id=?", Long.class, userId)).isEqualTo(1);
+            assertThat(get("/api/app/images/quota", token).path("data").path("used").asLong()).isEqualTo(1);
+            assertThat(quotaState.get("image-hub:quota:{" + userId + "}")).isEqualTo("u:1");
+            verify(storage, times(1)).of(any(MultipartFile.class));
+        } finally {
+            finishInsert.countDown();
+            executor.shutdownNow();
+            assertThat(executor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        }
+    }
+
+    /**
+     * 格式正常但少记消耗的缓存不能通过落库前复核；已上传的第二个对象补偿删除，不增加图片或流水。
+     */
+    @Test
+    void staleQuotaCacheCannotChargeMoreThanDatabaseBalance() throws Exception {
+        register("stale-balance", "stale-balance@example.test");
+        String token = login("stale-balance");
+        long userId = userMapper.findByUsername("stale-balance").getId();
+        jdbcTemplate.update("UPDATE hub_settings SET config_value='1' WHERE config_key='upload.free-total'");
+        assertThat(upload(token, "first.png", png()).path("code").asInt()).isEqualTo(200);
+        quotaState.put("image-hub:quota:{" + userId + "}", "u:0");
+        assertThat(upload(token, "second.png", png()).path("code").asInt()).isNotEqualTo(200);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_image WHERE user_id=?", Long.class, userId)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_quota_usage WHERE user_id=?", Long.class, userId)).isEqualTo(1);
+        assertThat(get("/api/app/images/quota", token).path("data").path("used").asLong()).isEqualTo(1);
+        assertThat(quotaState.get("image-hub:quota:{" + userId + "}")).isEqualTo("u:1");
+        verify(storage, times(2)).of(any(MultipartFile.class));
+        verify(ossTemplate).delete(stored);
+    }
 
     @Test
     void changingTotalPreservesConsumptionAcrossZeroAndInvalidOrMissingRedisState() throws Exception {
@@ -1015,7 +1146,8 @@ class BusinessFlowTest {
         String id = post("/api/app/generations", request, token).path("data").path("id").asText();
         assertThat(imageFileService.quota(userId).getRemaining()).isZero();
         // 模拟首次查询之后其他请求已经提交；锁内发现重复时不能再按新任务检查积分。
-        String duplicate = uploadQuotaCache.reserveGeneration(userId, 1, () -> id, () -> { throw new AssertionError("must not create again"); });
+        String duplicate = uploadQuotaCache.reserveGeneration(userId, 1, () -> id, total -> {
+            throw new AssertionError("must not create again"); });
         assertThat(duplicate).isEqualTo(id);
         assertThat(post("/api/app/generations", request, token).path("data").path("id").asText()).isEqualTo(id);
     }

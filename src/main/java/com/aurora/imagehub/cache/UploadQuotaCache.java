@@ -3,10 +3,12 @@ package com.aurora.imagehub.cache;
 import com.aurora.imagehub.mapper.ImageMapper;
 import com.aurora.imagehub.mapper.QuotaUsageMapper;
 import com.aurora.imagehub.mapper.AiGenerationMapper;
+import com.aurora.imagehub.mapper.UserMapper;
 import com.aurora.imagehub.service.admin.SystemSettingsService;
 import com.aurora.imagehub.model.vo.UploadQuotaVO;
 import com.aurora.starter.webmvc.exception.BizException;
 import java.util.function.Supplier;
+import java.util.function.LongFunction;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RBucket;
@@ -14,6 +16,11 @@ import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.redisson.client.codec.StringCodec;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Redis 保存累计消耗；基础配置与签到收入决定总额，中断预占按成功图片恢复，删除图片不返还。
@@ -32,6 +39,10 @@ public class UploadQuotaCache {
     private final QuotaUsageMapper quotaUsageMapper;
 
     private final AiGenerationMapper aiGenerationMapper;
+
+    private final UserMapper userMapper;
+
+    private final PlatformTransactionManager platformTransactionManager;
 
     private final SystemSettingsService systemSettingsService;
 
@@ -100,11 +111,12 @@ public class UploadQuotaCache {
     }
 
     /** 同账号串行预占；看门狗续租，不持有数据库事务，不影响其他账号上传。 */
-    public <T> T consume(long userId, String imageId, Supplier<T> upload) {
+    public <T> T consume(long userId, String imageId, LongFunction<T> upload) {
         releaseInterruptedGeneration(userId);
         RLock lock;
         RBucket<String> bucket;
         long used;
+        long admittedTotal;
         try {
             lock = lock(userId);
             if (!lock.tryLock()) throw new BizException(409, "当前账号有图片正在上传，请稍后重试");
@@ -117,7 +129,8 @@ public class UploadQuotaCache {
             try {
                 bucket = bucket(userId);
                 used = recover(userId, bucket);
-                if (used + aiGenerationMapper.reserved(userId) >= totalPoints(userId)) {
+                admittedTotal = totalPoints(userId);
+                if (used + aiGenerationMapper.reserved(userId) >= admittedTotal) {
                     throw new BizException(EXHAUSTED, "共享积分已用完");
                 }
                 // 以预占时的配置判断准入，已准入上传可完成；配置变化不能覆盖累计消耗。
@@ -129,7 +142,7 @@ public class UploadQuotaCache {
             }
             T result;
             try {
-                result = upload.get();
+                result = upload.apply(admittedTotal);
             } catch (RuntimeException e) {
                 // 包括入库成功但回读失败：以数据库成功记录为准，不能误退已消耗积分。
                 try { if (lock.isHeldByCurrentThread()) rebuild(userId, bucket); }
@@ -137,7 +150,7 @@ public class UploadQuotaCache {
                 throw e;
             }
             try {
-                if (lock.isHeldByCurrentThread()) bucket.set("u:" + (used + 1));
+                if (lock.isHeldByCurrentThread()) rebuild(userId, bucket);
             } catch (RuntimeException e) {
                 // 图片已入库，保留预占标记等待恢复；不能将成功响应改为失败诱发重复上传。
                 log.warn("Quota confirmation deferred: userId={}", userId, e);
@@ -148,9 +161,24 @@ public class UploadQuotaCache {
         }
     }
 
-    /** 云上传后再次检查锁所有权，丢失锁时禁止落库并由上传服务补偿云文件。 */
+    /**
+     * 在写库事务中锁住用户行；检查后 Redis 失锁也不能让另一请求越过未提交的扣减。
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
     public void checkOwnership(long userId) {
+        if (userMapper.lockById(userId) == null) throw new BizException(401, "账号不可用，请重新登录");
         if (!lock(userId).isHeldByCurrentThread()) throw new BizException(503, "上传积分校验已失效，请重试");
+    }
+
+    /**
+     * 持久化上传或生成预占前按数据库复核；保留准入时总额，后台调额不取消已获准的请求。
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void checkQuota(long userId, int pointsCost, long admittedTotal) {
+        checkOwnership(userId);
+        if (imageMapper.sumConsumedPoints(userId) + aiGenerationMapper.reserved(userId) + pointsCost > admittedTotal) {
+            throw new BizException(EXHAUSTED, "共享积分已用完");
+        }
     }
 
     /** 调用方持有用户锁后恢复消耗，避免覆盖正在进行的上传预占。 */
@@ -163,9 +191,21 @@ public class UploadQuotaCache {
 
     /** 依据已计费图片重建累计消耗，统计包含已删除图片，防止删除后返还积分。 */
     private long rebuild(long userId, RBucket<String> bucket) {
-        long used = imageMapper.sumConsumedPoints(userId);
-        bucket.set("u:" + used);
-        return used;
+        return transaction().execute(status -> {
+            checkOwnership(userId);
+            long used = imageMapper.sumConsumedPoints(userId);
+            bucket.set("u:" + used);
+            return used;
+        });
+    }
+
+    /**
+     * 行锁和读取共享短事务，等待上一笔提交完成后才生成余额快照。
+     */
+    private TransactionTemplate transaction() {
+        TransactionTemplate transaction = new TransactionTemplate(platformTransactionManager);
+        transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+        return transaction;
     }
 
     /** 仅解析 u:累计消耗[:预占图片ID]；缺失、其他格式或非法数值返回空，由调用方决定恢复。 */
@@ -204,7 +244,7 @@ public class UploadQuotaCache {
     }
 
     /** 持锁后先返回重复请求，再检查新任务积分；模型网络调用不占用普通上传锁。 */
-    public <T> T reserveGeneration(long userId, int pointsCost, Supplier<T> existingTask, Supplier<T> createTask) {
+    public <T> T reserveGeneration(long userId, int pointsCost, Supplier<T> existingTask, LongFunction<T> createTask) {
         releaseInterruptedGeneration(userId);
         RLock lock = lock(userId);
         if (!lock.tryLock()) throw new BizException(409, "当前账号正在保存图片，请稍后重试");
@@ -213,10 +253,11 @@ public class UploadQuotaCache {
             if (existing != null) return existing;
             if (pointsCost < 1) throw new BizException(400, "模型积分配置无效");
             long used = recover(userId, bucket(userId));
-            if (used + aiGenerationMapper.reserved(userId) + pointsCost > totalPoints(userId)) {
+            long admittedTotal = totalPoints(userId);
+            if (used + aiGenerationMapper.reserved(userId) + pointsCost > admittedTotal) {
                 throw new BizException(EXHAUSTED, "积分不足，本次生成需要 " + pointsCost + " 积分");
             }
-            return createTask.get();
+            return createTask.apply(admittedTotal);
         } finally {
             unlock(lock);
         }

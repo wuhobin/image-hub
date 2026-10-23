@@ -27,6 +27,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RedissonClient;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.dao.DuplicateKeyException;
@@ -163,8 +165,16 @@ public class UserAccountServiceImpl extends ServiceImpl<UserMapper, UserAccount>
             cleanupUnusedAvatars(userId);
             ImageFile uploaded = file == null ? null : imageFileService.storeAvatar(userId, file);
             String nextId = uploaded == null ? imageId : uploaded.getId();
+            var rollbackConfirmed = new java.util.concurrent.atomic.AtomicBoolean();
             try {
                 new TransactionTemplate(platformTransactionManager).executeWithoutResult(status -> {
+                    TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                        @Override
+                        public void afterCompletion(int completionStatus) {
+                            rollbackConfirmed.set(completionStatus == STATUS_ROLLED_BACK);
+                        }
+                    });
+                    if (userMapper.lockById(userId) == null) throw new BizException(401, "登录已失效，请重新登录");
                     if (!lock.isHeldByCurrentThread()) throw new BizException(503, "头像更新权限已失效，请重试");
                     if (uploaded != null) imageMapper.insert(uploaded);
                     if (userMapper.updateAvatar(userId, nextId) != 1)
@@ -172,13 +182,9 @@ public class UserAccountServiceImpl extends ServiceImpl<UserMapper, UserAccount>
                 });
             } catch (RuntimeException error) {
                 if (uploaded != null) {
-                    // 写库结果不明时先回读，不能误删已被成功保存的新头像。
-                    try {
-                        if (imageMapper.findOwned(userId, nextId) == null)
-                            imageFileService.discardUncommitted(uploaded);
-                    } catch (RuntimeException verification) {
-                        log.warn("头像入库状态无法确认，保留云文件：userId={}, imageId={}", userId, nextId);
-                    }
+                    // 提交状态未知时保留新头像，避免先删文件、原事务随后提交。
+                    if (rollbackConfirmed.get()) imageFileService.discardUncommitted(uploaded);
+                    else log.warn("头像提交结果待确认，保留云文件：userId={}, imageId={}", userId, nextId);
                 }
                 throw error;
             }

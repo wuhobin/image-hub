@@ -10,6 +10,7 @@ import {Warning} from '@phosphor-icons/react/dist/csr/Warning'
 import type { AppState } from '../App'
 import type {AiModel, CreationPreset, Generation, GenerationHistoryFilter, ImageRecord, Page} from '../lib/types'
 import { api, ApiError } from '../lib/api'
+import {readPolledGeneration} from '../lib/generationPolling'
 import { MAX_BYTES, fileError, generationResolution, generationSizeForRatio, imageAspectRatio } from '../lib/rules'
 import { Ambient } from '../components/Ambient'
 import { QuotaStatus } from '../components/QuotaStatus'
@@ -248,9 +249,22 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
     async function refresh() {
       if (document.hidden) { timer = setTimeout(refresh, 5000); return }
       try {
-        let observed = lastTask
-          ? await api<Generation>('/generations/' + lastTask.id, { signal: controller.signal })
-          : await api<Generation | null>('/generations/active', { signal: controller.signal })
+          let observed = await readPolledGeneration(lastTask?.id || null, controller.signal, () => {
+              const missingId = lastTask!.id
+              lastTask = null
+              setActive(null)
+              setLatestTask(previous => previous?.id === missingId ? null : previous)
+              setDetail(previous => previous?.id === missingId ? null : previous)
+              if (observedTask.current?.id === missingId) observedTask.current = null
+              // 让已发出的历史响应失效，避免删除的任务在刷新前重新出现。
+              historyDeletion.current++
+              setHistory(previous => previous ? {
+                  ...previous, records: previous.records.filter(item => item.id !== missingId)
+              } : previous)
+              setHistoryRevision(value => value + 1)
+              void appRef.current.refreshQuota(controller.signal).catch(() => {
+              })
+          })
         // 只有提交响应丢失、尚不知道任务 ID 时才用最近历史确认；正常任务轮询不等列表。
         if (!observed && pending.current) {
           const recent = await api<Page<Generation>>('/generations?page=1&pageSize=12', { signal: controller.signal })

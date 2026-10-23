@@ -6,7 +6,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.aurora.starter.webmvc.exception.BizException;
 import java.io.IOException;
 import java.net.URI;
-import java.net.HttpURLConnection;
 import java.net.http.*;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -42,6 +41,8 @@ public class AiImageClient {
 
     private final HttpClient httpClient;
 
+    private final JdkClientHttpRequestFactory imageDownloadRequestFactory;
+
     public AiImageClient(ModelKeyCipher modelKeyCipher, AiEndpointPolicy aiEndpointPolicy, AiImageLimits aiImageLimits,
                          @Value("${image-hub.ai.timeout-seconds:300}") int timeoutSeconds,
                          @Value("${image-hub.ai.connect-timeout-seconds:30}") int connectTimeoutSeconds) {
@@ -52,6 +53,10 @@ public class AiImageClient {
         this.connectTimeoutSeconds = connectTimeoutSeconds;
         this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(connectTimeoutSeconds))
                 .followRedirects(HttpClient.Redirect.NEVER).build();
+        this.imageDownloadRequestFactory = new JdkClientHttpRequestFactory(HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(10)).followRedirects(HttpClient.Redirect.NEVER).build());
+        // Spring 的整体期限会取消响应头等待并关闭响应流，持续零星数据不能延长下载。
+        this.imageDownloadRequestFactory.setReadTimeout(Duration.ofSeconds(30));
         this.aiImageLimits = aiImageLimits;
         this.modelKeyCipher = modelKeyCipher;
         this.aiEndpointPolicy = aiEndpointPolicy;
@@ -214,7 +219,9 @@ public class AiImageClient {
         }
     }
 
-    /** 结果URL可能含签名查询参数；访问前验证公网主机，不跟随重定向且限制下载体积。 */
+    /**
+     * 结果 URL 允许签名参数；验证公网主机并禁止重定向，连接、响应头和正文共用 30 秒下载期限。
+     */
     private byte[] download(String url) throws IOException {
         URI uri = URI.create(url);
         try {
@@ -223,28 +230,13 @@ public class AiImageClient {
         } catch (java.net.URISyntaxException e) {
             throw new BizException(502, "生成图片地址无效");
         }
-        var connection = (HttpURLConnection) uri.toURL().openConnection();
-        connection.setInstanceFollowRedirects(false);
-        connection.setConnectTimeout(10_000);
-        connection.setReadTimeout(30_000);
-        try {
-            if (connection.getResponseCode() != 200) throw new BizException(502, "生成图片下载失败");
-            try (var input = connection.getInputStream()) {
-                var output = new java.io.ByteArrayOutputStream();
-                byte[] buffer = new byte[8192];
-                long deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos();
-                for (;;) {
-                    long remaining = deadline - System.nanoTime();
-                    if (remaining <= 0) throw new BizException(502, "生成图片下载超时");
-                    connection.setReadTimeout((int) Math.max(1, remaining / 1_000_000));
-                    int count = input.read(buffer);
-                    if (count < 0) return output.toByteArray();
-                    aiImageLimits.requireSize((long) output.size() + count);
-                    output.write(buffer, 0, count);
-                }
-            }
-        } finally {
-            connection.disconnect();
+        // 正文先关闭，避免 response.close() 在超限或错误状态后继续排空下载。
+        try (var response = imageDownloadRequestFactory.createRequest(uri, org.springframework.http.HttpMethod.GET).execute();
+             var input = response.getBody()) {
+            if (response.getStatusCode().value() != 200) throw new BizException(502, "生成图片下载失败");
+            byte[] bytes = input.readNBytes(aiImageLimits.getMaxBytes() + 1);
+            aiImageLimits.requireSize(bytes.length);
+            return bytes;
         }
     }
 }
