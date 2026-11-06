@@ -67,6 +67,14 @@ public class AiGenerationController {
     }
 
     /**
+     * 只取消本人尚未被工作线程领取的任务，释放预占积分；重复请求幂等。
+     */
+    @PostMapping("/{id}/cancel")
+    public Result<GenerationVO> cancel(@PathVariable String id) {
+        return Result.data(aiGenerationService.cancel(StpUtil.getLoginIdAsLong(), id));
+    }
+
+    /**
      * 删除本人已结束的创作及图片，文件删除失败时保留记录供重试。
      */
     @DeleteMapping("/{id}")

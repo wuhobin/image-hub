@@ -77,6 +77,19 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
     @Value("${image-hub.ai.timeout-seconds:300}")
     private int timeoutSeconds;
 
+    @Value("${image-hub.ai.queue-timeout-seconds:900}")
+    private int queueTimeoutSeconds = 900;
+
+    /**
+     * 限制排队期限，防止错误配置立即结束全部任务或无限占用积分。
+     */
+    @jakarta.annotation.PostConstruct
+    public void validateQueueTimeout() {
+        if (queueTimeoutSeconds < 1 || queueTimeoutSeconds > 86400) {
+            throw new IllegalArgumentException("AI queue-timeout-seconds must be between 1 and 86400");
+        }
+    }
+
     /**
      * 同请求编号返回原任务；数据库唯一约束覆盖多个进程之间的并发提交。
      */
@@ -102,7 +115,7 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
                     || !List.of(model.getQualities().split(",")).contains(param.getQuality())) {
                 throw new BizException(400, "所选尺寸或质量不属于该模型，请刷新选项");
             }
-            if (activeEntity(userId) != null) throw new BizException(409, "已有未完成的创作，请先完成或放弃保存");
+            if (activeEntity(userId) != null) throw new BizException(409, "已有未完成的创作，请等待完成或取消排队");
             AiGeneration task = new AiGeneration();
             task.setId(UUID.randomUUID().toString());
             task.setUserId(userId);
@@ -148,9 +161,9 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
                     } catch (java.io.IOException e) {
                         throw new BizException(400, "参考图读取失败，请重新选择图片", e);
                     }
-                    // 参考图从提交起最多缓存 10 分钟；排队超时明确失败，工作线程已读取后不受过期影响。
+                    // 覆盖完整排队期限并留一分钟读取余量；工作线程读取后立即清理，超时任务由 TTL 回收。
                     cachedReference = true;
-                    referenceBucket(task).set(referenceBytes, java.time.Duration.ofMinutes(10));
+                    referenceBucket(task).set(referenceBytes, java.time.Duration.ofSeconds(queueTimeoutSeconds + 60L));
                 }
                 // 参考图校验及缓存已完成；用户行锁与额度复核只覆盖任务入库的短事务。
                 TransactionTemplate transaction = new TransactionTemplate(platformTransactionManagerProvider.getObject());
@@ -208,6 +221,31 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
     }
 
     /**
+     * 仅数据库条件更新争夺领取权；取消失败不能清理工作线程可能正在读取的参考图。
+     */
+    @Override
+    public GenerationVO cancel(long userId, String id) {
+        requireOwned(userId, id);
+        aiGenerationMapper.expireQueued(userId, queueTimeoutSeconds);
+        if (aiGenerationMapper.cancelQueued(userId, id) == 1) {
+            AiGeneration cancelled = requireOwned(userId, id);
+            discardReference(cancelled);
+            return response(cancelled);
+        }
+        AiGeneration task = requireOwned(userId, id);
+        if (TaskStatus.CANCELLED.name().equals(task.getStatus())) return response(task);
+        throw new BizException(409, "任务已开始执行或已结束，无法取消排队，请刷新状态");
+    }
+
+    /**
+     * 后台释放未领取的超时任务；参考图依赖原有 TTL 清理，不触发模型或云存储请求。
+     */
+    @Override
+    public void expireQueued() {
+        aiGenerationMapper.expireQueued(null, queueTimeoutSeconds);
+    }
+
+    /**
      * 与工作线程共用任务锁，先清理云文件再逻辑删除；中途失败保留任务供重试，积分流水不变。
      */
     @Override
@@ -215,7 +253,7 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
         requireOwned(userId, id);
         withTaskLock(id, () -> {
             AiGeneration task = requireOwned(userId, id);
-            if (!List.of("SUCCEEDED", "FAILED", "SAVE_FAILED", "EXPIRED", "ABANDONED").contains(task.getStatus())
+            if (!List.of("SUCCEEDED", "FAILED", "SAVE_FAILED", "EXPIRED", "ABANDONED", "CANCELLED").contains(task.getStatus())
                     || task.getActiveUserId() != null || task.getWorkToken() != null) {
                 throw new BizException(409, "创作仍在处理中，请结束后再删除");
             }
@@ -253,7 +291,7 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
             List<String> statuses = switch (param.getStatus()) {
                 case "done" -> List.of("SUCCEEDED");
                 case "running" -> List.of("QUEUED", "GENERATING", "SAVING");
-                case "failed" -> List.of("FAILED", "SAVE_FAILED", "EXPIRED", "ABANDONED");
+                case "failed" -> List.of("FAILED", "SAVE_FAILED", "EXPIRED", "ABANDONED", "CANCELLED");
                 default -> throw new BizException(400, "创作状态无效");
             };
             query.in(AiGeneration::getStatus, statuses);
@@ -406,11 +444,16 @@ public class AiGenerationServiceImpl extends ServiceImpl<AiGenerationMapper, AiG
      */
     @Override
     public void runTask(long userId, String id) {
+        aiGenerationMapper.expireQueued(userId, queueTimeoutSeconds);
         withTaskLock(id, () -> {
             AiGeneration task = requireOwned(userId, id);
             if (!TaskStatus.QUEUED.name().equals(task.getStatus()) || task.getWorkToken() != null) return null;
             String token = UUID.randomUUID().toString();
-            if (aiGenerationMapper.claim(userId, id, token, timeoutSeconds + 60) != 1) return null;
+            if (aiGenerationMapper.claim(userId, id, token, timeoutSeconds + 60, queueTimeoutSeconds) != 1) {
+                // 读取与认领之间可能恰好过期，立即释放而不等待下一轮调度。
+                aiGenerationMapper.expireQueued(userId, queueTimeoutSeconds);
+                return null;
+            }
             // 认领后使用单调时钟计时，不受排队、系统校时和后续审计时间更新影响。
             long started = System.nanoTime();
             if (task.getCreateTime() != null) {

@@ -31,6 +31,9 @@ public class CreationTemplate {
     private String fieldsJson;
 
     @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String coverUrl;
+
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String exampleId;
 
     private String sourceShareId;

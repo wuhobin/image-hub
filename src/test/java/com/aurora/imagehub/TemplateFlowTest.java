@@ -25,7 +25,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.web.multipart.MultipartFile;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
@@ -105,11 +104,12 @@ class TemplateFlowTest {
         Map<String, Object> body = new HashMap<>(Map.of("title", "测试场景", "description", "可填写的示例",
                 "categoryId", category, "tagIds", List.of(tag), "promptPattern", "创作{{subject}}",
                 "fields", List.of(Map.of("key", "subject", "label", "主体", "example", "山间书店", "required", true)),
-                "enabled", false, "sortOrder", 5));
+                "enabled", false, "sortOrder", 5, "coverUrl", "https://cdn.example.test/cover.png"));
         assertThat(post(adminPath, body, user).path("code").asInt()).isEqualTo(401);
         JsonNode created = post(adminPath, body, admin);
         assertThat(created.path("code").asInt()).isEqualTo(200);
         long id = created.path("data").path("id").asLong();
+        assertThat(created.path("data").path("coverUrl").asText()).isEqualTo(body.get("coverUrl"));
         assertThat(get(publicPath + "/" + id, null).path("code").asInt()).isEqualTo(404);
         assertThat(created.path("data").has("fieldsJson")).isFalse();
         assertThat(created.path("data").has("storageInfo")).isFalse();
@@ -125,7 +125,11 @@ class TemplateFlowTest {
         assertThat(request(adminPath + "/terms/" + category, HttpMethod.DELETE, null, admin).path("code").asInt()).isEqualTo(409);
 
         ImageFile first = image("example-one"), second = image("example-two");
-        when(imageFileService.storeTemplateExample(any(MultipartFile.class))).thenReturn(first, second);
+        for (ImageFile historical : List.of(first, second)) {
+            jdbcTemplate.update("INSERT INTO hub_template_example(id,template_id,url,storage_info) VALUES(?,?,?,?)",
+                    historical.getId(), id, historical.getUrl(), historical.getStorageInfo());
+        }
+        jdbcTemplate.update("UPDATE hub_creation_template SET example_id=? WHERE id=?", first.getId(), id);
         var upload = new LinkedMultiValueMap<String, Object>();
         upload.add("file", new ByteArrayResource(new byte[]{1, 2, 3}) {
             @Override
@@ -133,12 +137,20 @@ class TemplateFlowTest {
                 return "example.png";
             }
         });
-        assertThat(post(adminPath + "/" + id + "/image", upload, admin).path("data").path("exampleUrl").asText()).isEqualTo(first.getUrl());
+        assertThat(post(adminPath + "/" + id + "/image", upload, admin).path("code").asInt())
+                .as("旧模板上传入口不再接受文件").isNotEqualTo(200);
+        assertThat(get(publicPath + "/" + id, null).path("data").path("exampleUrl").asText()).isEqualTo(first.getUrl());
+        verifyCoverUrlConfiguration(admin, id, body, first);
+        // 模拟旧版本替换图片后的遗留资产，清理失败仍应保留定位并允许再次移除重试。
+        jdbcTemplate.update("UPDATE hub_creation_template SET example_id=? WHERE id=?", second.getId(), id);
         doThrow(new BizException(502, "mock cleanup failure")).doNothing().when(imageFileService).discardGenerated(first.getStorageInfo());
-        assertThat(post(adminPath + "/" + id + "/image", upload, admin).path("data").path("exampleUrl").asText()).isEqualTo(second.getUrl());
+        assertThat(request(adminPath + "/" + id + "/image", HttpMethod.DELETE, null, admin).path("code").asInt()).isEqualTo(200);
         assertThat(jdbcTemplate.queryForObject("SELECT deleted FROM hub_template_example WHERE id='example-one'", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT deleted FROM hub_template_example WHERE id='example-two'", Integer.class)).isEqualTo(1);
         assertThat(request(adminPath + "/" + id + "/image", HttpMethod.DELETE, null, admin).path("code").asInt()).isEqualTo(200);
         assertThat(jdbcTemplate.queryForObject("SELECT deleted FROM hub_template_example WHERE id='example-one'", Integer.class)).isEqualTo(1);
+        verify(imageFileService, times(2)).discardGenerated(first.getStorageInfo());
+        verify(imageFileService, times(1)).discardGenerated(second.getStorageInfo());
         assertThat(get(publicPath + "/" + id, null).path("data").path("exampleUrl").isNull()).isTrue();
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_image", Integer.class)).isZero();
 
@@ -185,6 +197,41 @@ class TemplateFlowTest {
         assertThat(post(adminPath + "/terms", termBody, admin).path("code").asInt()).isEqualTo(409);
         jdbcTemplate.update("UPDATE hub_admin SET deleted=1 WHERE id=1");
         assertThat(get(adminPath, admin).path("code").asInt()).isEqualTo(401);
+    }
+
+    /**
+     * URL 配置覆盖创建、编辑、公开回读和清空；旧客户端编辑、非法输入均不能误删封面或已有云图片。
+     */
+    private void verifyCoverUrlConfiguration(String admin, long id, Map<String, Object> body, ImageFile example) {
+        String path = "/api/admin/templates/" + id;
+        String cover = "https://cdn.example.test/cover.png";
+        for (String invalid : List.of("javascript:alert(1)", "data:image/png;base64,AAAA", "file:///tmp/a.png",
+                "ftp://cdn.example.test/a.png", "//cdn.example.test/a.png", "https://", "https://cdn.example.test/a b.png",
+                "https://cdn.example.test/" + "a".repeat(2048))) {
+            body.put("coverUrl", invalid);
+            assertThat(request(path, HttpMethod.PUT, body, admin).path("code").asInt()).as(invalid).isEqualTo(400);
+            assertThat(get(path, admin).path("data").path("coverUrl").asText()).isEqualTo(cover);
+        }
+        body.remove("coverUrl");
+        assertThat(request(path, HttpMethod.PUT, body, admin).path("data").path("coverUrl").asText()).isEqualTo(cover);
+        body.put("coverUrl", null);
+        assertThat(request(path, HttpMethod.PUT, body, admin).path("data").path("coverUrl").asText()).isEqualTo(cover);
+
+        cover = "http://cdn.example.test/replacement.webp?version=2&size=large";
+        body.put("coverUrl", cover);
+        assertThat(request(path, HttpMethod.PUT, body, admin).path("data").path("coverUrl").asText()).isEqualTo(cover);
+        assertThat(get("/api/app/public/templates/" + id, null).path("data").path("coverUrl").asText()).isEqualTo(cover);
+        assertThat(get("/api/app/public/templates?search=测试场景", null).path("data").path("records").get(0)
+                .path("coverUrl").asText()).isEqualTo(cover);
+        body.put("coverUrl", "");
+        assertThat(request(path, HttpMethod.PUT, body, admin).path("data").path("coverUrl").isNull()).isTrue();
+        JsonNode cleared = get("/api/app/public/templates/" + id, null).path("data");
+        assertThat(cleared.path("coverUrl").isNull()).isTrue();
+        assertThat(cleared.path("exampleUrl").asText()).isEqualTo(example.getUrl());
+        assertThat(jdbcTemplate.queryForObject("SELECT cover_url FROM hub_creation_template WHERE id=?", String.class, id)).isNull();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM hub_template_example WHERE template_id=? AND deleted=0",
+                Integer.class, id)).isEqualTo(2);
+        verifyNoInteractions(imageFileService);
     }
 
     /**

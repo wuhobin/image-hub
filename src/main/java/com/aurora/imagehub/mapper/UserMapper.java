@@ -21,6 +21,22 @@ public interface UserMapper extends BaseMapper<UserAccount> {
     UserAccount findById(long id);
 
     /**
+     * 仅有效账户可通过邮箱找回密码。
+     */
+    @Select("SELECT * FROM hub_user WHERE email = #{email} AND deleted = 0")
+    UserAccount findByEmail(String email);
+
+    /**
+     * 行锁内更新密码；旧哈希条件阻止过期校验覆盖并发密码变更。
+     */
+    @Update("""
+            UPDATE hub_user SET password_hash = #{passwordHash}, update_time = CURRENT_TIMESTAMP
+            WHERE id = #{id} AND password_hash = #{previousHash} AND deleted = 0
+            """)
+    int updatePassword(@Param("id") long id, @Param("previousHash") String previousHash,
+                       @Param("passwordHash") String passwordHash);
+
+    /**
      * 头像更新同时校验用户与图片归属，逻辑删除图片不能再次选用。
      */
     @Update("""

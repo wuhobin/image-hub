@@ -6,8 +6,6 @@ import { ArrowUpRight } from '@phosphor-icons/react/dist/csr/ArrowUpRight'
 import { ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight'
 import { Eye } from '@phosphor-icons/react/dist/csr/Eye'
 import { EyeSlash } from '@phosphor-icons/react/dist/csr/EyeSlash'
-import { Users } from '@phosphor-icons/react/dist/csr/Users'
-import { Ambient } from '../../components/Ambient'
 import { ADMIN_SESSION, adminApi, getAdminToken } from '../../lib/admin/api'
 import type { Admin } from '../../lib/admin/api'
 import AdminLayout, {AdminLoading} from './AdminLayout'
@@ -123,12 +121,13 @@ function AdminLogin({ onLogin }: { onLogin: (token: string) => void }) {
   }
   return <main id="admin-main" className="admin-login">
     <section className="admin-login-story" aria-label="ImgHub 管理空间">
-      <Ambient />
-      <div className="admin-eyebrow"><span /> IMG HUB / PEOPLE</div>
-      <h1>每一次分享，<br />从一个人开始。</h1>
-      <p>在这里，认识你的用户。<br />让图片之外的连接，也清晰可见。</p>
-      <div className="admin-orbit" aria-hidden="true"><div><Users size={45} weight="duotone" /></div><i /><b /></div>
-      <span className="admin-story-caption">连接图片，也连接分享的人。</span>
+        <div className="admin-eyebrow"><span/> IMG HUB / WORKSPACE</div>
+        <h1>创作的每一面，<br/>都井然有序。</h1>
+        <p>从灵感模板到作品分享，从用户到模型。<br/>在一个空间里，照料创作的每个环节。</p>
+        <div className="admin-orbit" aria-hidden="true">
+            <div><ImageSquare size={45} weight="duotone"/></div>
+            <i/><b/></div>
+        <span className="admin-story-caption">为创作留出空间，为管理建立秩序。</span>
     </section>
     <section className="admin-login-panel">
       <div className="admin-login-heading"><span className="admin-eyebrow">管理入口</span><h2>欢迎回来。</h2><p>使用管理员账号，进入你的工作空间。</p></div>

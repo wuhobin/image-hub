@@ -6,7 +6,6 @@ import com.aurora.imagehub.model.param.TemplateImportParam;
 import com.aurora.imagehub.model.vo.CreationTemplateVO;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.IService;
-import org.springframework.web.multipart.MultipartFile;
 
 /**
  * 模板业务不生图、不扣积分；导入图片为独立副本，所有维护操作复核管理员身份。
@@ -24,7 +23,7 @@ public interface CreationTemplateService extends IService<CreationTemplate> {
     CreationTemplateVO detail(long id, boolean publicOnly);
 
     /**
-     * 校验所有占位符和填写项，保存标签关联。
+     * 校验所有占位符和填写项，保存标签关联和封面地址；封面未传或 null 保留，空字符串清除，不访问外部 URL。
      */
     CreationTemplateVO saveTemplate(Long id, CreationTemplateParam param);
 
@@ -34,12 +33,7 @@ public interface CreationTemplateService extends IService<CreationTemplate> {
     CreationTemplateVO importCreation(TemplateImportParam param);
 
     /**
-     * 示例图片独立存储，不写用户图库，不消耗用户积分。
-     */
-    CreationTemplateVO setExample(long id, MultipartFile file);
-
-    /**
-     * 移除示例图，保留文字模板。
+     * 清理历史示例图，保留文字模板与封面 URL。
      */
     CreationTemplateVO removeExample(long id);
 }

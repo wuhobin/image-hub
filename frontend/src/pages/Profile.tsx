@@ -16,10 +16,12 @@ import {CheckInCard} from '../components/CheckInCard'
 import {InvitationCard} from '../components/InvitationCard'
 import {Avatar} from '../components/Avatar'
 import {AvatarEditor} from '../components/AvatarEditor'
+import {PasswordEditor} from '../components/PasswordEditor'
 
 export default function Profile({ app }: { app: AppState }) {
   const [retrying, setRetrying] = useState(false)
     const [editingAvatar, setEditingAvatar] = useState(false)
+    const [editingPassword, setEditingPassword] = useState(false)
     const [section, setSection] = useState<'usage' | 'invitations'>('usage')
   const [records, setRecords] = useState<Page<QuotaUsage> | null>(null)
   const [recordsLoading, setRecordsLoading] = useState(true)
@@ -211,6 +213,13 @@ export default function Profile({ app }: { app: AppState }) {
           </nav>
           <Link to="/history" className="profile-library-link">查看我的图片<ArrowUpRight size={15} aria-hidden="true" /></Link>
         </section>
+          <section className="profile-panel">
+              <header><h2>账户安全</h2></header>
+              <p className="password-editor-note">定期更新密码，保护你的创作空间。</p>
+              <button type="button" className="button button-quiet" disabled={app.initializing || !app.user}
+                      onClick={() => setEditingPassword(true)}>修改密码
+              </button>
+          </section>
           <details className="profile-panel profile-rules">
               <summary>积分使用说明<CaretRight size={15} aria-hidden="true"/></summary>
           <dl>
@@ -231,6 +240,8 @@ export default function Profile({ app }: { app: AppState }) {
           </details>
       </aside>
     </div>
+      {editingPassword && app.user &&
+          <PasswordEditor key={app.user} app={app} onClose={() => setEditingPassword(false)}/>}
       {editingAvatar && app.user && <AvatarEditor key={app.user} app={app} onClose={() => setEditingAvatar(false)}/>}
   </main>
 }

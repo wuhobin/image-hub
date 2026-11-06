@@ -224,7 +224,7 @@ class ImageTransactionOutcomeTest {
         }
 
         assertThat(completionStatus.get()).isEqualTo(outcome.completionStatus);
-        verify(rBucket).set(any(byte[].class), eq(java.time.Duration.ofMinutes(10)));
+        verify(rBucket).set(any(byte[].class), eq(java.time.Duration.ofSeconds(960)));
         verify(rBucket, times(outcome == Outcome.ROLLED_BACK ? 1 : 0)).delete();
         assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
     }

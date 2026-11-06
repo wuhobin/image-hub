@@ -2,7 +2,6 @@ import {useEffect, useState} from 'react'
 import type {FormEvent} from 'react'
 import {adminApi} from '../../lib/admin/api'
 import {api} from '../../lib/api'
-import {fileError} from '../../lib/rules'
 import type {Page, SharedCreation} from '../../lib/types'
 import {examplePrompt, templateInput} from '../../lib/templates'
 import type {CreationTemplate, TemplateInput, TemplateTerm} from '../../lib/templates'
@@ -11,7 +10,7 @@ import '../templates.css'
 
 const message = (error: unknown) => error instanceof Error ? error.message : '操作失败，请稍后重试'
 
-/** 管理员维护模板、分类及标签；导入与上传不触发生图。 */
+/** 管理员维护模板、封面 URL、分类及标签，不触发生图。 */
 export default function AdminTemplates() {
     const [terms, setTerms] = useState<TemplateTerm[]>([])
     const [data, setData] = useState<Page<CreationTemplate> | null>(null)
@@ -114,7 +113,8 @@ export default function AdminTemplates() {
         <div className="template-admin-list" aria-busy={loading}>
             {!data && loading ? <p role="status">正在读取模板…</p> : data?.records.map(item => <article
                 className="template-admin-row" key={item.id}>
-                {item.exampleUrl ? <img src={item.exampleUrl} alt="" loading="lazy"/> :
+                {item.coverUrl || item.exampleUrl ?
+                    <img src={item.coverUrl || item.exampleUrl!} alt="" loading="lazy" referrerPolicy="no-referrer"/> :
                     <div className="template-admin-text">文字<br/>模板</div>}
                 <div className="template-admin-row-main"><h2>{item.title}</h2>
                     <p>{item.category.name} · {item.fields.length} 个填写项 · 排序 {item.sortOrder}</p>
@@ -156,7 +156,7 @@ export default function AdminTemplates() {
     </div>
 }
 
-/** 内容先保存，图片上传失败时明确保留已保存编号，重试不会创建重复模板。 */
+/** 模板内容与封面 URL 一次保存，不再单独上传或移除示例文件。 */
 function TemplateEditor({item, terms, onTerms, onClose, onSaved}: {
     item?: CreationTemplate;
     terms: TemplateTerm[];
@@ -164,16 +164,14 @@ function TemplateEditor({item, terms, onTerms, onClose, onSaved}: {
     onClose: () => void;
     onSaved: () => void
 }) {
-    const [saved, setSaved] = useState(item)
     const [value, setValue] = useState<TemplateInput>(() => item ? templateInput(item) : {
         title: '', description: '', categoryId: terms.find(term => term.kind === 'CATEGORY')?.id || 0, tagIds: [],
         promptPattern: '创作一张关于{{subject}}的图片，采用{{style}}风格。', fields: [
             {key: 'subject', label: '画面主体', example: '清晨的海边书店', required: true},
             {key: 'style', label: '画面风格', example: '温暖的胶片摄影', required: true}
-        ], enabled: false, sortOrder: 0
+        ], coverUrl: '', enabled: false, sortOrder: 0
     })
-    const [file, setFile] = useState<File | null>(null)
-    const [removeImage, setRemoveImage] = useState(false)
+    const [failedCover, setFailedCover] = useState('')
     const [newTag, setNewTag] = useState('')
     const [busy, setBusy] = useState(false)
     const [error, setError] = useState('')
@@ -212,148 +210,146 @@ function TemplateEditor({item, terms, onTerms, onClose, onSaved}: {
         if (busy) return
         setBusy(true);
         setError('')
-        let contentSaved = false
         try {
-            const result = await adminApi<CreationTemplate>('/templates' + (saved ? '/' + saved.id : ''), {
-                method: saved ? 'PUT' : 'POST', body: JSON.stringify(value)
+            await adminApi<CreationTemplate>('/templates' + (item ? '/' + item.id : ''), {
+                method: item ? 'PUT' : 'POST', body: JSON.stringify({...value, coverUrl: value.coverUrl.trim()})
             })
-            setSaved(result);
-            contentSaved = true
-            if (file) {
-                const body = new FormData();
-                body.append('file', file)
-                await adminApi('/templates/' + result.id + '/image', {method: 'POST', body})
-            } else if (removeImage) await adminApi('/templates/' + result.id + '/image', {method: 'DELETE'})
             onSaved()
         } catch (error) {
-            setError((contentSaved ? '文字内容已保存，示例图更新失败：' : '') + message(error))
+            setError(message(error))
         } finally {
             setBusy(false)
         }
     }
 
-    return <Modal title={saved ? '编辑模板' : '新建模板'} onClose={busy ? () => {
+    return <Modal title={item ? '编辑模板' : '新建模板'} onClose={busy ? () => {
     } : onClose} className="template-dialog template-admin template-editor">
         <form className="template-form" onSubmit={save}>
-            <div className="template-fields">
-                <label>模板名称<input required maxLength={80} value={value.title}
-                                      onChange={event => change('title', event.target.value)} disabled={busy}/></label>
-                <label>所属分类<select className="format-select" required value={value.categoryId || ''}
-                                       onChange={event => change('categoryId', Number(event.target.value))}
-                                       disabled={busy}>
-                    <option value="" disabled>请选择分类</option>
-                    {terms.filter(term => term.kind === 'CATEGORY').map(term => <option key={term.id}
-                                                                                        value={term.id}>{term.name}</option>)}
-                </select></label>
-            </div>
-            <label>用途说明<textarea maxLength={300} rows={2} value={value.description}
-                                     onChange={event => change('description', event.target.value)}
-                                     disabled={busy}/></label>
-            <fieldset className="template-tag-picker" disabled={busy}>
-                <legend>标签（最多 10 个）</legend>
-                {terms.filter(term => term.kind === 'TAG').map(term => <label key={term.id}><input type="checkbox"
-                                                                                                   checked={value.tagIds.includes(term.id)}
-                                                                                                   disabled={!value.tagIds.includes(term.id) && value.tagIds.length >= 10}
-                                                                                                   onChange={event => change('tagIds', event.target.checked ? [...value.tagIds, term.id] : value.tagIds.filter(id => id !== term.id))}/>{term.name}
-                </label>)}
-                <div className="template-inline-create"><input aria-label="新标签名称"
-                                                               placeholder="新建标签，或输入已有标签名" maxLength={30}
-                                                               value={newTag}
-                                                               onChange={event => setNewTag(event.target.value)}/>
-                    <button type="button" className="button button-secondary button-small"
-                            disabled={!newTag.trim() || value.tagIds.length >= 10} onClick={() => void addTag()}>添加标签
-                    </button>
-                </div>
-            </fieldset>
-            <section className="template-field-config"><h3>用户填写项</h3><p
-                className="template-description">字段标识用于提示词，例如 subject 对应 {'{{subject}}'}。建议保留 2–4
-                项。</p>
-                {value.fields.map((field, index) => <div className="template-field-row" key={index}>
-                    <label>字段标识<input required pattern="[a-z][a-z0-9_]{0,31}" maxLength={32} value={field.key}
-                                          disabled={busy}
-                                          onChange={event => change('fields', value.fields.map((item, i) => i === index ? {
-                                              ...item,
-                                              key: event.target.value
-                                          } : item))}/></label>
-                    <label>显示名称<input required maxLength={40} value={field.label} disabled={busy}
-                                          onChange={event => change('fields', value.fields.map((item, i) => i === index ? {
-                                              ...item,
-                                              label: event.target.value
-                                          } : item))}/></label>
-                    <label className="template-field-example">示例内容<input maxLength={300} value={field.example}
-                                                                             disabled={busy}
-                                                                             onChange={event => change('fields', value.fields.map((item, i) => i === index ? {
-                                                                                 ...item,
-                                                                                 example: event.target.value
-                                                                             } : item))}/></label>
-                    <label className="template-check"><input type="checkbox" checked={field.required} disabled={busy}
-                                                             onChange={event => change('fields', value.fields.map((item, i) => i === index ? {
-                                                                 ...item,
-                                                                 required: event.target.checked
-                                                             } : item))}/>必填</label>
-                    <button className="quiet-link" type="button" disabled={busy}
-                            onClick={() => change('fields', value.fields.filter((_, i) => i !== index))}>移除
-                    </button>
-                </div>)}
-                <button type="button" className="button button-secondary button-small"
-                        disabled={busy || value.fields.length >= 8}
-                        onClick={() => change('fields', [...value.fields, {
-                            key: '',
-                            label: '',
-                            example: '',
-                            required: true
-                        }])}>添加填写项
-                </button>
-            </section>
-            <label>提示词模板<textarea required maxLength={4000} rows={6} value={value.promptPattern}
-                                       onChange={event => change('promptPattern', event.target.value)} disabled={busy}/></label>
-            <details className="template-admin-preview">
-                <summary>查看填写示例后的提示词</summary>
-                <p>{examplePrompt(value)}</p></details>
-            <div><label>示例图片（选填，最大 10 MB）<input type="file" accept="image/jpeg,image/png,image/webp,image/gif"
-                                                        disabled={busy}
-                                                        onChange={event => {
-                                                            const selected = event.target.files?.[0]
-                                                            if (selected) {
-                                                                const invalid = fileError(selected);
-                                                                if (invalid) {
-                                                                    setError(invalid);
-                                                                    event.target.value = '';
-                                                                    return
-                                                                }
-                                                            }
-                                                            setFile(selected || null);
-                                                            setRemoveImage(false);
-                                                            setError('')
-                                                        }}/></label>
-                {saved?.exampleUrl && !removeImage &&
-                    <div className="template-existing-image"><img src={saved.exampleUrl} alt="当前示例图"/>
-                        <button type="button" className="quiet-link" disabled={busy} onClick={() => {
-                            setRemoveImage(true);
-                            setFile(null)
-                        }}>移除现有图片
+            <div className="template-editor-body">
+                <section className="template-editor-column template-editor-basics" aria-label="基础与展示">
+                    <h3>基础与展示</h3>
+                    <div className="template-fields">
+                        <label>模板名称<input required maxLength={80} value={value.title}
+                                              onChange={event => change('title', event.target.value)} disabled={busy}/></label>
+                        <label>所属分类<select className="format-select" required value={value.categoryId || ''}
+                                               onChange={event => change('categoryId', Number(event.target.value))}
+                                               disabled={busy}>
+                            <option value="" disabled>请选择分类</option>
+                            {terms.filter(term => term.kind === 'CATEGORY').map(term => <option key={term.id}
+                                                                                                value={term.id}>{term.name}</option>)}
+                        </select></label>
+                    </div>
+                    <label>用途说明<textarea maxLength={300} rows={2} value={value.description}
+                                             onChange={event => change('description', event.target.value)}
+                                             disabled={busy}/></label>
+                    <fieldset className="template-tag-picker" disabled={busy}>
+                        <legend>标签（最多 10 个）</legend>
+                        {terms.filter(term => term.kind === 'TAG').map(term => <label key={term.id}><input
+                            type="checkbox"
+                            checked={value.tagIds.includes(term.id)}
+                            disabled={!value.tagIds.includes(term.id) && value.tagIds.length >= 10}
+                            onChange={event => change('tagIds', event.target.checked ? [...value.tagIds, term.id] : value.tagIds.filter(id => id !== term.id))}/>{term.name}
+                        </label>)}
+                        <div className="template-inline-create"><input aria-label="新标签名称"
+                                                                       placeholder="新建标签，或输入已有标签名"
+                                                                       maxLength={30}
+                                                                       value={newTag}
+                                                                       onChange={event => setNewTag(event.target.value)}/>
+                            <button type="button" className="button button-secondary button-small"
+                                    disabled={!newTag.trim() || value.tagIds.length >= 10}
+                                    onClick={() => void addTag()}>添加标签
+                            </button>
+                        </div>
+                    </fieldset>
+                    <div className="template-editor-cover">
+                        <label>封面图 URL（选填）<input type="url" maxLength={2048} pattern="[hH][tT][tT][pP][sS]?://.+"
+                                                      placeholder="https://example.com/cover.jpg" value={value.coverUrl}
+                                                      aria-describedby="template-cover-help" disabled={busy}
+                                                      onChange={event => change('coverUrl', event.target.value.trim())}/></label>
+                        <p id="template-cover-help" className="template-description">填写可公开访问的图片直链作为封面，建议使用
+                            HTTPS。清空后恢复历史示例图或默认封面。</p>
+                        {/^https?:\/\//i.test(value.coverUrl) && (failedCover === value.coverUrl
+                            ? <p className="template-error" role="status">封面预览加载失败，请检查链接是否可公开访问。</p>
+                            : <div className="template-existing-image"><img src={value.coverUrl} alt="封面预览"
+                                                                            referrerPolicy="no-referrer"
+                                                                            onError={() => setFailedCover(value.coverUrl)}/>
+                            </div>)}
+                    </div>
+                    {item?.sourceAuthor &&
+                        <p className="template-description">导入来源：{item.sourceAuthor} · {item.sourceShareId}。图片与提示词已独立保存。</p>}
+                    <div className="template-fields"><label>排序（小值在前）<input type="number" min={0} max={100000}
+                                                                                 required
+                                                                                 value={value.sortOrder}
+                                                                                 onChange={event => change('sortOrder', Number(event.target.value))}
+                                                                                 disabled={busy}/></label>
+                        <label className="template-check"><input type="checkbox" checked={value.enabled} disabled={busy}
+                                                                 onChange={event => change('enabled', event.target.checked)}/>上架后对所有访客可见</label>
+                    </div>
+                </section>
+                <section className="template-editor-column template-editor-content" aria-label="提示词与填写项">
+                    <h3>提示词与填写项</h3>
+                    <label>提示词模板<textarea required maxLength={4000} rows={6} value={value.promptPattern}
+                                               onChange={event => change('promptPattern', event.target.value)}
+                                               disabled={busy}/></label>
+                    <details className="template-admin-preview">
+                        <summary>查看填写示例后的提示词</summary>
+                        <p>{examplePrompt(value)}</p></details>
+                    <section className="template-field-config"><h3>用户填写项</h3><p
+                        className="template-description">字段标识用于提示词，例如 subject 对应 {'{{subject}}'}。建议保留
+                        2–4
+                        项。</p>
+                        {value.fields.map((field, index) => <div className="template-field-row" key={index}>
+                            <label>字段标识<input required pattern="[a-z][a-z0-9_]{0,31}" maxLength={32}
+                                                  value={field.key}
+                                                  disabled={busy}
+                                                  onChange={event => change('fields', value.fields.map((item, i) => i === index ? {
+                                                      ...item,
+                                                      key: event.target.value
+                                                  } : item))}/></label>
+                            <label>显示名称<input required maxLength={40} value={field.label} disabled={busy}
+                                                  onChange={event => change('fields', value.fields.map((item, i) => i === index ? {
+                                                      ...item,
+                                                      label: event.target.value
+                                                  } : item))}/></label>
+                            <label className="template-field-example">示例内容<input maxLength={300}
+                                                                                     value={field.example}
+                                                                                     disabled={busy}
+                                                                                     onChange={event => change('fields', value.fields.map((item, i) => i === index ? {
+                                                                                         ...item,
+                                                                                         example: event.target.value
+                                                                                     } : item))}/></label>
+                            <div className="template-field-actions"><label className="template-check"><input
+                                type="checkbox" checked={field.required} disabled={busy}
+                                onChange={event => change('fields', value.fields.map((item, i) => i === index ? {
+                                    ...item,
+                                    required: event.target.checked
+                                } : item))}/>必填</label>
+                                <button className="quiet-link" type="button" disabled={busy}
+                                        onClick={() => change('fields', value.fields.filter((_, i) => i !== index))}>移除
+                                </button>
+                            </div>
+                        </div>)}
+                        <button type="button" className="button button-secondary button-small"
+                                disabled={busy || value.fields.length >= 8}
+                                onClick={() => change('fields', [...value.fields, {
+                                    key: '',
+                                    label: '',
+                                    example: '',
+                                    required: true
+                                }])}>添加填写项
                         </button>
-                    </div>}
-                {removeImage && <p className="template-description">保存后移除示例图，模板保留文字内容。
-                    <button type="button" className="quiet-link" onClick={() => setRemoveImage(false)}>撤销</button>
-                </p>}
+                    </section>
+                </section>
             </div>
-            {saved?.sourceAuthor &&
-                <p className="template-description">导入来源：{saved.sourceAuthor} · {saved.sourceShareId}。图片与提示词已独立保存。</p>}
-            <div className="template-fields"><label>排序（小值在前）<input type="number" min={0} max={100000} required
-                                                                         value={value.sortOrder}
-                                                                         onChange={event => change('sortOrder', Number(event.target.value))}
-                                                                         disabled={busy}/></label>
-                <label className="template-check"><input type="checkbox" checked={value.enabled} disabled={busy}
-                                                         onChange={event => change('enabled', event.target.checked)}/>上架后对所有访客可见</label>
-            </div>
-            {error && <p className="template-error" role="alert">{error}</p>}
-            <div className="template-admin-actions">
-                <button type="button" className="button button-secondary" disabled={busy} onClick={onClose}>取消
-                </button>
-                <button className="button button-primary"
-                        disabled={busy || !value.categoryId}>{busy ? '正在保存…' : '保存模板'}</button>
-            </div>
+            <footer className="template-editor-footer">
+                {error && <p className="template-error" role="alert">{error}</p>}
+                <div className="template-admin-actions">
+                    <button type="button" className="button button-secondary" disabled={busy} onClick={onClose}>取消
+                    </button>
+                    <button className="button button-primary"
+                            disabled={busy || !value.categoryId}>{busy ? '正在保存…' : '保存模板'}</button>
+                </div>
+            </footer>
         </form>
     </Modal>
 }

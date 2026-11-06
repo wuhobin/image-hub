@@ -29,6 +29,11 @@ public class ImageFile {
     /** 图片来源独立于文件格式；历史图片默认用户上传。 */
     private String sourceType = "UPLOAD";
 
+    /**
+     * 普通上传请求的内容指纹，用于拒绝同一请求编号提交不同图片；不对外返回。
+     */
+    private String uploadHash;
+
     private long size;
 
     private int width;

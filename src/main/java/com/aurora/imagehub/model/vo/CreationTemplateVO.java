@@ -31,6 +31,8 @@ public class CreationTemplateVO {
 
     private String exampleUrl;
 
+    private String coverUrl;
+
     private String sourceShareId;
 
     private String sourceAuthor;

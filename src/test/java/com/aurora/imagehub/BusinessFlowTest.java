@@ -128,7 +128,7 @@ class BusinessFlowTest {
             org.redisson.api.RBucket<byte[]> bucket = mock(org.redisson.api.RBucket.class);
             when(bucket.get()).thenAnswer(ignored -> referenceState.get(key));
             doAnswer(write -> {
-                assertThat(write.<java.time.Duration>getArgument(1)).isEqualTo(java.time.Duration.ofMinutes(10));
+                assertThat(write.<java.time.Duration>getArgument(1)).isEqualTo(java.time.Duration.ofSeconds(960));
                 referenceState.put(key, write.getArgument(0));
                 return null;
             }).when(bucket).set(any(byte[].class), any(java.time.Duration.class));
@@ -979,7 +979,7 @@ class BusinessFlowTest {
         // 已接收任务使用快照；管理员之后停用模型不会取消该任务。
         jdbcTemplate.update("UPDATE hub_ai_model SET enabled=0 WHERE id=?", modelId);
         // 模拟长时间排队；耗时应从认领后开始，不使用数据库创建时间。
-        jdbcTemplate.update("UPDATE hub_ai_generation SET create_time=TIMESTAMPADD(DAY,-1,CURRENT_TIMESTAMP) WHERE id=?", id);
+        jdbcTemplate.update("UPDATE hub_ai_generation SET create_time=TIMESTAMPADD(SECOND,-60,CURRENT_TIMESTAMP) WHERE id=?", id);
         assertThat(aiGenerationService.task(userId, id).getDurationSeconds()).isNull();
         when(aiImageClient.generate(any())).thenAnswer(call -> {
             Thread.sleep(50);

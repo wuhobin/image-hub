@@ -65,6 +65,8 @@ class AiGenerationWorkerTest {
             assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
             worker.poll();
             verify(aiGenerationService, times(1)).page(any(Page.class), any());
+            // 工作线程满载也必须清理已经超时的排队任务。
+            verify(aiGenerationService, times(2)).expireQueued();
             assertThat(thirdStarted.getCount()).isEqualTo(1);
             release.countDown();
             // 无定时调度器、无手动 poll：结束回调必须自动补位。

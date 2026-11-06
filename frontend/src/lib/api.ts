@@ -69,7 +69,17 @@ export async function prepareAvatar(file: File): Promise<File> {
     }
 }
 
-export function uploadImage(file: File, progress: (value: number) => void, signal: AbortSignal): Promise<ImageRecord> {
+/** 404 只表示尚未查到提交结果，后续重试仍须使用同一个 requestId。 */
+export async function readUploadResult(requestId: string, signal: AbortSignal): Promise<ImageRecord | null> {
+    try {
+        return await api<ImageRecord>('/images/uploads/' + encodeURIComponent(requestId), {signal})
+    } catch (error) {
+        if (error instanceof ApiError && error.code === 404) return null
+        throw error
+    }
+}
+
+export function uploadImage(file: File, progress: (value: number) => void, signal: AbortSignal, requestId?: string): Promise<ImageRecord> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     const token = getToken()
@@ -82,13 +92,35 @@ export function uploadImage(file: File, progress: (value: number) => void, signa
     xhr.upload.onprogress = event => {
       if (event.lengthComputable) progress(Math.min(99, Math.round(event.loaded / event.total * 100)))
     }
+      const failed = async (error: unknown) => {
+          // 响应丢失不代表保存失败；只回读一次，不自动再次上传文件。
+          if (requestId && !signal.aborted && error instanceof ApiError && [0, 500, 502, 503, 504].includes(error.code)) {
+              try {
+                  const record = await readUploadResult(requestId, signal)
+                  if (record) {
+                      resolve(record);
+                      return
+                  }
+              } catch { /* 保留原错误；手动重试会先确认结果并沿用原请求标识。 */
+              }
+          }
+          reject(signal.aborted ? new DOMException('上传已取消', 'AbortError') : error)
+      }
     xhr.onload = () => {
       let body: unknown = null
       try { body = JSON.parse(xhr.responseText) } catch { /* Handled by unwrap. */ }
-      try { resolve(unwrap<ImageRecord>(xhr.status, body, token)) } catch (error) { reject(error) }
+        try {
+            resolve(unwrap<ImageRecord>(xhr.status, body, token))
+        } catch (error) {
+            void failed(error)
+        }
     }
-    xhr.onerror = () => reject(new ApiError(0, '上传连接中断，请检查“我的图片”后重试'))
-    xhr.ontimeout = () => reject(new ApiError(0, '上传超时，请检查“我的图片”后重试'))
+      xhr.onerror = () => {
+          void failed(new ApiError(0, '上传连接中断，可重试确认原上传结果'))
+      }
+      xhr.ontimeout = () => {
+          void failed(new ApiError(0, '上传超时，可重试确认原上传结果'))
+      }
     xhr.onabort = () => reject(new DOMException('上传已取消', 'AbortError'))
     if (signal.aborted) {
       signal.removeEventListener('abort', abort)
@@ -97,6 +129,7 @@ export function uploadImage(file: File, progress: (value: number) => void, signa
     }
     const data = new FormData()
     data.append('file', file)
+      if (requestId) data.append('requestId', requestId)
     xhr.send(data)
   })
 }

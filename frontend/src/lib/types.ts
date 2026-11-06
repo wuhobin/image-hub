@@ -19,6 +19,7 @@ export type PendingImage = {
   height: number
   status: 'ready' | 'uploading' | 'done' | 'error'
   progress: number
+    uploadAttempted?: boolean
   error?: string
   record?: ImageRecord
 }
@@ -61,7 +62,7 @@ export type GenerationHistoryFilter = {
 
 export type Generation = {
   id: string; requestId: string; modelName: string; prompt: string; size: string; quality: string
-  status: 'QUEUED' | 'GENERATING' | 'SAVING' | 'SAVE_FAILED' | 'SUCCEEDED' | 'FAILED' | 'EXPIRED' | 'ABANDONED'
+    status: 'QUEUED' | 'GENERATING' | 'SAVING' | 'SAVE_FAILED' | 'SUCCEEDED' | 'FAILED' | 'EXPIRED' | 'ABANDONED' | 'CANCELLED'
   errorMessage: string | null; createTime: string; durationSeconds: number | null; resultExpiresAt: string | null; image: ImageRecord | null
     shareId: string | null;
     shareStatus: 'PRIVATE' | 'PUBLIC' | 'BLOCKED';

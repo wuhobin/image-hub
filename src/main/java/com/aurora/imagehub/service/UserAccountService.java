@@ -15,6 +15,21 @@ public interface UserAccountService extends IService<UserAccount> {
      */
     void register(String username, String email, String password, String code, String inviteCode, String clientIp);
 
+    /**
+     * 向已注册邮箱发送独立的找回验证码；响应不暴露邮箱是否存在。
+     */
+    void sendPasswordResetCode(String email);
+
+    /**
+     * 消费找回验证码后更新密码并撤销普通用户全部会话，不影响管理员域。
+     */
+    void resetPassword(String email, String code, String password);
+
+    /**
+     * 校验当前密码后改密并撤销全部普通会话，用户编号必须来自可信登录态。
+     */
+    void changePassword(long userId, String currentPassword, String password);
+
     /** 校验密码，为本次登录创建独立 Token。 */
     LoginVO login(String username, String password);
 

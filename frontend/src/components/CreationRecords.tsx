@@ -113,7 +113,7 @@ export default function CreationRecords({
     onDelete: (task: Generation) => void
     onPageChange: (page: number) => void
 }) {
-    const statusName = {done: '已完成', running: '进行中', failed: '失败'}[filter.status]
+    const statusName = {done: '已完成', running: '进行中', failed: '未完成'}[filter.status]
     return <section className="creation-history" aria-labelledby="creation-history-title" aria-busy={loading}>
         <header>
             <div className="creation-history-total">
@@ -126,7 +126,7 @@ export default function CreationRecords({
         <div className="creation-history-toolbar">
             <div className="creation-history-filters" role="group" aria-label="状态筛选">
                 <span>状态</span>
-                {([['done', '已完成'], ['running', '进行中'], ['failed', '失败']] as const).map(([value, label]) =>
+                {([['done', '已完成'], ['running', '进行中'], ['failed', '未完成']] as const).map(([value, label]) =>
                     <button type="button" key={value} aria-pressed={filter.status === value}
                             onClick={() => onFilterChange({...filter, status: value})}>{label}</button>)}
             </div>
@@ -159,7 +159,7 @@ export default function CreationRecords({
                 </div> :
                 <MasonryGrid className="creation-history-grid">{records.map((task, index) => {
                     const running = runningStatuses.includes(task.status)
-                    const failed = ['FAILED', 'SAVE_FAILED', 'EXPIRED', 'ABANDONED'].includes(task.status)
+                    const failed = ['FAILED', 'SAVE_FAILED', 'EXPIRED', 'ABANDONED', 'CANCELLED'].includes(task.status)
                     return <article className="creation-history-card" key={task.id}>
                         <button type="button"
                                 className={'creation-history-item' + (running ? ' is-running' : '') + (failed ? ' is-failed' : '') + (selectedId === task.id ? ' is-selected' : '')}
@@ -171,7 +171,7 @@ export default function CreationRecords({
                                         <span className="creation-history-placeholder">
                                             {failed ? <WarningCircle size={30} weight="light" aria-hidden="true"/> :
                                                 <Sparkle size={30} weight="light" aria-hidden="true"/>}
-                                            <span>{running ? (task.status === 'SAVING' ? '正在保存图片' : '画面正在慢慢成形') : failed ? '点击查看失败原因' : task.status === 'SUCCEEDED' ? '图片已删除' : '暂无图片预览'}</span>
+                                            <span>{running ? (task.status === 'SAVING' ? '正在保存图片' : '画面正在慢慢成形') : task.status === 'CANCELLED' ? '已取消排队 · 积分已释放' : failed ? '点击查看失败原因' : task.status === 'SUCCEEDED' ? '图片已删除' : '暂无图片预览'}</span>
                                         </span>}
                                 </span>
                             <span className="creation-history-copy">

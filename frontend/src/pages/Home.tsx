@@ -25,6 +25,7 @@ export default function Home({ app }: { app: AppState }) {
   const [dragging, setDragging] = useState(false)
   const ready = app.pending.filter(item => item.status === 'ready' || item.status === 'error')
   const completed = app.pending.filter(item => item.status === 'done')
+    const canConfirm = ready.some(item => item.uploadAttempted || item.status === 'error')
   const progress = app.pending.length ? Math.floor(app.pending.reduce((total, item) => total + item.progress, 0) / app.pending.length) : 0
 
   return <main id="main" className="home">
@@ -58,8 +59,11 @@ export default function Home({ app }: { app: AppState }) {
             {app.initializing
               ? <button className="button button-primary button-upload" disabled aria-label="正在恢复登录"><span className="quota-placeholder" aria-hidden="true" /><ArrowUp size={17} /></button>
               : app.user
-              ? <button className="button button-primary button-upload" disabled={!ready.length || app.busy || app.selecting || !app.quota || !!app.quotaError || app.quota.remaining === 0} onClick={app.upload}>
-                  {app.busy ? '上传中…' : app.quotaError ? '积分待更新' : app.quota?.remaining === 0 ? '积分已用完' : app.pending.some(item => item.status === 'error') ? '重试失败图片' : '开始上传'}<ArrowUp size={17} weight="bold" />
+                    ? <button className="button button-primary button-upload"
+                              disabled={!ready.length || app.busy || app.selecting || (!canConfirm && (!app.quota || !!app.quotaError || app.quota.remaining === 0))}
+                              onClick={app.upload}>
+                        {app.busy ? '上传中…' : canConfirm ? '确认并重试' : app.quotaError ? '积分待更新' : app.quota?.remaining === 0 ? '积分已用完' : '开始上传'}<ArrowUp
+                        size={17} weight="bold"/>
                 </button>
               : <Link to="/login" state={{ from: '/upload' }} className="button button-primary button-upload">登录后开始上传 <ArrowUpRight size={17} /></Link>}
           </div>

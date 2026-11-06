@@ -95,6 +95,8 @@ platform:
       - /api/app/auth/login
       - /api/app/auth/register
       - /api/app/auth/email-code
+      - /api/app/auth/password-reset/email-code
+      - /api/app/auth/password-reset
       - /api/app/auth/invitation
       - /api/app/public/creations
       - /api/app/public/creations/*
@@ -145,6 +147,8 @@ image-hub:
     # 仅限制 AI 图片，支持 B/KB/MB，最大 50MB；修改后重启，普通上传仍为 10MB。
     max-image-size: 10MB
     concurrency: 2
+    # 只限制尚未开始的任务；到期后释放预占积分。
+    queue-timeout-seconds: 900
     worker-enabled: ${AI_WORKER_ENABLED:true}
 
 logging:

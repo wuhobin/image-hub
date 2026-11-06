@@ -41,6 +41,8 @@ import org.springframework.stereotype.Service;
 public class UserAccountServiceImpl extends ServiceImpl<UserMapper, UserAccount> implements UserAccountService {
     private static final VerificationScene REGISTER = () -> "IMAGE_HUB_REGISTER";
 
+    private static final VerificationScene PASSWORD_RESET = () -> "IMAGE_HUB_PASSWORD_RESET";
+
     // 不存在的账户也执行 BCrypt 校验，减少用户名是否存在带来的耗时差异。
     private static final String DUMMY_HASH = BCrypt.hashpw("not-a-user-password", BCrypt.gensalt(12));
 
@@ -102,18 +104,84 @@ public class UserAccountServiceImpl extends ServiceImpl<UserMapper, UserAccount>
         uploadQuotaCache.initialize(user.getId());
     }
 
+    /**
+     * 未注册邮箱同样执行发送频率检查并返回统一提示，不创建账户或泄露账户状态。
+     */
+    @Override
+    public void sendPasswordResetCode(String email) {
+        email = normalizeEmail(email);
+        attemptLimiter.check("password-reset-email", email, 1, 60);
+        MailVerificationService mailVerificationService = mailService();
+        if (userMapper.findByEmail(email) == null) return;
+        mailVerificationService.send(new MailVerificationSendRequest(email, PASSWORD_RESET, "Image Hub 重置密码验证码",
+                "你的重置密码验证码是 {code}，{expireMinutes} 分钟内有效。如非本人操作，请忽略此邮件。",
+                MailContentType.TEXT));
+    }
+
+    /**
+     * 验证码按用途隔离且只能使用一次；事务与登录共用用户行锁，密码更新和会话撤销失败即回滚。
+     */
+    @Override
+    public void resetPassword(String email, String code, String password) {
+        email = normalizeEmail(email);
+        validatePassword(password);
+        attemptLimiter.check("password-reset", email, 10, 300);
+        boolean verified = mailService().verifyAndConsume(new MailVerificationVerifyRequest(email, PASSWORD_RESET, code));
+        UserAccount user = userMapper.findByEmail(email);
+        if (!verified || user == null) throw new BizException(400, "验证码错误或已过期，请重新获取");
+        String passwordHash = BCrypt.hashpw(password, BCrypt.gensalt(12));
+        new TransactionTemplate(platformTransactionManager).executeWithoutResult(status -> {
+            if (userMapper.lockById(user.getId()) == null) throw new BizException(400, "验证码错误或已过期，请重新获取");
+            UserAccount current = userMapper.findById(user.getId());
+            replacePassword(current, passwordHash);
+        });
+    }
+
+    /**
+     * 旧密码必须在行锁内重新校验，避免并发改密以旧凭据覆盖已更新的密码。
+     */
+    @Override
+    public void changePassword(long userId, String currentPassword, String password) {
+        validatePassword(currentPassword);
+        validatePassword(password);
+        attemptLimiter.check("password-change", Long.toString(userId), 10, 300);
+        new TransactionTemplate(platformTransactionManager).executeWithoutResult(status -> {
+            if (userMapper.lockById(userId) == null) throw new BizException(401, "登录已失效，请重新登录");
+            UserAccount user = userMapper.findById(userId);
+            if (!BCrypt.checkpw(currentPassword, user.getPasswordHash())) throw new BizException(400, "当前密码不正确");
+            if (currentPassword.equals(password)) throw new BizException(400, "新密码不能与当前密码相同");
+            replacePassword(user, BCrypt.hashpw(password, BCrypt.gensalt(12)));
+        });
+    }
+
+    /**
+     * 普通用户会话撤销也持有行锁，使并发登录只能先被撤销或使用新密码重新验证。
+     */
+    private void replacePassword(UserAccount user, String passwordHash) {
+        if (userMapper.updatePassword(user.getId(), user.getPasswordHash(), passwordHash) != 1) {
+            throw new BizException(409, "账户状态已变化，请重新操作");
+        }
+        StpUtil.logout(user.getId());
+    }
+
     @Override
     public LoginVO login(String username, String password) {
         username = username.trim();
         validatePassword(password);
         attemptLimiter.check("login-account", username.toLowerCase(Locale.ROOT), 15, 300);
-        UserAccount user = userMapper.findByUsername(username);
-        boolean valid = BCrypt.checkpw(password, user == null ? DUMMY_HASH : user.getPasswordHash());
-        if (user == null || !valid) throw new BizException(400, "用户名或密码错误");
-        // 各设备独立持有 Token，退出当前设备不会使其他设备失效。
-        StpUtil.login(user.getId(), new SaLoginParameter().setIsConcurrent(true)
-                .setIsShare(false));
-        return new LoginVO(StpUtil.getTokenValue(), StpUtil.getTokenTimeout(), response(user));
+        UserAccount found = userMapper.findByUsername(username);
+        if (found == null) {
+            BCrypt.checkpw(password, DUMMY_HASH);
+            throw new BizException(400, "用户名或密码错误");
+        }
+        return new TransactionTemplate(platformTransactionManager).execute(status -> {
+            // 与改密共用数据库行锁，避免旧密码校验通过后跨过会话撤销再签发 Token。
+            if (userMapper.lockById(found.getId()) == null) throw new BizException(400, "用户名或密码错误");
+            UserAccount user = userMapper.findById(found.getId());
+            if (!BCrypt.checkpw(password, user.getPasswordHash())) throw new BizException(400, "用户名或密码错误");
+            StpUtil.login(user.getId(), new SaLoginParameter().setIsConcurrent(true).setIsShare(false));
+            return new LoginVO(StpUtil.getTokenValue(), StpUtil.getTokenTimeout(), response(user));
+        });
     }
 
     @Override

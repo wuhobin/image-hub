@@ -24,6 +24,8 @@ export default function CreationDetail({
                                            onEdit,
                                            onChanged,
                                            onClose,
+                                           cancelling,
+                                           onCancel,
                                        }: {
     task: Generation
     app: AppState
@@ -35,6 +37,8 @@ export default function CreationDetail({
     onEdit: (task: Generation) => void
     onChanged: (task: Generation) => void
     onClose: () => void
+    cancelling: boolean
+    onCancel: (task: Generation) => void
 }) {
     const [view, setView] = useState<'details' | 'sharing'>('details')
     const canShare = task.status === 'SUCCEEDED' && !!task.image
@@ -77,7 +81,7 @@ export default function CreationDetail({
                         <div className="creation-detail-loader"><Sparkle size={38} weight="thin" aria-hidden="true"/>
                         </div>
                         <h3>{statusLabel}</h3>
-                        <p>{task.status === 'GENERATING' || task.status === 'QUEUED' ? '你可以离开页面，任务会在后台继续。' : task.status === 'SAVING' ? '图片已生成，正在保存到你的图库。' : task.status === 'SUCCEEDED' ? '生成已完成，图片已被删除。' : task.errorMessage || '本次任务已结束，预留积分已释放。'}</p>
+                        <p>{task.status === 'QUEUED' ? '正在等待空闲生成名额，开始前可以取消排队。' : task.status === 'GENERATING' ? '你可以离开页面，任务会在后台继续。' : task.status === 'SAVING' ? '图片已生成，正在保存到你的图库。' : task.status === 'SUCCEEDED' ? '生成已完成，图片已被删除。' : task.errorMessage || '本次任务已结束，预留积分已释放。'}</p>
                     </div>}
             </div>
             <div className="creation-detail-panel">
@@ -140,6 +144,10 @@ export default function CreationDetail({
                     </div>}
                 </div>
                 <footer className="creation-detail-actions">
+                    {task.status === 'QUEUED' && <button type="button" className="button button-secondary"
+                                                         disabled={cancelling} onClick={() => onCancel(task)}>
+                        {cancelling ? '取消中…' : '取消排队'}
+                    </button>}
                     <button className="button creation-detail-reuse" disabled={disabled} onClick={() => onReuse(task)}>
                         <ArrowUUpLeft size={17}/>复用描述
                     </button>

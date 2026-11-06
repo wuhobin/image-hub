@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { api, ApiError, SESSION_EXPIRED, TOKEN_KEY, unwrap, uploadImage } from './api.ts'
+import {api, ApiError, SESSION_EXPIRED, TOKEN_KEY, unwrap, uploadImage, readUploadResult} from './api.ts'
 import { ADMIN_SESSION, adminApi } from './admin/api.ts'
 
 test('API client checks business codes, sends Bearer tokens and ignores stale 401 responses', async () => {
@@ -77,4 +77,97 @@ test('API client checks business codes, sends Bearer tokens and ignores stale 40
     } as unknown as typeof XMLHttpRequest
     assert.deepEqual(await uploadImage(new File(['test'], 'test.png'), () => {}, new AbortController().signal), { id: 'uploaded' })
   } finally { globalThis.fetch = original; globalThis.XMLHttpRequest = originalXhr }
+})
+
+test('upload retries keep their request id and confirm ambiguous results without resending', async () => {
+    const originalFetch = globalThis.fetch
+    const originalXhr = globalThis.XMLHttpRequest
+    const originalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+    Object.defineProperty(globalThis, 'localStorage', {configurable: true, value: {getItem: () => 'upload-token'}})
+    const requestId = 'e52995a0-1689-4ce8-b7ef-19cfd402825c'
+    const sent: string[] = []
+    let mode: 'ok' | 'timeout' | 'server-error' | 'denied' = 'ok'
+    let reads = 0
+    const record = {id: 'saved-image'}
+    globalThis.XMLHttpRequest = class {
+        upload = {}
+        status = 200
+        responseText = ''
+        onload = () => {
+        }
+        ontimeout = () => {
+        }
+
+        open() {
+        }
+
+        setRequestHeader() {
+        }
+
+        send(data: FormData) {
+            sent.push(String(data.get('requestId')))
+            assert.equal((data.get('file') as File).name, 'photo.png')
+            if (mode === 'timeout') {
+                this.ontimeout();
+                return
+            }
+            this.responseText = JSON.stringify(mode === 'ok'
+                ? {code: 200, data: record} : mode === 'server-error'
+                    ? {code: 500, message: '保存后回读失败'} : {code: 40301, message: '积分不足'})
+            this.onload()
+        }
+    } as unknown as typeof XMLHttpRequest
+    try {
+        globalThis.fetch = async (url, init) => {
+            reads++
+            assert.equal(url, '/api/app/images/uploads/' + requestId)
+            assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer upload-token')
+            return new Response(JSON.stringify({code: 200, data: record}))
+        }
+        const file = new File(['image-bytes'], 'photo.png', {type: 'image/png'})
+        const signal = new AbortController().signal
+        assert.deepEqual(await uploadImage(file, () => {
+        }, signal, requestId), record)
+        assert.equal(reads, 0)
+        mode = 'timeout'
+        assert.deepEqual(await uploadImage(file, () => {
+        }, signal, requestId), record)
+        assert.deepEqual(sent, [requestId, requestId])
+        assert.equal(reads, 1)
+        mode = 'server-error'
+        assert.deepEqual(await uploadImage(file, () => {
+        }, signal, requestId), record)
+        assert.equal(reads, 2)
+        mode = 'timeout'
+
+        // 尚未落库不代表原请求已终止，保持错误并由用户使用原ID重试。
+        globalThis.fetch = async () => new Response(JSON.stringify({code: 404, message: '尚未找到上传结果'}))
+        assert.equal(await readUploadResult(requestId, signal), null)
+        await assert.rejects(uploadImage(file, () => {
+        }, signal, requestId), /上传超时/)
+        assert.equal(sent.at(-1), requestId)
+
+        globalThis.fetch = async () => new Response(JSON.stringify({code: 410, message: '该图片已删除'}))
+        await assert.rejects(readUploadResult(requestId, signal), (error: unknown) => error instanceof ApiError && error.code === 410)
+        globalThis.fetch = async () => new Response(JSON.stringify({code: 503, message: '查询暂不可用'}))
+        await assert.rejects(readUploadResult(requestId, signal), (error: unknown) => error instanceof ApiError && error.code === 503)
+
+        mode = 'denied'
+        globalThis.fetch = async () => {
+            throw new Error('业务拒绝不应查询或自动重传')
+        }
+        await assert.rejects(uploadImage(file, () => {
+        }, signal, requestId), /积分不足/)
+        const controller = new AbortController()
+        controller.abort()
+        const sentBeforeAbort = sent.length
+        await assert.rejects(uploadImage(file, () => {
+        }, controller.signal, requestId), {name: 'AbortError'})
+        assert.equal(sent.length, sentBeforeAbort)
+    } finally {
+        globalThis.fetch = originalFetch
+        globalThis.XMLHttpRequest = originalXhr
+        if (originalStorage) Object.defineProperty(globalThis, 'localStorage', originalStorage)
+        else Reflect.deleteProperty(globalThis, 'localStorage')
+    }
 })

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import {Fragment, useEffect, useRef} from 'react'
 import type {ReactNode} from 'react'
 import './admin.css'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
@@ -10,17 +10,19 @@ import { Users } from '@phosphor-icons/react/dist/csr/Users'
 import { SlidersHorizontal } from '@phosphor-icons/react/dist/csr/SlidersHorizontal'
 import { List } from '@phosphor-icons/react/dist/csr/List'
 import { Sparkle } from '@phosphor-icons/react/dist/csr/Sparkle'
+import {Cpu} from '@phosphor-icons/react/dist/csr/Cpu'
+import {UserPlus} from '@phosphor-icons/react/dist/csr/UserPlus'
 import { X } from '@phosphor-icons/react/dist/csr/X'
 import type { Admin } from '../../lib/admin/api'
 
 // 这里只列出已上线的页面；新增模块与 AdminApp 中的子路由一同接入。
 const navigation = [
-    {to: '/admin/templates', label: '模板管理', description: '场景、提示词与分类', icon: Sparkle},
-    {to: '/admin/users', label: '用户管理', description: '账户与积分', icon: Users},
-    {to: '/admin/invitations', label: '邀请审核', description: '注册邀请与奖励', icon: Users},
-    {to: '/admin/settings', label: '配置管理', description: '平台规则与奖励', icon: SlidersHorizontal},
-    {to: '/admin/models', label: '模型管理', description: '生图服务与参数', icon: Sparkle},
+    {to: '/admin/templates', label: '模板管理', description: '场景、提示词与分类', icon: Sparkle, group: '内容与创作'},
     {to: '/admin/creations', label: '作品分享', description: '公开内容与展示', icon: ImageSquare},
+    {to: '/admin/models', label: '模型管理', description: '生图服务与参数', icon: Cpu},
+    {to: '/admin/users', label: '用户管理', description: '账户与积分', icon: Users, group: '平台运营'},
+    {to: '/admin/invitations', label: '邀请审核', description: '注册邀请与奖励', icon: UserPlus},
+    {to: '/admin/settings', label: '配置管理', description: '平台规则与奖励', icon: SlidersHorizontal},
 ]
 
 type LayoutProps = { admin: Admin | null; loggingOut: boolean; logout: () => void; error: string; children?: ReactNode }
@@ -67,18 +69,21 @@ export default function AdminLayout({admin, loggingOut, logout, error, children}
 function AdminNavigation({ admin, loggingOut, logout, onNavigate }: Omit<LayoutProps, 'error'> & { onNavigate: () => void }) {
   return <div className="admin-navigation-content">
     <Link className="brand admin-sidebar-brand" to="/admin" onClick={onNavigate} aria-label="ImgHub 管理首页"><span className="brand-mark"><ImageSquare size={23} weight="duotone" /></span><span>Img<span className="brand-light">Hub</span></span></Link>
-      <div className="admin-space-label"><span/> 管理空间 <b>ADMIN</b></div>
+      <div className="admin-space-label"><span/> 创作管理工作台 <b>ADMIN</b></div>
     <nav className="admin-navigation" aria-label="后台功能">
-      <p className="admin-nav-label">工作空间</p>
-        {navigation.map(({to, label, description, icon: Icon}) => <NavLink key={to} to={to} onClick={onNavigate}
-                                                                           className={({isActive}) => 'admin-nav-item' + (isActive ? ' is-active' : '')}><Icon
-            size={21} weight="duotone"
-            aria-hidden="true"/><span><strong>{label}</strong><small>{description}</small></span><CaretRight size={13}
-                                                                                                             className="admin-nav-arrow"
-                                                                                                             aria-hidden="true"/></NavLink>)}
+        {navigation.map(({to, label, description, icon: Icon, group}) => <Fragment key={to}>
+            {group && <p className="admin-nav-label">{group}</p>}
+            <NavLink to={to} onClick={onNavigate} title={description}
+                     className={({isActive}) => 'admin-nav-item' + (isActive ? ' is-active' : '')}>
+                <Icon size={20} weight="duotone" aria-hidden="true"/>
+                <strong>{label}</strong>
+                <CaretRight size={13} className="admin-nav-arrow" aria-hidden="true"/>
+            </NavLink>
+        </Fragment>)}
     </nav>
     <div className="admin-sidebar-bottom">
-        <div className="admin-sidebar-signature" aria-hidden="true"><span>IMAGE HUB</span><p>让创作有序，让分享发生。</p>
+        <div className="admin-sidebar-signature" aria-hidden="true"><span>IMAGE HUB / STUDIO</span>
+            <p>让创作有序，让分享发生。</p>
         </div>
       <div className="admin-account">
           <span className="admin-account-avatar">{admin?.username.slice(0, 1).toUpperCase() || '·'}</span>

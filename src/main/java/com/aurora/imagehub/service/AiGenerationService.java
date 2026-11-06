@@ -22,6 +22,16 @@ public interface AiGenerationService extends IService<AiGeneration> {
     GenerationVO active(long userId);
 
     /**
+     * 仅取消本人未领取的排队任务，重复取消返回原终态；已开始执行时返回 409。
+     */
+    GenerationVO cancel(long userId, String id);
+
+    /**
+     * 后台轮询释放等待超时的排队任务，不重新执行模型请求。
+     */
+    void expireQueued();
+
+    /**
      * 删除本人终态创作及云文件、撤销分享；进行中拒绝删除，云端失败可重试，不退还已用积分。
      */
     void delete(long userId, String id);

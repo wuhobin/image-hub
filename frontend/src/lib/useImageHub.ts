@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import {api, ApiError, getToken, prepareAvatar, SESSION_EXPIRED, TOKEN_KEY, uploadImage} from './api'
+import {api, ApiError, getToken, prepareAvatar, readUploadResult, SESSION_EXPIRED, TOKEN_KEY, uploadImage} from './api'
 import {createQuotaCache} from './quotaCache'
 import { fileError, MAX_FILES } from './rules'
 import type { ImageRecord, LoginResult, PendingImage, UploadQuota, User } from './types'
@@ -208,32 +208,67 @@ export function useImageHub(onUploadPage: boolean, onProfilePage: boolean) {
     let succeeded = 0
       let attemptedUpload = false
     let quotaStopped = false
-    try {
-      // 整批预检在任何文件发送前完成；后端仍逐张校验，防止另一设备抢占积分。
-      const available = await refreshQuota(controller.signal)
-      if (controller.signal.aborted || version !== generation.current) return
-      if (items.length > available.remaining) {
-        notify(available.remaining === 0 ? '积分已用完'
-          : `剩余 ${available.remaining} 积分，请将本次图片减少至 ${available.remaining} 张`, true)
-        return
+      const complete = (item: PendingImage, record: ImageRecord) => {
+          setPending(current => current.map(image => image.id === item.id
+              ? {...image, status: 'done', progress: 100, record, error: undefined} : image))
+          succeeded++
+          setRevision(value => value + 1)
       }
-      for (const item of items) {
+      const failed = (item: PendingImage, error: unknown) => {
+          setPending(current => current.map(image => image.id === item.id
+              ? {
+                  ...image,
+                  status: 'error',
+                  progress: 0,
+                  error: error instanceof Error ? error.message : '上传失败，请重试'
+              } : image))
+      }
+    try {
+        const remaining: PendingImage[] = []
+        // 原请求可能已经扣分；先确认结果，零余额也能找回已成功的图片。
+        for (const item of items) {
+            if (controller.signal.aborted || version !== generation.current) return
+            if (item.uploadAttempted || item.status === 'error') {
+                attemptedUpload = true
+                try {
+                    const record = await readUploadResult(item.id, controller.signal)
+                    if (controller.signal.aborted || version !== generation.current) return
+                    if (record) {
+                        complete(item, record);
+                        continue
+                    }
+                } catch (error) {
+                    if (controller.signal.aborted || version !== generation.current) return
+                    failed(item, error)
+                    continue
+                }
+            }
+            remaining.push(item)
+        }
+        if (remaining.length) {
+            // 只预检尚未确认成功的文件；后端仍逐张验证，并在扣分前检查请求是否已成功。
+            const available = await refreshQuota(controller.signal)
+            if (controller.signal.aborted || version !== generation.current) return
+            if (remaining.length > available.remaining) {
+                notify(available.remaining === 0 ? '积分已用完，已成功的上传结果已确认'
+                    : `剩余 ${available.remaining} 积分，请将待上传图片减少至 ${available.remaining} 张`, true)
+                return
+            }
+        }
+        for (const item of remaining) {
         if (controller.signal.aborted || version !== generation.current) break
-        setPending(current => current.map(image => image.id === item.id ? { ...image, status: 'uploading', progress: 0, error: undefined } : image))
+            setPending(current => current.map(image => image.id === item.id
+                ? {...image, status: 'uploading', progress: 0, uploadAttempted: true, error: undefined} : image))
         try {
             attemptedUpload = true
           const record = await uploadImage(item.file, progress => {
             if (version === generation.current) setPending(current => current.map(image => image.id === item.id ? { ...image, progress } : image))
-          }, controller.signal)
-          if (version !== generation.current) break
-          setPending(current => current.map(image => image.id === item.id ? { ...image, status: 'done', progress: 100, record } : image))
-          succeeded++
-          setQuota(current => current ? { ...current, remaining: Math.max(0, current.remaining - 1) } : current)
-          setRevision(value => value + 1)
+          }, controller.signal, item.id)
+            if (controller.signal.aborted || version !== generation.current) break
+            complete(item, record)
         } catch (error) {
           if (controller.signal.aborted || version !== generation.current) break
-          setPending(current => current.map(image => image.id === item.id
-            ? { ...image, status: 'error', progress: 0, error: error instanceof Error ? error.message : '上传失败，请重试' } : image))
+            failed(item, error)
           if (error instanceof ApiError && [40301, 409, 503].includes(error.code)) {
             quotaStopped = true
             if (error.code === 40301) setQuota(current => current ? { ...current, remaining: 0 } : current)
@@ -243,7 +278,7 @@ export function useImageHub(onUploadPage: boolean, onProfilePage: boolean) {
         }
       }
       if (!quotaStopped && version === generation.current) notify(succeeded === items.length
-        ? `${succeeded} 张图片上传完成` : `${succeeded} 张成功，${items.length - succeeded} 张失败，可重试失败图片`, succeeded !== items.length)
+          ? `${succeeded} 张图片上传完成` : `${succeeded} 张成功，${items.length - succeeded} 张未完成，可确认并重试`, succeeded !== items.length)
     } catch (error) {
       if (!controller.signal.aborted && version === generation.current) notify(error instanceof Error ? error.message : '积分校验失败，请重试', true)
     } finally {
@@ -251,7 +286,7 @@ export function useImageHub(onUploadPage: boolean, onProfilePage: boolean) {
         uploadLock.current = false
         setBusy(false)
         activeUpload.current = null
-          // 上传可能在响应丢失前已扣分，批次结束后始终查询真实余额。
+          // 重放成功响应不会再次扣分，不按响应次数递减本地余额。
           if (attemptedUpload) void refreshQuota().catch(() => {
           })
       }
@@ -269,6 +304,12 @@ export function useImageHub(onUploadPage: boolean, onProfilePage: boolean) {
     setInitializing(false)
     setRevision(value => value + 1)
   }
+
+    function passwordChanged() {
+        localStorage.removeItem(TOKEN_KEY)
+        clearSession(true)
+        notify('密码已更新，请重新登录')
+    }
 
   async function logout() {
     try {
@@ -333,6 +374,7 @@ export function useImageHub(onUploadPage: boolean, onProfilePage: boolean) {
         avatarUrl: account?.avatarUrl,
         refreshUser,
         updateAvatar,
+        passwordChanged,
         initializing,
         quota,
         quotaError,

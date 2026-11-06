@@ -5,11 +5,12 @@ import lombok.Setter;
 import lombok.NoArgsConstructor;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
+import org.hibernate.validator.constraints.URL;
 
 import java.util.List;
 
 /**
- * 管理员维护模板正文及填写项，不允许传入存储地址或生成参数。
+ * 管理员维护模板正文、填写项及外部封面 URL，不接受内部存储定位或生成参数。
  */
 @Getter
 @Setter
@@ -23,6 +24,13 @@ public class CreationTemplateParam {
     @NotNull
     @Size(max = 300)
     private String description = "";
+
+    /**
+     * 外部封面仅由浏览器加载；未传或 null 保留原值，空字符串清除配置。
+     */
+    @Size(max = 2048)
+    @URL(regexp = "(?i)(https?://[^\\s]+)?", message = "封面图 URL 必须是有效的 HTTP 或 HTTPS 地址")
+    private String coverUrl;
 
     @NotNull
     @Positive

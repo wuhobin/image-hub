@@ -26,7 +26,12 @@ const CreationDetail = lazy(() => import('../components/CreationDetail'))
 
 const labels: Record<Generation['status'], string> = {
   QUEUED: '等待生成', GENERATING: '正在生成', SAVING: '正在保存',
-  SAVE_FAILED: '保存失败', SUCCEEDED: '已完成', FAILED: '生成失败', EXPIRED: '结果已过期', ABANDONED: '已放弃',
+    SAVE_FAILED: '保存失败',
+    SUCCEEDED: '已完成',
+    FAILED: '生成失败',
+    EXPIRED: '结果已过期',
+    ABANDONED: '已放弃',
+    CANCELLED: '已取消',
 }
 const runningStatuses: Generation['status'][] = ['QUEUED', 'GENERATING', 'SAVING']
 
@@ -68,6 +73,7 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
   const [detail, setDetail] = useState<Generation | null>(null)
     const [deleting, setDeleting] = useState<Generation | null>(null)
     const [deletingBusy, setDeletingBusy] = useState(false)
+    const [cancelling, setCancelling] = useState(false)
     const [deleteError, setDeleteError] = useState('')
   const [history, setHistory] = useState<Page<Generation> | null>(null)
   const [page, setPage] = useState(1)
@@ -271,6 +277,10 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
           observed = recent.records.find(item => item.requestId === pending.current?.requestId) || null
         }
         if (controller.signal.aborted) return
+          // 取消响应先到达时，较早发出的轮询不能把终态改回排队。
+          if (observed && observedTask.current?.id === observed.id) {
+              observed = updateHistoryTask(observedTask.current, observed)
+          }
         const current = observed && runningStatuses.includes(observed.status) ? observed : null
         const confirmed = !!pending.current && observed?.requestId === pending.current.requestId
         setActive(current)
@@ -369,6 +379,35 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
     setDetail(null)
     requestAnimationFrame(() => document.getElementById('creation-prompt')?.focus())
   }
+
+    async function cancelQueue(task: Generation) {
+        if (cancelling || task.status !== 'QUEUED') return
+        setCancelling(true)
+        try {
+            const result = await api<Generation>('/generations/' + encodeURIComponent(task.id) + '/cancel', {method: 'POST'})
+            if (!mounted.current) return
+            observedTask.current = result
+            setActive(previous => previous?.id === result.id ? null : previous)
+            setLatestTask(previous => previous?.id === result.id ? result : previous)
+            setDetail(previous => previous?.id === result.id ? result : previous)
+            setHistory(previous => previous ? {
+                ...previous, records: previous.records.map(item => updateHistoryTask(item, result))
+            } : previous)
+            setError('')
+            setHistoryRevision(value => value + 1)
+            app.notify('已取消排队，预留积分已释放')
+        } catch (error) {
+            if (mounted.current) app.notify(message(error), true)
+        } finally {
+            if (mounted.current) {
+                setCancelling(false)
+                // 领取竞争或响应丢失时也重新读状态；不重放生成请求。
+                setRevision(value => value + 1)
+            }
+            if (appRef.current.user) void appRef.current.refreshQuota().catch(() => {
+            })
+        }
+    }
 
     async function confirmDelete() {
         if (!deleting || deletingBusy) return
@@ -534,7 +573,8 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
                                  statusLabel={labels[currentTask.status]}
                                  qualityLabel={qualityNames[currentTask.quality] || currentTask.quality}
                                  disabled={busy || uncertain} onPreview={() => app.setPreview(currentTask.image!)}
-                                 onEdit={() => editImage(currentTask)} onDetail={() => setDetail(currentTask)}/>
+                                 onEdit={() => editImage(currentTask)} onDetail={() => setDetail(currentTask)}
+                                 cancelling={cancelling} onCancel={() => void cancelQueue(currentTask)}/>
             </Suspense>}
         </>}
         {historyView && <header className="creation-records-heading">
@@ -548,6 +588,7 @@ export default function Create({app, view = 'workspace'}: { app: AppState; view?
                                                              qualityLabel={qualityNames[detail.quality] || detail.quality}
                                                              disabled={busy || uncertain}
                                                              onReuse={reuse} onEdit={editImage}
+                                                             cancelling={cancelling} onCancel={cancelQueue}
                                                              onChanged={updated => {
                                                                  setDetail(previous => previous?.id === updated.id ? updated : previous)
                                                                  setLatestTask(previous => previous?.id === updated.id ? updated : previous)

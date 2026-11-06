@@ -46,6 +46,9 @@ public class UploadQuotaCache {
 
     private final SystemSettingsService systemSettingsService;
 
+    @org.springframework.beans.factory.annotation.Value("${image-hub.ai.queue-timeout-seconds:900}")
+    private int queueTimeoutSeconds = 900;
+
     /** 注册已持久化后尽力初始化，失败不回滚账号；不覆盖已被使用的积分。 */
     public void initialize(long userId) {
         try {
@@ -112,6 +115,13 @@ public class UploadQuotaCache {
 
     /** 同账号串行预占；看门狗续租，不持有数据库事务，不影响其他账号上传。 */
     public <T> T consume(long userId, String imageId, LongFunction<T> upload) {
+        return consume(userId, imageId, () -> null, upload);
+    }
+
+    /**
+     * 同账号持锁后先确认原请求，重放成功结果不再预占积分。
+     */
+    public <T> T consume(long userId, String imageId, Supplier<T> existingUpload, LongFunction<T> upload) {
         releaseInterruptedGeneration(userId);
         RLock lock;
         RBucket<String> bucket;
@@ -126,6 +136,8 @@ public class UploadQuotaCache {
             throw new BizException(503, "上传积分暂时不可用，请稍后重试", e);
         }
         try {
+            T existing = existingUpload.get();
+            if (existing != null) return existing;
             try {
                 bucket = bucket(userId);
                 used = recover(userId, bucket);
@@ -297,6 +309,7 @@ public class UploadQuotaCache {
      * 活工作线程仍持有任务锁时不处理；不访问七牛、不重新生成，遗留云文件记录交人工处理。
      */
     public void releaseInterruptedGeneration(long userId) {
+        aiGenerationMapper.expireQueued(userId, queueTimeoutSeconds);
         var interrupted = aiGenerationMapper.interrupted(userId);
         if (interrupted == null) return;
         RLock taskLock = redissonClient.getLock("image-hub:generation:" + interrupted.getId());

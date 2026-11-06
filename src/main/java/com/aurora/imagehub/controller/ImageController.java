@@ -24,13 +24,22 @@ public class ImageController {
 
     /** 单文件入口，批量上传由客户端拆分，积分和云文件补偿交给业务层。 */
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public Result<ImageVO> upload(MultipartHttpServletRequest request) {
+    public Result<ImageVO> upload(MultipartHttpServletRequest request,
+                                  @RequestParam(required = false) String requestId) {
         // 前端批量上传拆成单文件请求，以支持独立失败重试和真实进度。
         long count = request.getMultiFileMap().values().stream().mapToLong(java.util.List::size).sum();
         if (count != 1 || request.getFile("file") == null) {
             throw new BizException(400, "每个请求需包含一个 file 图片文件");
         }
-        return Result.data(imageFileService.upload(StpUtil.getLoginIdAsLong(), request.getFile("file")));
+        return Result.data(imageFileService.upload(StpUtil.getLoginIdAsLong(), request.getFile("file"), requestId));
+    }
+
+    /**
+     * 连接中断后按原请求编号确认结果；未查到结果不代表先前请求已经停止。
+     */
+    @GetMapping("/uploads/{requestId}")
+    public Result<ImageVO> uploadResult(@PathVariable String requestId) {
+        return Result.data(imageFileService.uploadResult(StpUtil.getLoginIdAsLong(), requestId));
     }
 
     /** 图片格式与来源分别筛选，只返回当前用户的数据。 */

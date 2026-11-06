@@ -20,6 +20,12 @@ public interface ImageMapper extends BaseMapper<ImageFile> {
     ImageFile findOwned(@Param("userId") long userId, @Param("id") String id);
 
     /**
+     * 请求重放必须包含已删除记录，避免同一请求在删除后再次上传并计费。
+     */
+    @Select("SELECT * FROM hub_image WHERE id = #{id} AND user_id = #{userId} AND source_type = 'UPLOAD'")
+    ImageFile findUploadRequest(@Param("userId") long userId, @Param("id") String id);
+
+    /**
      * 从数据库读取当前引用，避免按旧用户快照误清理另一请求刚保存的头像。
      */
     @Select("""

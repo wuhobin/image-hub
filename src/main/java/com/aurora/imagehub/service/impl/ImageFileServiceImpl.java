@@ -86,7 +86,7 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
     @Override
     public ImageFile copyTemplateExample(ImageFile source) {
         int limit = 10 * 1024 * 1024;
-        if (source.getSize() > limit) throw new BizException(400, "示例图最大 10 MB，请缩小后手动上传");
+        if (source.getSize() > limit) throw new BizException(400, "示例图最大 10 MB，请选择其他作品");
         try {
             var bytes = new java.util.concurrent.atomic.AtomicReference<byte[]>();
             ossTemplate.getFileStorageService().download(readStorageInfo(source.getStorageInfo())).inputStream(input -> {
@@ -109,7 +109,74 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
         String mime = validateUpload(file);
         ImageDimensionsBO dimensions = dimensions(file);
         String id = UUID.randomUUID().toString();
-        return uploadQuotaCache.consume(userId, id, total -> uploadValidated(userId, file, mime, dimensions, id, total));
+        return uploadQuotaCache.consume(userId, id, total -> uploadValidated(userId, file, mime, dimensions, id, null, total));
+    }
+
+    /**
+     * 校验内容后在积分锁内重放既有结果；稳定主键同时约束失锁后的并发落库。
+     */
+    @Override
+    public ImageVO upload(long userId, MultipartFile file, String requestId) {
+        if (requestId == null) return upload(userId, file);
+        String id = uploadImageId(userId, requestId);
+        String mime = validateUpload(file);
+        ImageDimensionsBO dimensions = dimensions(file);
+        String uploadHash = uploadHash(file);
+        return uploadQuotaCache.consume(userId, id, () -> existingUpload(userId, id, uploadHash),
+                total -> uploadValidated(userId, file, mime, dimensions, id, uploadHash, total));
+    }
+
+    /**
+     * 查询仅确认已提交记录；仍在上传或未提交的请求由客户端沿用原编号重试。
+     */
+    @Override
+    public ImageVO uploadResult(long userId, String requestId) {
+        ImageVO result = existingUpload(userId, uploadImageId(userId, requestId), null);
+        if (result == null) throw new BizException(404, "尚未查询到上传结果，请稍后使用原请求重试");
+        return result;
+    }
+
+    /**
+     * 删除不会释放请求编号，同一编号不能改换内容或重新计费。
+     */
+    private ImageVO existingUpload(long userId, String id, String uploadHash) {
+        ImageFile image = imageMapper.findUploadRequest(userId, id);
+        if (image == null) return null;
+        if (uploadHash != null && !uploadHash.equals(image.getUploadHash())) {
+            throw new BizException(409, "该上传请求已用于其他图片，请重新选择文件");
+        }
+        if (Integer.valueOf(1).equals(image.getDeleted())) {
+            throw new BizException(410, "该请求上传的图片已删除，请重新选择文件");
+        }
+        return ImageVO.from(image);
+    }
+
+    /**
+     * 用户命名空间保证相同客户端请求编号不会引用其他用户的图片。
+     */
+    private String uploadImageId(long userId, String requestId) {
+        if (requestId == null || !requestId.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")) {
+            throw new BizException(400, "上传请求编号必须为 UUID");
+        }
+        return UUID.nameUUIDFromBytes(("image-upload:" + userId + ":" + requestId.toLowerCase(Locale.ROOT))
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
+    }
+
+    /**
+     * 对已校验的图片流计算指纹，不将图片内容或摘要写入日志。
+     */
+    private String uploadHash(MultipartFile file) {
+        try {
+            var digest = java.security.MessageDigest.getInstance("SHA-256");
+            try (var input = new java.security.DigestInputStream(file.getInputStream(), digest)) {
+                input.transferTo(java.io.OutputStream.nullOutputStream());
+            }
+            return java.util.HexFormat.of().formatHex(digest.digest());
+        } catch (IOException e) {
+            throw new BizException(400, "图片读取失败，请重新选择文件");
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
     }
 
     /**
@@ -150,8 +217,9 @@ public class ImageFileServiceImpl extends ServiceImpl<ImageMapper, ImageFile> im
 
     /** 普通上传先保存云文件，再写库；回读失败不撤销已经成功保存的图片。 */
     private ImageVO uploadValidated(long userId, MultipartFile file, String mime, ImageDimensionsBO dimensions, String id,
-                                    long admittedTotal) {
+                                    String uploadHash, long admittedTotal) {
         ImageFile image = storeValidated(userId, file, mime, dimensions, id, "UPLOAD");
+        image.setUploadHash(uploadHash);
         var rollbackConfirmed = new java.util.concurrent.atomic.AtomicBoolean();
         try {
             // 网络上传已结束，计费图片和流水在同一短事务提交。

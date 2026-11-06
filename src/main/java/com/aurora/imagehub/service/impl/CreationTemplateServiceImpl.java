@@ -25,10 +25,9 @@ import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.springframework.web.multipart.MultipartFile;
 
 /**
- * 模板和生成任务解耦；公开内容无缓存，图片替换保留旧定位直到云清理成功。
+ * 模板和生成任务解耦；公开内容无缓存，历史示例图片保留定位直到云清理成功。
  */
 @Service
 @RequiredArgsConstructor
@@ -97,6 +96,9 @@ public class CreationTemplateServiceImpl extends ServiceImpl<CreationTemplateMap
             if (row == null) throw new BizException(404, "模板不存在");
             row.setTitle(param.getTitle().trim());
             row.setDescription(param.getDescription().trim());
+            // 外部封面只保存地址，不下载或纳入示例图的云文件清理；旧客户端未传时保留配置。
+            if (param.getCoverUrl() != null)
+                row.setCoverUrl(param.getCoverUrl().isEmpty() ? null : param.getCoverUrl());
             row.setCategoryId(param.getCategoryId());
             row.setPromptPattern(param.getPromptPattern().trim());
             row.setFieldsJson(fieldsJson);
@@ -181,27 +183,6 @@ public class CreationTemplateServiceImpl extends ServiceImpl<CreationTemplateMap
     }
 
     @Override
-    public CreationTemplateVO setExample(long id, MultipartFile file) {
-        adminAccountService.currentAdmin();
-        requireTemplate(id);
-        ImageFile stored = imageFileService.storeTemplateExample(file);
-        try {
-            transaction().executeWithoutResult(status -> {
-                CreationTemplate row = creationTemplateMapper.lock(id);
-                if (row == null) throw new BizException(404, "模板不存在");
-                persistExample(id, stored);
-                row.setExampleId(stored.getId());
-                creationTemplateMapper.updateById(row);
-            });
-        } catch (RuntimeException e) {
-            discardIfUncommitted(stored);
-            throw e;
-        }
-        cleanupExamples(id);
-        return detail(id, false);
-    }
-
-    @Override
     public CreationTemplateVO removeExample(long id) {
         adminAccountService.currentAdmin();
         transaction().executeWithoutResult(status -> {
@@ -238,7 +219,7 @@ public class CreationTemplateServiceImpl extends ServiceImpl<CreationTemplateMap
     }
 
     /**
-     * 清理失败保留定位，下次替换或移除图片时重试；从不清理当前关联。
+     * 清理失败保留定位，下次移除历史图片时重试；从不清理当前关联。
      */
     private void cleanupExamples(long id) {
         for (TemplateExample asset : templateExampleMapper.unused(id)) {

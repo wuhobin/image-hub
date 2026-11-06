@@ -48,6 +48,7 @@ public class AiGenerationWorker {
         dispatchLock.lock();
         try {
             if (executorService.isShutdown()) return;
+            aiGenerationService.expireQueued();
             int capacity = semaphore.availablePermits();
             if (capacity == 0) return;
             var tasks = aiGenerationService.page(new Page<AiGeneration>(1, capacity, false),

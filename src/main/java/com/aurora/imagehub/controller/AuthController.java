@@ -9,6 +9,8 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import com.aurora.imagehub.model.param.SendEmailCodeParam;
+import com.aurora.imagehub.model.param.ResetPasswordParam;
+import com.aurora.imagehub.model.param.ChangePasswordParam;
 import com.aurora.imagehub.model.param.RegisterParam;
 import com.aurora.imagehub.model.param.LoginParam;
 import com.aurora.imagehub.model.vo.LoginVO;
@@ -56,6 +58,36 @@ public class AuthController {
     public Result<LoginVO> login(@Valid @RequestBody LoginParam input, HttpServletRequest request) {
         attemptLimiter.check("login-ip", request.getRemoteAddr(), 40, 300);
         return Result.data(userAccountService.login(input.getUsername(), input.getPassword()));
+    }
+
+    /**
+     * 找回邮件对存在和不存在的邮箱返回相同提示。
+     */
+    @PostMapping("/password-reset/email-code")
+    public Result<Void> sendPasswordResetCode(@Valid @RequestBody SendEmailCodeParam input, HttpServletRequest request) {
+        attemptLimiter.check("password-reset-email-ip", request.getRemoteAddr(), 5, 300);
+        userAccountService.sendPasswordResetCode(input.getEmail());
+        return Result.success("若邮箱已注册，重置验证码将发送至该邮箱");
+    }
+
+    /**
+     * 游客凭一次性邮箱验证码重置密码，成功后所有普通用户会话失效。
+     */
+    @PostMapping("/password-reset")
+    public Result<Void> resetPassword(@Valid @RequestBody ResetPasswordParam input, HttpServletRequest request) {
+        attemptLimiter.check("password-reset-ip", request.getRemoteAddr(), 20, 300);
+        userAccountService.resetPassword(input.getEmail(), input.getCode(), input.getPassword());
+        return Result.success("密码已重置，请重新登录");
+    }
+
+    /**
+     * 改密仅操作可信登录态对应的账户，不允许指定其他用户。
+     */
+    @PostMapping("/password")
+    public Result<Void> changePassword(@Valid @RequestBody ChangePasswordParam input) {
+        userAccountService.changePassword(cn.dev33.satoken.stp.StpUtil.getLoginIdAsLong(),
+                input.getCurrentPassword(), input.getPassword());
+        return Result.success("密码已更新，请重新登录");
     }
 
     @GetMapping("/me")

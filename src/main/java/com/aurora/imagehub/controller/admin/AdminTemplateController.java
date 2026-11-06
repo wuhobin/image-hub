@@ -12,7 +12,6 @@ import java.util.List;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
 
 /**
  * 模板管理复用独立管理员身份，文件操作不占用普通用户积分。
@@ -48,7 +47,7 @@ public class AdminTemplateController {
     }
 
     /**
-     * 新建模板，图片可在首次保存后补充。
+     * 新建模板并配置封面 URL。
      */
     @PostMapping
     public Result<CreationTemplateVO> create(@Valid @RequestBody CreationTemplateParam param) {
@@ -56,7 +55,7 @@ public class AdminTemplateController {
     }
 
     /**
-     * 编辑正文、分类、标签、排序及上架状态。
+     * 编辑正文、封面 URL、分类、标签、排序及上架状态。
      */
     @PutMapping("/{id}")
     public Result<CreationTemplateVO> update(@PathVariable long id, @Valid @RequestBody CreationTemplateParam param) {
@@ -72,15 +71,7 @@ public class AdminTemplateController {
     }
 
     /**
-     * 上传或替换示例图；请求失败保留原文字内容。
-     */
-    @PostMapping(value = "/{id}/image", consumes = "multipart/form-data")
-    public Result<CreationTemplateVO> image(@PathVariable long id, @RequestPart("file") MultipartFile file) {
-        return Result.data(creationTemplateService.setExample(id, file));
-    }
-
-    /**
-     * 移除图片后模板仍可作为文字模板使用。
+     * 兼容清理历史示例图片，移除后保留模板正文与封面 URL。
      */
     @DeleteMapping("/{id}/image")
     public Result<CreationTemplateVO> removeImage(@PathVariable long id) {

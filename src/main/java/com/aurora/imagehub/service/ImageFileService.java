@@ -21,8 +21,21 @@ public interface ImageFileService extends IService<ImageFile> {
 
     /** 当前账号永久积分；历史上传不计费，删除不返还。 */
     UploadQuotaVO quota(long userId);
-    /** 校验并上传单张图片，记录入库失败时补偿删除云端文件。 */
+
+    /**
+     * 兼容旧客户端的单张上传；未传请求编号时，每次调用视为新上传。
+     */
     ImageVO upload(long userId, MultipartFile file);
+
+    /**
+     * 相同用户和请求编号仅计费一次；内容不同拒绝重放，已删除图片不会再次创建。
+     */
+    ImageVO upload(long userId, MultipartFile file, String requestId);
+
+    /**
+     * 查询本人的已提交上传结果；未提交返回 404，已删除返回 410，不重新上传或计费。
+     */
+    ImageVO uploadResult(long userId, String requestId);
 
     /**
      * 免费头像复用真实图片校验，单独存入 avatars 目录；调用方负责头像与图片记录的同事务写入。

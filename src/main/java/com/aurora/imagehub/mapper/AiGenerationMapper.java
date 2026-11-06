@@ -22,7 +22,7 @@ public interface AiGenerationMapper extends BaseMapper<AiGeneration> {
             UPDATE hub_ai_generation SET deleted = 1, share_id = NULL, share_status = 'PRIVATE',
                 published_time = NULL, api_key_ciphertext = NULL, update_time = CURRENT_TIMESTAMP
             WHERE user_id = #{userId} AND id = #{id} AND deleted = 0
-              AND status IN ('SUCCEEDED', 'FAILED', 'SAVE_FAILED', 'EXPIRED', 'ABANDONED')
+              AND status IN ('SUCCEEDED', 'FAILED', 'SAVE_FAILED', 'EXPIRED', 'ABANDONED', 'CANCELLED')
               AND active_user_id IS NULL AND work_token IS NULL AND pending_storage_info IS NULL
             """)
     int deleteOwned(@Param("userId") long userId, @Param("id") String id);
@@ -127,14 +127,46 @@ public interface AiGenerationMapper extends BaseMapper<AiGeneration> {
             """)
     int clearPendingUpload(@Param("userId") long userId, @Param("id") String id);
 
-    /** 只认领排队任务；生成或保存中的任务不会被另一轮轮询重新执行。 */
+    /**
+     * 取消与认领竞争同一行；只释放本人尚未被领取的任务，不写积分消费流水。
+     */
+    @Update("""
+            UPDATE hub_ai_generation SET status = 'CANCELLED', active_user_id = NULL,
+              error_message = '已取消排队，预留积分已释放', api_key_ciphertext = NULL,
+              work_deadline = NULL, update_time = CURRENT_TIMESTAMP
+            WHERE id = #{id} AND user_id = #{userId} AND active_user_id = #{userId} AND deleted = 0
+              AND status = 'QUEUED' AND work_token IS NULL
+            """)
+    int cancelQueued(@Param("userId") long userId, @Param("id") String id);
+
+    /**
+     * 数据库时间决定排队截止；用户访问限定本人，后台扫描可传空用户且绝不影响已认领任务。
+     */
+    @Update("""
+            <script>
+            UPDATE hub_ai_generation SET status = 'FAILED', active_user_id = NULL,
+              error_message = '排队等待超时，预留积分已释放，请重新提交创作', api_key_ciphertext = NULL,
+              work_deadline = NULL, update_time = CURRENT_TIMESTAMP
+            WHERE deleted = 0 AND status = 'QUEUED' AND work_token IS NULL AND active_user_id = user_id
+              AND create_time &lt;= TIMESTAMPADD(SECOND, -#{queueTimeoutSeconds}, CURRENT_TIMESTAMP)
+              <if test="userId != null">AND user_id = #{userId}</if>
+            </script>
+            """)
+    int expireQueued(@Param("userId") Long userId, @Param("queueTimeoutSeconds") int queueTimeoutSeconds);
+
+    /**
+     * 只认领仍在等待期限内的任务；与取消、超时释放通过条件更新互斥。
+     */
     @Update("""
             UPDATE hub_ai_generation SET status = 'GENERATING', work_token = #{token},
               work_deadline = TIMESTAMPADD(SECOND, #{seconds}, CURRENT_TIMESTAMP), update_time = CURRENT_TIMESTAMP
             WHERE id = #{id} AND user_id = #{userId} AND deleted = 0 AND status = 'QUEUED' AND work_token IS NULL
+              AND active_user_id = #{userId}
+              AND create_time > TIMESTAMPADD(SECOND, -#{queueTimeoutSeconds}, CURRENT_TIMESTAMP)
             """)
     int claim(@Param("userId") long userId, @Param("id") String id,
-              @Param("token") String token, @Param("seconds") int seconds);
+              @Param("token") String token, @Param("seconds") int seconds,
+              @Param("queueTimeoutSeconds") int queueTimeoutSeconds);
 
     /** 同一工作线程直接进入保存阶段，仅续期保存截止时间，不暂存结果。 */
     @Update("""

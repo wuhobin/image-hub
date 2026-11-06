@@ -14,7 +14,9 @@ export default function CreationCurrent({
                                             disabled,
                                             onPreview,
                                             onEdit,
-                                            onDetail
+                                            onDetail,
+                                            cancelling,
+                                            onCancel
                                         }: {
     task: Generation
     running: boolean
@@ -24,6 +26,8 @@ export default function CreationCurrent({
     onPreview: () => void
     onEdit: () => void
     onDetail: () => void
+    cancelling: boolean
+    onCancel: () => void
 }) {
     const downloadUrl = task.image ? new URL(task.image.url) : null
     if (task.image && downloadUrl) downloadUrl.searchParams.set('attname', task.image.name)
@@ -38,7 +42,7 @@ export default function CreationCurrent({
                     <span className="creation-current-preview-hint"><ArrowUpRight size={14} aria-hidden="true"/>查看大图</span>
                 </button> : <div className="creation-current-placeholder">
                     <div className="creation-detail-loader"><Sparkle size={34} weight="thin" aria-hidden="true"/></div>
-                    <p>{running ? task.status === 'SAVING' ? '画面已生成，正在保存到你的图片库。' : '画面正在慢慢成形，你可以离开页面，任务会继续。'
+                    <p>{running ? task.status === 'QUEUED' ? '正在等待空闲生成名额，开始前可以取消排队。' : task.status === 'SAVING' ? '画面已生成，正在保存到你的图片库。' : '画面正在慢慢成形，你可以离开页面，任务会继续。'
                         : task.errorMessage || (task.status === 'SUCCEEDED' ? '图片已被删除，可重新使用这段描述创作。' : '本次任务已结束，预留积分已释放。')}</p>
                 </div>}
         </div>
@@ -78,6 +82,10 @@ export default function CreationCurrent({
                         <ImageSquare size={16} aria-hidden="true"/>编辑图片
                     </button>
                 </div>}
+                {task.status === 'QUEUED' && <button type="button" className="button button-secondary"
+                                                     disabled={cancelling} onClick={onCancel}>
+                    {cancelling ? '取消中…' : '取消排队'}
+                </button>}
                 <button className="quiet-link" onClick={onDetail} aria-haspopup="dialog">
                     查看创作详情<ArrowUpRight size={14} aria-hidden="true"/>
                 </button>

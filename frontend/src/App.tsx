@@ -24,7 +24,7 @@ export type AppState = ReturnType<typeof useImageHub>
 function Header({ app }: { app: AppState }) {
   const location = useLocation()
   const userMenu = useRef<HTMLDetailsElement>(null)
-  const authPage = ['/login', '/register'].includes(location.pathname)
+    const authPage = ['/login', '/register', '/forgot-password'].includes(location.pathname)
   useEffect(() => {
     if (userMenu.current) userMenu.current.open = false
     const closeOutside = (event: Event) => {
@@ -115,7 +115,8 @@ export default function App() {
           '/explore': '作品广场',
           '/templates': '模板库',
           '/login': '登录',
-          '/register': '注册'
+          '/register': '注册',
+          '/forgot-password': '找回密码'
       }
       document.title = `ImgHub · ${location.pathname.startsWith('/share/') ? '分享作品' : titles[location.pathname] || '页面未找到'}`
   }, [location.pathname])
@@ -138,6 +139,7 @@ export default function App() {
       <Route path="/profile" element={app.initializing || app.user ? <Profile app={app} /> : <Navigate to="/login" state={{ from: '/profile' }} replace />} />
       <Route path="/login" element={<Auth app={app} mode="login" />} />
       <Route path="/register" element={<Auth app={app} mode="register" />} />
+        <Route path="/forgot-password" element={<Auth app={app} mode="reset"/>}/>
       <Route path="*" element={<main id="main" className="not-found"><h1>这里还没有图片。</h1><p>页面不存在，回首页开始一次新的创作。</p><Link to="/" className="button button-primary">返回首页</Link></main>} />
     </Routes>
     <footer className="footer">
